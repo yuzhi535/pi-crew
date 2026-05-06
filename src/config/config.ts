@@ -102,6 +102,7 @@ export interface CrewTelemetryConfig {
 
 export interface CrewPolicyConfig {
 	requireIntentForDestructiveActions?: boolean;
+	disabledCapabilities?: string[];
 }
 
 export type CrewNotificationSeverity = "info" | "warning" | "error" | "critical";
@@ -635,6 +636,7 @@ function parsePolicyConfig(value: unknown): CrewPolicyConfig | undefined {
 	if (!obj) return undefined;
 	const policy: CrewPolicyConfig = {
 		requireIntentForDestructiveActions: parseWithSchema(Type.Boolean(), obj.requireIntentForDestructiveActions),
+		disabledCapabilities: parseWithSchema(Type.Array(Type.String()), obj.disabledCapabilities),
 	};
 	return Object.values(policy).some((entry) => entry !== undefined) ? policy : undefined;
 }

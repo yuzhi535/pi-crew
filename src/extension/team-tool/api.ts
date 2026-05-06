@@ -78,7 +78,7 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 		return result(JSON.stringify(filtered, null, 2), { action: "api", status: "ok", ...(runIdFilter ? { runId: runIdFilter } : {}) });
 	}
 	if (operation === "inventory") {
-		const inventory = buildCapabilityInventory(ctx.cwd);
+		const inventory = buildCapabilityInventory(ctx.cwd, ctx.config);
 		return result(JSON.stringify(inventory, null, 2), { action: "api", status: "ok" });
 	}
 	if (!params.runId) return result("API requires runId.", { action: "api", status: "error" }, true);

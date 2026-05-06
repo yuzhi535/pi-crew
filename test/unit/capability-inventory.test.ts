@@ -27,3 +27,33 @@ test("capability inventory includes builtin teams, workflows, and agents", () =>
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
+
+test("capability inventory respects disabledCapabilities policy", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-cap-inv2-"));
+	fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+	try {
+		const inventory = buildCapabilityInventory(cwd);
+		const firstTeam = inventory.find((item) => item.kind === "team");
+		assert.ok(firstTeam, "expected at least one team");
+		const config = { policy: { disabledCapabilities: [firstTeam.id] } };
+		const filtered = buildCapabilityInventory(cwd, config);
+		const match = filtered.find((item) => item.id === firstTeam.id);
+		assert.ok(match, "expected the team to still appear in inventory");
+		assert.equal(match.state, "disabled", "expected team to be disabled by policy");
+		assert.equal(match.disabledReason, "disabled by policy");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("capability inventory with empty disabledCapabilities returns all active", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-cap-inv3-"));
+	fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
+	try {
+		const inventory = buildCapabilityInventory(cwd, { policy: { disabledCapabilities: [] } });
+		const disabledItems = inventory.filter((item) => item.state === "disabled" && item.disabledReason === "disabled by policy");
+		assert.equal(disabledItems.length, 0, "no items should be disabled by policy with empty array");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});

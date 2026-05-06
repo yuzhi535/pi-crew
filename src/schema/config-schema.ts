@@ -79,6 +79,7 @@ export const PiTeamsTelemetryConfigSchema = Type.Object({
 
 export const PiTeamsPolicyConfigSchema = Type.Object({
 	requireIntentForDestructiveActions: Type.Optional(Type.Boolean()),
+	disabledCapabilities: Type.Optional(Type.Array(Type.String())),
 }, { additionalProperties: false });
 
 export const PiTeamsNotificationsConfigSchema = Type.Object({
