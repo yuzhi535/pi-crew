@@ -444,8 +444,8 @@ interface CapabilityItem {
 **Acceptance criteria**
 
 - ✅ Inventory is stable and sorted.
-- ☐ Shadowed project/user/builtin resources are visible (not yet in capability inventory).
-- ☐ Skill disabled/budget state is visible (not yet in capability inventory).
+- ✅ Shadowed project/user/builtin resources are visible in capability inventory (state="shadowed", shadowedBy field).
+- ☐ Skill disabled/budget state is visible (not yet in capability inventory — skills not enumerated in inventory).
 - ✅ No file path is used as the only stable ID (uses `kind:name` IDs).
 
 ### P1.8 Persist capability disables by stable ID
