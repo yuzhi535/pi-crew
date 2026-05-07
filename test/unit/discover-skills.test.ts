@@ -1,0 +1,80 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { discoverSkills } from "../../src/skills/discover-skills.ts";
+
+describe("discoverSkills", () => {
+	it("returns package skills from pi-crew skills directory", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-skills-"));
+		try {
+			const skills = discoverSkills(cwd);
+			assert.ok(Array.isArray(skills));
+			// Package skills should always exist (pi-crew ships with skills/)
+			assert.ok(skills.length > 0, "should find at least one package skill");
+			assert.ok(skills.every((s) => s.source === "package" || s.source === "project"));
+			// All should have SKILL.md path
+			for (const skill of skills) {
+				assert.ok(fs.existsSync(skill.path), `skill path should exist: ${skill.path}`);
+			}
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("reads project skills from cwd/skills directory", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-skills-"));
+		try {
+			const projectSkillsDir = path.join(cwd, "skills", "test-skill");
+			fs.mkdirSync(projectSkillsDir, { recursive: true });
+			fs.writeFileSync(path.join(projectSkillsDir, "SKILL.md"), "---\ndescription: Test skill description\n---\n\nTest skill body.");
+			const skills = discoverSkills(cwd);
+			const projectSkill = skills.find((s) => s.name === "test-skill" && s.source === "project");
+			assert.ok(projectSkill, "should find project skill");
+			assert.equal(projectSkill.description, "Test skill description");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("handles SKILL.md without frontmatter", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-skills-"));
+		try {
+			const projectSkillsDir = path.join(cwd, "skills", "no-frontmatter");
+			fs.mkdirSync(projectSkillsDir, { recursive: true });
+			fs.writeFileSync(path.join(projectSkillsDir, "SKILL.md"), "Just a plain skill file without frontmatter.");
+			const skills = discoverSkills(cwd);
+			const skill = skills.find((s) => s.name === "no-frontmatter");
+			assert.ok(skill, "should find skill without frontmatter");
+			assert.equal(skill.description, "");
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("handles missing skills directory gracefully", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-skills-"));
+		try {
+			const skills = discoverSkills(cwd);
+			// Should still return package skills, but no project skills
+			assert.ok(Array.isArray(skills));
+			assert.ok(!skills.some((s) => s.source === "project"));
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("skips directories without SKILL.md", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-skills-"));
+		try {
+			const noSkillDir = path.join(cwd, "skills", "no-skill-md");
+			fs.mkdirSync(noSkillDir, { recursive: true });
+			fs.writeFileSync(path.join(noSkillDir, "README.md"), "Not a skill.");
+			const skills = discoverSkills(cwd);
+			assert.ok(!skills.some((s) => s.name === "no-skill-md"));
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});

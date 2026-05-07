@@ -99,3 +99,46 @@ test("getHooks returns registered hooks by name", () => {
 		clearHooks();
 	}
 });
+test("multiple non-blocking hooks all execute even when first throws", async () => {
+	try {
+		let secondHookRan = false;
+		registerHook({
+			name: "before_task_start",
+			mode: "non_blocking",
+			handler: () => { throw new Error("first hook crash"); },
+		});
+		registerHook({
+			name: "before_task_start",
+			mode: "non_blocking",
+			handler: () => { secondHookRan = true; return { outcome: "allow" } as HookResult; },
+		});
+		const report = await executeHook("before_task_start", { runId: "test-7", taskId: "01_explore", cwd: "/tmp" });
+		assert.equal(secondHookRan, true, "second hook should still execute after first hook throws");
+		assert.equal(report.outcome, "diagnostic");
+		assert.ok(report.reason?.includes("first hook crash"), "diagnostic reason should include first hook error");
+	} finally {
+		clearHooks();
+	}
+});
+
+test("blocking hook in chain stops subsequent hooks", async () => {
+	try {
+		let secondHookRan = false;
+		registerHook({
+			name: "before_run_start",
+			mode: "blocking",
+			handler: () => ({ outcome: "block", reason: "first hook blocks" } as HookResult),
+		});
+		registerHook({
+			name: "before_run_start",
+			mode: "blocking",
+			handler: () => { secondHookRan = true; return { outcome: "allow" } as HookResult; },
+		});
+		const report = await executeHook("before_run_start", { runId: "test-8", cwd: "/tmp" });
+		assert.equal(secondHookRan, false, "second hook should not execute after blocking hook");
+		assert.equal(report.outcome, "block");
+		assert.equal(report.reason, "first hook blocks");
+	} finally {
+		clearHooks();
+	}
+});

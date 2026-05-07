@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { logInternalError } from "../utils/internal-error.ts";
 
 const PACKAGE_SKILLS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "skills");
 
@@ -38,10 +39,14 @@ export function discoverSkills(cwd: string): SkillDescriptor[] {
 				try {
 					const content = fs.readFileSync(skillMd, "utf-8");
 					description = frontmatterDescription(content) ?? "";
-				} catch { /* skip unreadable */ }
+				} catch (error) {
+					logInternalError("discoverSkills.readSkill", error, `skill=${entry.name}`);
+				}
 				results.push({ name: entry.name, description, source: dir.source, path: skillMd });
 			}
-		} catch { /* skip unreadable */ }
+		} catch (error) {
+			logInternalError("discoverSkills.readdir", error, `root=${dir.root}`);
+		}
 	}
 	return results;
 }

@@ -6,7 +6,7 @@ import { discoverSkills } from "../skills/discover-skills.ts";
 import type { PiTeamsConfig } from "../config/config.ts";
 
 export type CapabilityKind = "team" | "workflow" | "agent" | "skill" | "tool" | "runtime";
-export type CapabilitySource = "builtin" | "project" | "user" | "package";
+export type CapabilitySource = "builtin" | "project" | "user" | "package" | "git";
 export type CapabilityState = "active" | "disabled" | "shadowed" | "missing";
 
 export interface CapabilityItem {

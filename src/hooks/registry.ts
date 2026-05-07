@@ -23,6 +23,7 @@ export async function executeHook(name: HookName, ctx: HookContext): Promise<Hoo
 	const hooks = getHooks(name);
 	if (hooks.length === 0) return { hookName: name, outcome: "allow", durationMs: 0 };
 	const start = Date.now();
+	const diagnostics: string[] = [];
 	for (const hook of hooks) {
 		try {
 			const result: HookResult = await hook.handler(ctx);
@@ -37,9 +38,12 @@ export async function executeHook(name: HookName, ctx: HookContext): Promise<Hoo
 			if (hook.mode === "blocking") {
 				return { hookName: name, outcome: "block", durationMs: Date.now() - start, reason: `Hook error: ${message}` };
 			}
-			// Non-blocking hook errors are recorded as diagnostics
-			return { hookName: name, outcome: "diagnostic", durationMs: Date.now() - start, reason: message };
+			// Non-blocking hook errors are accumulated as diagnostics; continue to next hook
+			diagnostics.push(message);
 		}
+	}
+	if (diagnostics.length > 0) {
+		return { hookName: name, outcome: "diagnostic", durationMs: Date.now() - start, reason: diagnostics.join("; ") };
 	}
 	return { hookName: name, outcome: "allow", durationMs: Date.now() - start };
 }
