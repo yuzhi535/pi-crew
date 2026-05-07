@@ -76,7 +76,7 @@ This roadmap is **not complete overall**. The `v0.1.46` release completed severa
 - P2.7 event-first UI — RunEventBus wired into appendEvent; UI pane subscription not yet implemented.
 - P2.8 shared raw scan-entry cache — SharedScanCache implemented and wired into manifest reads; not yet wired into artifact-store or mailbox.
 - P3.1 tarball-install smoke — `scripts/release-smoke.mjs` runs as manual check; not yet a CI gate.
-- Hook lifecycle — `before_cancel`/`before_forget`/`before_cleanup` wired with async handlers. `task_result`/`before_publish`/`session_before_switch`/`run_recovery` not yet wired.
+- Hook lifecycle — `before_cancel`/`before_forget`/`before_cleanup` wired with async handlers. `task_result`/`before_publish` wired. `session_before_switch`/`run_recovery` not yet wired (need more use cases).
 
 ## Priority Legend
 
@@ -500,7 +500,12 @@ Errors are recorded in diagnostics/events, not uncontrolled exceptions.
 - ✅ Blocking hook can stop a run before worker start with clear event and status.
 - ✅ Non-blocking hook failure records diagnostic and does not crash run.
 - ✅ Hook context is redacted and bounded.
-- ☐ `before_cancel` hook not yet wired (requires async handleCancel conversion).
+- ✅ `before_cancel` hook wired (async handleCancel conversion done).
+- ✅ `before_forget` hook wired (async handleForget conversion done).
+- ✅ `before_cleanup` hook wired (async handleCleanup conversion done).
+- ✅ `task_result` hook wired in task-runner before completed/failed event.
+- ✅ `before_publish` hook wired in handleExport.
+- ☐ `session_before_switch` / `run_recovery` not yet wired (need more use cases).
 
 ### P2.2 Require intent via policy/hook for destructive actions
 
