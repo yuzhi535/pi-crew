@@ -92,9 +92,13 @@ export function writeBlob(artifactsRoot: string, input: {
  */
 export function readBlob(artifactsRoot: string, hash: string): Buffer | undefined {
 	validateBlobHash(hash);
-	const blobDir = path.join(artifactsRoot, BLOBS_DIR, SHA256_PREFIX);
-	const blobPath = resolveRealContainedPath(blobDir, hash);
-	return fs.readFileSync(blobPath);
+	try {
+		const blobDir = path.join(artifactsRoot, BLOBS_DIR, SHA256_PREFIX);
+		const blobPath = resolveRealContainedPath(blobDir, hash);
+		return fs.readFileSync(blobPath);
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -103,7 +107,11 @@ export function readBlob(artifactsRoot: string, hash: string): Buffer | undefine
  */
 export function readBlobMetadata(artifactsRoot: string, hash: string): BlobMetadata | undefined {
 	validateBlobHash(hash);
-	const metaDir = path.join(artifactsRoot, BLOB_META_DIR);
-	const metaPath = resolveRealContainedPath(metaDir, `${hash}.json`);
-	return JSON.parse(fs.readFileSync(metaPath, "utf-8")) as BlobMetadata;
+	try {
+		const metaDir = path.join(artifactsRoot, BLOB_META_DIR);
+		const metaPath = resolveRealContainedPath(metaDir, `${hash}.json`);
+		return JSON.parse(fs.readFileSync(metaPath, "utf-8")) as BlobMetadata;
+	} catch {
+		return undefined;
+	}
 }

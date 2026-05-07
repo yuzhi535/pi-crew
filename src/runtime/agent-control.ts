@@ -86,13 +86,13 @@ export function applyLongRunningCheck(
 	if (runtimeMs <= thresholdMs) return agent;
 
 	// Already flagged as long_running
-	if (agent.progress?.activityState === "long_running" as CrewAgentRecord["progress"] extends { activityState?: infer S } ? S : never) return agent;
+	if (agent.progress?.activityState === "active_long_running") return agent;
 
 	const updated: CrewAgentRecord = {
 		...agent,
 		progress: {
 			...(agent.progress ?? { recentTools: [], recentOutput: [], toolCount: agent.toolUses ?? 0 }),
-			activityState: "long_running" as CrewAgentRecord["progress"] extends { activityState?: infer S } ? S : never,
+			activityState: "active_long_running",
 		},
 	};
 	upsertCrewAgent(manifest, updated);
@@ -105,10 +105,6 @@ export function applyLongRunningCheck(
 	return updated;
 }
 
-interface ProgressWithConsecutiveFailures {
-	consecutiveFailures?: number;
-}
-
 export function trackConsecutiveToolFailure(
 	manifest: TeamRunManifest,
 	agent: CrewAgentRecord,
@@ -118,8 +114,7 @@ export function trackConsecutiveToolFailure(
 ): CrewAgentRecord {
 	if (!config.enabled || agent.status !== "running") return agent;
 
-	const progressExt = agent.progress as (CrewAgentRecord["progress"] & ProgressWithConsecutiveFailures) | undefined;
-	const failures = progressExt?.consecutiveFailures ?? 0;
+	const failures = agent.progress?.consecutiveFailures ?? 0;
 	const newFailures = failures + 1;
 
 	const updated: CrewAgentRecord = {
@@ -127,7 +122,7 @@ export function trackConsecutiveToolFailure(
 		progress: {
 			...(agent.progress ?? { recentTools: [], recentOutput: [], toolCount: agent.toolUses ?? 0 }),
 			consecutiveFailures: newFailures,
-		} as CrewAgentRecord["progress"] & ProgressWithConsecutiveFailures,
+		},
 	};
 
 	if (newFailures >= config.consecutiveFailureThreshold) {
@@ -149,14 +144,13 @@ export function resetConsecutiveToolFailures(
 	manifest: TeamRunManifest,
 	agent: CrewAgentRecord,
 ): void {
-	const progressExt = agent.progress as (CrewAgentRecord["progress"] & ProgressWithConsecutiveFailures) | undefined;
-	if (!progressExt?.consecutiveFailures) return;
+	if (!agent.progress?.consecutiveFailures) return;
 	const updated: CrewAgentRecord = {
 		...agent,
 		progress: {
 			...agent.progress,
 			consecutiveFailures: 0,
-		} as CrewAgentRecord["progress"] & ProgressWithConsecutiveFailures,
+		},
 	};
 	upsertCrewAgent(manifest, updated);
 }

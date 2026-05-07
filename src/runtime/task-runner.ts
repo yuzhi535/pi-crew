@@ -65,6 +65,7 @@ export interface TaskRunnerInput {
 export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: TeamRunManifest; tasks: TeamTaskState[] }> {
 	let manifest = input.manifest;
 	const streamBridge = registerStreamBridge(manifest.runId);
+	try {
 	const workspace = prepareTaskWorkspace(manifest, input.task);
 	const worktree = workspace.worktreePath && workspace.branch ? { path: workspace.worktreePath, branch: workspace.branch, reused: workspace.reused ?? false } : input.task.worktree;
 	const taskPacket = buildTaskPacket({ manifest, step: input.step, taskId: input.task.id, cwd: workspace.cwd, worktreePath: worktree?.path });
@@ -402,6 +403,8 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	const hookReport = await executeHook("task_result", { runId: manifest.runId, taskId: task.id, cwd: manifest.cwd });
 	appendHookEvent(manifest, hookReport);
 	appendEvent(manifest.eventsPath, { type: error ? "task.failed" : "task.completed", runId: manifest.runId, taskId: task.id, message: error });
-	streamBridge.dispose();
 	return { manifest, tasks };
+	} finally {
+		streamBridge.dispose();
+	}
 }

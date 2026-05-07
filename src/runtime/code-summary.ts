@@ -59,6 +59,10 @@ function mergeRanges(ranges: Range[]): Range[] {
 }
 
 // ── Brace-based elision (TS/JS/Rust) ──
+// NOTE: This is a regex heuristic, not a parser. Braces inside string literals,
+// template strings, regex, and comments are counted, which can produce incorrect
+// elision for edge cases like `const s = "{...}"` or `${expr}`. Acceptable for
+// summaries; do not use for correctness-sensitive parsing.
 
 function findBraceRanges(lines: string[], openPattern: RegExp, minBody: number): Range[] {
 	const ranges: Range[] = [];

@@ -113,7 +113,12 @@ export async function* readSseJson<T>(
 	signal?: AbortSignal,
 ): AsyncGenerator<T> {
 	for await (const evt of readSseEvents(stream, signal)) {
-		const parsed: T = JSON.parse(evt.data) as T;
-		yield parsed;
+		try {
+			const parsed: T = JSON.parse(evt.data) as T;
+			yield parsed;
+		} catch {
+			// Skip non-JSON SSE data events (e.g., ping, error messages, sentinels)
+			continue;
+		}
 	}
 }

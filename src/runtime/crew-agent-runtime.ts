@@ -23,6 +23,7 @@ export interface CrewAgentProgress {
 	lastActivityAt?: string;
 	activityState?: CrewActivityState;
 	failedTool?: string;
+	consecutiveFailures?: number;
 }
 
 export interface CrewAgentRecord {

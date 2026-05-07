@@ -115,7 +115,6 @@ export function renderAgentOverlay(state: AgentOverlayState, width: number): str
 		const isSelected = globalIndex === state.selectedIndex;
 		const isExpanded = state.expanded.has(globalIndex);
 		const cursor = isSelected ? "▸" : " ";
-	const expandIcon = isExpanded ? "▾" : "▸";
 	const disabled = entry.disabled ? " [disabled]" : "";
 	const model = entry.model ? ` (${entry.model})` : "";
 
