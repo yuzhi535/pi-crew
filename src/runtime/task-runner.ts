@@ -18,6 +18,7 @@ import { createStartupEvidence } from "./worker-startup.ts";
 import { permissionForRole } from "./role-permission.ts";
 import { collectDependencyOutputContext, renderDependencyOutputContext, writeTaskInputsArtifact, writeTaskSharedOutput } from "./task-output-context.ts";
 import { appendCrewAgentEvent, appendCrewAgentOutput, emptyCrewAgentProgress, recordFromTask, upsertCrewAgent } from "./crew-agent-records.ts";
+import { reserveControlChannel } from "./agent-control.ts";
 import { parseSessionUsage } from "./session-usage.ts";
 import type { CrewAgentProgress, CrewRuntimeKind } from "./crew-agent-runtime.ts";
 import { shouldAppendProgressEventUpdate, type ProgressEventSummary } from "./progress-event-coalescer.ts";
@@ -77,6 +78,8 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		heartbeat: createWorkerHeartbeat(input.task.id),
 		agentProgress: input.task.agentProgress ?? emptyCrewAgentProgress(),
 		...(dependencyContextText ? { dependencyContextText } : {}),
+		// Reserve control channel before spawn so cancel/steer can target this task immediately
+		controlReservation: reserveControlChannel(input.task.id, manifest.runId),
 	} as TeamTaskState;
 	let tasks = updateTask(input.tasks, task);
 	const runtimeKind = input.runtimeKind ?? (input.executeWorkers ? "child-process" : "scaffold");

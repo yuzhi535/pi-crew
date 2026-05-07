@@ -1,8 +1,9 @@
 import type { PiTeamsConfig } from "../config/config.ts";
-import type { TeamRunManifest } from "../state/types.ts";
+import type { TeamRunManifest, ControlReservation } from "../state/types.ts";
 import { appendTaskAttentionEvent } from "./attention-events.ts";
 import type { CrewAgentRecord } from "./crew-agent-runtime.ts";
 import { upsertCrewAgent } from "./crew-agent-records.ts";
+import { randomUUID } from "node:crypto";
 
 export interface CrewControlConfig {
 	enabled: boolean;
@@ -60,4 +61,17 @@ export function applyAttentionState(manifest: TeamRunManifest, agent: CrewAgentR
 		data: { activityState: "needs_attention", reason: "idle", elapsedMs: age, taskId: agent.taskId, agentName: agent.agent, suggestedAction: "Check worker status, wait, steer, or cancel if needed." },
 	});
 	return updated;
+}
+
+/**
+ * Reserve a control channel for a task before spawning its worker.
+ * This ensures cancel/steer requests can be queued immediately
+ * while the worker is still starting up.
+ */
+export function reserveControlChannel(taskId: string, runId: string): ControlReservation {
+	return {
+		reservedAt: new Date().toISOString(),
+		controllerId: `ctrl:${taskId}:${randomUUID()}`,
+		acceptsControlEvents: true,
+	};
 }

@@ -253,4 +253,11 @@ export interface TeamTaskState {
 		retryCount?: number;
 		lastDecision?: PolicyDecision;
 	};
+	controlReservation?: ControlReservation;
+}
+
+export interface ControlReservation {
+	reservedAt: string;
+	controllerId: string;
+	acceptsControlEvents: boolean;
 }
