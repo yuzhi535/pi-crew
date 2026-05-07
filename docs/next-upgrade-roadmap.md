@@ -237,7 +237,7 @@ npm run test:unit
 - ✅ Steering and follow-up can be inspected separately via `readMailbox` kind filter and API `config.kind`.
 - ✅ Existing inbox/outbox JSONL remains readable.
 - ✅ Kind filter survives process/session switch (durable mailbox).
-- ☐ UI/status separates urgent steering from follow-up backlog (mailbox pane not yet updated).
+- ✅ UI/status separates urgent steering from follow-up backlog (mailbox pane shows kind breakdown with urgency indicators).
 
 ### P1.2 Clarify `respond` vs `follow-up` UX
 
@@ -445,7 +445,7 @@ interface CapabilityItem {
 
 - ✅ Inventory is stable and sorted.
 - ✅ Shadowed project/user/builtin resources are visible in capability inventory (state="shadowed", shadowedBy field).
-- ☐ Skill disabled/budget state is visible (not yet in capability inventory — skills not enumerated in inventory).
+- ✅ Skill disabled/budget state is visible in capability inventory (skills enumerated via discoverSkills).
 - ✅ No file path is used as the only stable ID (uses `kind:name` IDs).
 
 ### P1.8 Persist capability disables by stable ID
@@ -621,7 +621,7 @@ Use it in:
 **Acceptance criteria** ✅
 
 - ✅ Long scan can abort within bounded cadence (`AbortSignal` wired into `collectRuns`, `validateMailbox`, `readAllMailboxMessages`, `pruneFinishedRuns`, `cleanupRunWorktrees`).
-- ☐ `CancellationToken.heartbeat(stage)` not yet surfaced in diagnostics logs (signal-based early exit is wired; heartbeat is separate).
+- ☐ `CancellationToken.heartbeat(stage)` available as utility; not yet called in production scan loops (long scans use `AbortSignal` directly).
 - ✅ Existing APIs can pass no token/signal and keep current behavior.
 
 ## P2 — Artifact Store Improvements
