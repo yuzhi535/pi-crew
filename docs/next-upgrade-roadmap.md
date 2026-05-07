@@ -76,11 +76,11 @@ This roadmap is **not complete overall**. The `v0.1.46` release completed severa
 - P2.7 event-first UI — RunEventBus wired into appendEvent; dashboard, widget, sidebar auto-invalidate on events; snapshot cache invalidates on events.
 - P2.8 shared raw scan-entry cache — SharedScanCache implemented and wired into manifest reads (run-index) and active-run-registry (active manifest reads).
 - P3.1 tarball-install smoke — `scripts/release-smoke.mjs` verified; `npm run smoke:release` added.
-- Hook lifecycle — All hooks wired: `before_run_start`, `before_task_start`, `before_cancel`, `before_forget`, `before_cleanup`, `before_publish`, `task_result`. Only `session_before_switch` and `run_recovery` remain (need more use cases).
+- Hook lifecycle — All hooks wired: `before_run_start`, `before_task_start`, `before_cancel`, `before_forget`, `before_cleanup`, `before_publish`, `task_result`, `run_recovery`. Only `session_before_switch` remains (no cwd switch mechanism in current codebase).
 
 ### Remaining items
 
-- `session_before_switch` / `run_recovery` hooks — need specific use cases before wiring.
+- `session_before_switch` hook — no cwd/session switch mechanism in current codebase; placeholder for future.
 - P3.2 CI gate — integrate `smoke:release` into CI pipeline (requires CI config).
 
 ## Priority Legend
@@ -510,7 +510,8 @@ Errors are recorded in diagnostics/events, not uncontrolled exceptions.
 - ✅ `before_cleanup` hook wired (async handleCleanup conversion done).
 - ✅ `task_result` hook wired in task-runner before completed/failed event.
 - ✅ `before_publish` hook wired in handleExport.
-- ☐ `session_before_switch` / `run_recovery` not yet wired (need more use cases).
+- ✅ `run_recovery` hook wired in crash-recovery `applyRecoveryPlan`.
+- ☐ `session_before_switch` not yet wired (no cwd switch mechanism in current codebase; placeholder for future Pi lifecycle integration).
 
 ### P2.2 Require intent via policy/hook for destructive actions
 
