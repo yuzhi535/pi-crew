@@ -2,10 +2,11 @@ import type { AgentConfig, ResourceSource } from "../agents/agent-config.ts";
 import { discoverAgents } from "../agents/discover-agents.ts";
 import { discoverTeams } from "../teams/discover-teams.ts";
 import { discoverWorkflows } from "../workflows/discover-workflows.ts";
+import { discoverSkills } from "../skills/discover-skills.ts";
 import type { PiTeamsConfig } from "../config/config.ts";
 
 export type CapabilityKind = "team" | "workflow" | "agent" | "skill" | "tool" | "runtime";
-export type CapabilitySource = "builtin" | "project" | "user";
+export type CapabilitySource = "builtin" | "project" | "user" | "package";
 export type CapabilityState = "active" | "disabled" | "shadowed" | "missing";
 
 export interface CapabilityItem {
@@ -34,6 +35,24 @@ function normalizeAgents(agents: AgentConfig[], source: CapabilitySource, disabl
 			path: agent.filePath,
 			state: agentDisabled ? "disabled" : "active",
 			disabledReason: configDisabled ? "disabled by policy" : agent.disabled ? "disabled in config" : undefined,
+		};
+	});
+}
+
+function normalizeSkills(cwd: string, disabledIds: Set<string>): CapabilityItem[] {
+	const skills = discoverSkills(cwd);
+	return skills.map((skill) => {
+		const id = `skill:${skill.name}`;
+		const configDisabled = disabledIds.has(id);
+		return {
+			id,
+			kind: "skill" as const,
+			name: skill.name,
+			description: skill.description,
+			source: skill.source as CapabilitySource,
+			path: skill.path,
+			state: configDisabled ? "disabled" : "active",
+			disabledReason: configDisabled ? "disabled by policy" : undefined,
 		};
 	});
 }
@@ -81,12 +100,13 @@ export function buildCapabilityInventory(cwd: string, config?: PiTeamsConfig): C
 		...normalizeTeams(cwd, disabledIds),
 		...normalizeWorkflows(cwd, disabledIds),
 		...normalizeAgents([...agents.builtin, ...agents.user, ...agents.project], "builtin", disabledIds),
+		...normalizeSkills(cwd, disabledIds),
 	];
 
 	// Mark shadowed resources: project/user items with same kind:name as a builtin
-	const builtinNames = new Set(items.filter((item) => item.source === "builtin").map((item) => `${item.kind}:${item.name}`));
+	const builtinNames = new Set(items.filter((item) => item.source === "builtin" || item.source === "package").map((item) => `${item.kind}:${item.name}`));
 	for (const item of items) {
-		if (item.source !== "builtin" && builtinNames.has(`${item.kind}:${item.name}`)) {
+		if (item.source !== "builtin" && item.source !== "package" && builtinNames.has(`${item.kind}:${item.name}`)) {
 			item.state = "shadowed";
 			item.shadowedBy = `builtin:${item.kind}:${item.name}`;
 		}
