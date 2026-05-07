@@ -172,12 +172,12 @@ test("renderSkillInstructions enforces total skill budget", () => {
 	}
 });
 
-test("renderTaskPrompt includes the selected skill instruction block", () => {
+test("renderTaskPrompt includes the selected skill instruction block", async () => {
 	const skillBlock = renderSkillInstructions({ cwd: process.cwd(), role: "explorer", override: ["read-only-explorer"] }).block;
-	const prompt = renderTaskPrompt(manifest, step, task, agent, skillBlock);
-	assert.match(prompt, /# Applicable Skills/);
-	assert.match(prompt, /read-only-explorer/);
-	assert.match(prompt, /# Task Packet|Task:/);
+	const promptResult = await renderTaskPrompt(manifest, step, task, agent, skillBlock);
+	assert.match(promptResult.full, /# Applicable Skills/);
+	assert.match(promptResult.full, /read-only-explorer/);
+	assert.match(promptResult.full, /# Task Packet|Task:/);
 });
 
 test("distilled awesome-agent-skills are available to default roles", () => {

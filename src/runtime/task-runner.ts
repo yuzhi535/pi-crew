@@ -94,7 +94,8 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	const skillNames = input.skillNames ?? renderedSkills?.names;
 	const skillPaths = input.skillPaths ?? renderedSkills?.paths;
 
-	const prompt = renderTaskPrompt(manifest, input.step, task, input.agent, skillBlock);
+	const promptResult = await renderTaskPrompt(manifest, input.step, task, input.agent, skillBlock);
+	const prompt = promptResult.full;
 	const promptArtifact = writeArtifact(manifest.artifactsRoot, {
 		kind: "prompt",
 		relativePath: `prompts/${task.id}.md`,

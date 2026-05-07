@@ -158,6 +158,21 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 		} });
 	}
 
+	pi.registerCommand("team-retry", {
+		description: "Retry failed/cancelled pi-crew tasks: <runId> [taskId]",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const tokens = args.trim().split(/\s+/).filter(Boolean);
+			const runId = tokens.shift();
+			const taskId = tokens.shift();
+			if (!runId) {
+				await notifyCommandResult(ctx, "Usage: /team-retry <runId> [taskId]");
+				return;
+			}
+			const retryResult = await handleTeamTool({ action: "retry", runId, taskId }, teamCommandContext(ctx));
+			await notifyCommandResult(ctx, commandText(retryResult));
+		},
+	});
+
 	pi.registerCommand("team-respond", {
 		description: "Respond to a waiting pi-crew task: <runId> <taskId|--all> <message>",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {

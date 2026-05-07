@@ -98,7 +98,7 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 		const resumedIds = targetTasks.map((t) => t.id);
 		return result(
 			`Resumed ${resumedIds.length} waiting task(s): ${resumedIds.join(", ")}. Message: ${message || "(no message)"}`,
-			{ action: "respond", status: "ok", runId: fresh.manifest.runId, resumedIds, mailboxIds },
+			{ action: "respond", status: "ok", runId: fresh.manifest.runId, resumedIds, mailboxIds, intent: `responding to ${resumedIds.join(", ")} in ${fresh.manifest.runId}` },
 		);
 	});
 }

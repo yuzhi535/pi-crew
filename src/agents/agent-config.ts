@@ -25,6 +25,12 @@ export interface AgentConfig {
 	inheritSkills?: boolean;
 	routing?: RoutingMetadata;
 	memory?: "user" | "project" | "local";
+	/** Tool loading strategy: "essential" = always load all tools, "lean" = only load tools in defaultTools list */
+	loadMode?: "essential" | "lean";
+	/** Explicit tool list when loadMode is "lean". null means all available tools. */
+	defaultTools?: string[] | null;
+	/** Context mode: "fresh" = clean start, "fork" = inherit parent session context */
+	contextMode?: "fresh" | "fork";
 	disabled?: boolean;
 	override?: { source: "config"; path: string };
 }

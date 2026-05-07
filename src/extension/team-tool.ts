@@ -43,7 +43,7 @@ import { handleDoctor } from "./team-tool/doctor.ts";
 import { handleStatus } from "./team-tool/status.ts";
 import { handleArtifacts, handleEvents, handleSummary } from "./team-tool/inspect.ts";
 import { handleCleanup, handleExport, handleForget, handleImport, handleImports, handlePrune, handleWorktrees } from "./team-tool/lifecycle-actions.ts";
-import { handleCancel } from "./team-tool/cancel.ts";
+import { handleCancel, handleRetry } from "./team-tool/cancel.ts";
 import { handleRespond } from "./team-tool/respond.ts";
 import { handlePlan } from "./team-tool/plan.ts";
 import { logInternalError } from "../utils/internal-error.ts";
@@ -56,7 +56,7 @@ export { handleDoctor } from "./team-tool/doctor.ts";
 export { handleStatus } from "./team-tool/status.ts";
 export { handleArtifacts, handleEvents, handleSummary } from "./team-tool/inspect.ts";
 export { handleCleanup, handleExport, handleForget, handleImport, handleImports, handlePrune, handleWorktrees } from "./team-tool/lifecycle-actions.ts";
-export { handleCancel } from "./team-tool/cancel.ts";
+export { handleRetry } from "./team-tool/cancel.ts";
 export { handlePlan } from "./team-tool/plan.ts";
 export { handleApi } from "./team-tool/api.ts";
 
@@ -307,6 +307,7 @@ export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamConte
 		case "run": return handleRun(params, ctx);
 		case "status": return handleStatus(params, ctx);
 		case "cancel": return handleCancel(params, ctx);
+		case "retry": return handleRetry(params, ctx);
 		case "respond": return handleRespond(params, ctx);
 		case "plan": return handlePlan(params, ctx);
 		case "resume": return handleResume(params, ctx);

@@ -60,6 +60,7 @@ function scheduleBackgroundEarlyExitGuard(cwd: string, runId: string, pid: numbe
 export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
 	const goal = params.goal ?? params.task;
 	if (!goal) return result("Run requires goal or task.", { action: "run", status: "error" }, true);
+	const intentPrefix = goal.length > 60 ? `${goal.slice(0, 57)}...` : goal;
 
 	const teams = allTeams(discoverTeams(ctx.cwd));
 	const workflows = allWorkflows(discoverWorkflows(ctx.cwd));
@@ -149,7 +150,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 			"",
 			`Check status with: team status runId=${updatedManifest.runId}`,
 		].join("\n");
-		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
+		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot, intent: `running ${team.name}: ${intentPrefix}` });
 	}
 
 	if (runtime.safety === "blocked") {
@@ -188,7 +189,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 			"",
 			"The run continues in this Pi session without blocking the chat. It will be interrupted on session shutdown. Use /team-dashboard or /team-status to watch it.",
 		].join("\n");
-		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot });
+		return result(text, { action: "run", status: "ok", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot, intent: `running ${team.name}: ${intentPrefix}` });
 	}
 	let executed: Awaited<ReturnType<typeof executeTeamRun>>;
 	try {

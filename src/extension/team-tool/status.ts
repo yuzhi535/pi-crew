@@ -106,5 +106,5 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		"Recent events:",
 		...(events.length ? events.map((event) => `- ${event.time} ${event.type}${event.taskId ? ` ${event.taskId}` : ""}${event.message ? `: ${event.message}` : ""}`) : ["- (none)"]),
 	];
-	return result(lines.join("\n"), { action: "status", status: "ok", runId: manifest.runId, artifactsRoot: manifest.artifactsRoot });
+	return result(lines.join("\n"), { action: "status", status: "ok", runId: manifest.runId, artifactsRoot: manifest.artifactsRoot, intent: `status ${manifest.runId}: ${manifest.status}` });
 }

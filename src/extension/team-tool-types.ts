@@ -8,5 +8,6 @@ export interface TeamToolDetails {
 	foreignIds?: string[];
 	intent?: string;
 	resumedIds?: string[];
+	retriedTaskIds?: string[];
 	mailboxIds?: string[];
 }

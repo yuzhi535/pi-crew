@@ -422,5 +422,20 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 			return result(message, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 		}
 	}
+	if (operation === "diff") {
+		const diffArtifacts = loaded.manifest.artifacts.filter(a => a.kind === "diff" || a.kind === "patch");
+		if (diffArtifacts.length === 0) {
+			return result(`No diff artifacts found for run ${loaded.manifest.runId}. Diffs are captured in worktree mode.`, { action: "api", status: "ok", runId: loaded.manifest.runId, intent: `diff ${loaded.manifest.runId}: no diffs` });
+		}
+		const parts: string[] = [`Diff artifacts for run ${loaded.manifest.runId}:`];
+		for (const artifact of diffArtifacts) {
+			const content = safeReadContainedFile(loaded.manifest.artifactsRoot, artifact.path);
+			if (content) {
+				const display = content.length > 4000 ? content.slice(0, 4000) + "\n... (truncated)" : content;
+				parts.push(`\n--- ${artifact.path} ---\n${display}`);
+			}
+		}
+		return result(parts.join("\n"), { action: "api", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot, intent: `diff ${loaded.manifest.runId}` });
+	}
 	return result(`Unknown API operation: ${operation}`, { action: "api", status: "error", runId: loaded.manifest.runId }, true);
 }

@@ -20,6 +20,14 @@ function parseMemory(value: string | undefined): "user" | "project" | "local" | 
 	return value === "user" || value === "project" || value === "local" ? value : undefined;
 }
 
+function parseLoadMode(value: string | undefined): "essential" | "lean" | undefined {
+	return value === "essential" || value === "lean" ? value : undefined;
+}
+
+function parseContextMode(value: string | undefined): "fresh" | "fork" | undefined {
+	return value === "fresh" || value === "fork" ? value : undefined;
+}
+
 function parseAgentFile(filePath: string, source: ResourceSource): AgentConfig | undefined {
 	try {
 		const content = fs.readFileSync(filePath, "utf-8");
@@ -47,6 +55,9 @@ function parseAgentFile(filePath: string, source: ResourceSource): AgentConfig |
 			inheritProjectContext: frontmatter.inheritProjectContext === "true",
 		inheritSkills: frontmatter.inheritSkills === "true",
 		memory: parseMemory(frontmatter.memory),
+		loadMode: parseLoadMode(frontmatter.loadMode),
+		defaultTools: frontmatter.defaultTools !== undefined ? parseCsv(frontmatter.defaultTools) ?? null : undefined,
+		contextMode: parseContextMode(frontmatter.contextMode),
 		disabled: frontmatter.disabled === "true" || frontmatter.enabled === "false",
 			routing: triggers || useWhen || avoidWhen || cost || category ? { triggers, useWhen, avoidWhen, cost, category } : undefined,
 		};

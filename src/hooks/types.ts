@@ -3,6 +3,7 @@ export type HookName =
 	| "before_task_start"
 	| "task_result"
 	| "before_cancel"
+	| "before_retry"
 	| "before_forget"
 	| "before_cleanup"
 	| "before_publish"

@@ -4,6 +4,21 @@ import type { WorkflowStep } from "../../workflows/workflow-config.ts";
 import { buildMemoryBlock } from "../agent-memory.ts";
 import { permissionForRole } from "../role-permission.ts";
 import { renderTaskPacket } from "../task-packet.ts";
+import { buildWorkspaceTree } from "../workspace-tree.ts";
+
+/**
+ * When loadMode is "lean", emit a tool guidance block that tells the worker
+ * which tools to prefer.  This is a prompt-level hint only — actual tool
+ * filtering at the Pi level is a future optimisation (Phase 3.2+).
+ */
+export function toolGuidanceBlock(agent?: AgentConfig): string {
+	if (!agent || agent.loadMode !== "lean" || !agent.defaultTools?.length) return "";
+	return [
+		"# Tool Guidance",
+		`This role uses a focused tool set. Preferred tools: ${agent.defaultTools.join(", ")}.`,
+		"Other tools are available but should only be used when explicitly needed for the task.",
+	].join("\n");
+}
 
 function readOnlyRoleInstructions(role: string): string {
 	if (permissionForRole(role) !== "read_only") return "";
@@ -36,9 +51,24 @@ function inputDependencyContext(task: TeamTaskState): string {
 	return (task as TeamTaskState & { dependencyContextText?: string }).dependencyContextText ?? "";
 }
 
-export function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState, agent?: AgentConfig, skillBlock = ""): string {
+export interface RenderedTaskPrompt {
+	/** Stable sections that rarely change between tasks of the same role/cwd. */
+	stablePrefix: string;
+	/** Dynamic sections that change per-task (goal, task packet, skills, dependency context). */
+	dynamicSuffix: string;
+	/** Full rendered prompt (stablePrefix + dynamicSuffix). */
+	full: string;
+}
+
+export async function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState, agent?: AgentConfig, skillBlock = ""): Promise<RenderedTaskPrompt> {
 	const memoryBlock = agent?.memory ? buildMemoryBlock(agent.name, agent.memory, task.cwd, Boolean(agent.tools?.some((tool) => tool === "write" || tool === "edit"))) : "";
-	return [
+
+	// Build workspace tree for stable context
+	const tree = await buildWorkspaceTree(task.cwd);
+	const treeBlock = tree.rendered ? `# Workspace Structure\n${tree.rendered}` : "";
+
+	// Stable prefix: role instructions, coordination, workspace tree — rarely changes
+	const stablePrefix = [
 		"# pi-crew Worker Runtime Context",
 		`Run ID: ${manifest.runId}`,
 		`Team: ${manifest.team}`,
@@ -50,11 +80,6 @@ export function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, 
 		`Task cwd: ${task.cwd}`,
 		`Workspace mode: ${manifest.workspaceMode}`,
 		"",
-		`Goal:\n${manifest.goal}`,
-		"",
-		`Step: ${step.id}`,
-		`Role: ${step.role}`,
-		"",
 		"Protocol:",
 		"- Stay within the task scope unless the prompt explicitly says otherwise.",
 		"- Report blockers and verification evidence in the final result.",
@@ -65,6 +90,18 @@ export function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, 
 		"",
 		coordinationBridgeInstructions(task),
 		"",
+		treeBlock,
+		"",
+		toolGuidanceBlock(agent),
+	].filter(Boolean).join("\n");
+
+	// Dynamic suffix: goal, step, skills, task packet, dependency context, memory — changes per task
+	const dynamicSuffix = [
+		`Goal:\n${manifest.goal}`,
+		"",
+		`Step: ${step.id}`,
+		`Role: ${step.role}`,
+		"",
 		skillBlock,
 		"",
 		task.taskPacket ? renderTaskPacket(task.taskPacket) : "",
@@ -74,4 +111,7 @@ export function renderTaskPrompt(manifest: TeamRunManifest, step: WorkflowStep, 
 		"Task:",
 		step.task.replaceAll("{goal}", manifest.goal),
 	].join("\n");
+
+	const full = [stablePrefix, "", dynamicSuffix].join("\n");
+	return { stablePrefix, dynamicSuffix, full };
 }

@@ -88,7 +88,7 @@ export const TeamToolParams = Type.Object({
 });
 
 export interface TeamToolParamsValue {
-	action?: "run" | "plan" | "status" | "list" | "get" | "cancel" | "resume" | "respond" | "create" | "update" | "delete" | "doctor" | "cleanup" | "events" | "artifacts" | "worktrees" | "forget" | "summary" | "prune" | "export" | "import" | "imports" | "help" | "validate" | "config" | "init" | "recommend" | "autonomy" | "api" | "settings";
+	action?: "run" | "plan" | "status" | "list" | "get" | "cancel" | "retry" | "resume" | "respond" | "create" | "update" | "delete" | "doctor" | "cleanup" | "events" | "artifacts" | "worktrees" | "forget" | "summary" | "prune" | "export" | "import" | "imports" | "help" | "validate" | "config" | "init" | "recommend" | "autonomy" | "api" | "settings";
 	resource?: "agent" | "team" | "workflow";
 	team?: string;
 	workflow?: string;

@@ -70,6 +70,66 @@ function cancelReasonFromParams(params: TeamToolParamsValue): CancellationReason
 	return { code: reason.code, message: reason.message };
 }
 
+export async function handleRetry(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
+	if (!params.runId) return result("Retry requires runId.", { action: "retry", status: "error" }, true);
+	const loaded = loadRunManifestById(ctx.cwd, params.runId);
+	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "retry", status: "error" }, true);
+
+	// Pre-lock ownership check: reject foreign-owned runs
+	const foreignRun = typeof loaded.manifest.ownerSessionId === "string" && loaded.manifest.ownerSessionId !== ctx.sessionId;
+	if (foreignRun) {
+		return result(`Run ${loaded.manifest.runId} belongs to another session; not retried.`, { action: "retry", status: "error", runId: loaded.manifest.runId }, true);
+	}
+
+	// Execute before_retry hook after ownership confirmed, before mutation lock
+	const hookReport = await executeHook("before_retry", { runId: loaded.manifest.runId, cwd: ctx.cwd });
+	appendHookEvent(loaded.manifest, hookReport);
+	if (hookReport.outcome === "block") {
+		return result(`Retry blocked by hook: ${hookReport.reason ?? "before_retry hook blocked the operation."}`, { action: "retry", status: "error", runId: loaded.manifest.runId }, true);
+	}
+
+	const targetTaskId = typeof params.taskId === "string" ? params.taskId : undefined;
+
+	return withRunLockSync(loaded.manifest, () => {
+		const retryableStatuses: ReadonlySet<string> = new Set(["failed", "cancelled"]);
+
+		const matchingTasks = loaded.tasks.filter((task) => {
+			if (targetTaskId && task.id !== targetTaskId) return false;
+			return retryableStatuses.has(task.status);
+		});
+
+		if (matchingTasks.length === 0) {
+			return result(targetTaskId ? `Task '${targetTaskId}' is not failed/cancelled; nothing to retry.` : "No failed/cancelled tasks to retry.", { action: "retry", status: "error", runId: loaded.manifest.runId }, true);
+		}
+
+		const retriedIds = new Set(matchingTasks.map((t) => t.id));
+		const tasks = loaded.tasks.map((task) => {
+			if (!retriedIds.has(task.id)) return task;
+			const { error: _error, finishedAt: _finishedAt, terminalEvidence: _terminalEvidence, ...rest } = task;
+			return { ...rest, status: "queued" as const };
+		});
+		saveRunTasks(loaded.manifest, tasks);
+		try {
+			saveCrewAgents(loaded.manifest, tasks.map((task) => recordFromTask(loaded.manifest, task, "child-process")));
+		} catch (error) {
+			logInternalError("team-tool.handleRetry.crewAgents", error, `runId=${loaded.manifest.runId}`);
+		}
+
+		const retriedTaskIds = [...retriedIds];
+		for (const taskId of retriedTaskIds) {
+			appendEvent(loaded.manifest.eventsPath, { type: "task.retried", runId: loaded.manifest.runId, taskId, message: `Task ${taskId} queued for retry.` });
+		}
+
+		return result(`Retried ${retriedTaskIds.length} task(s) in run ${loaded.manifest.runId}.`, {
+			action: "retry",
+			status: "ok",
+			runId: loaded.manifest.runId,
+			retriedTaskIds: retriedTaskIds,
+			intent: `retrying ${retriedTaskIds.length} task(s) in ${loaded.manifest.runId}`,
+		});
+	});
+}
+
 export async function handleCancel(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
 	const intentError = enforceDestructiveIntent("cancel", params, ctx.config);
 	if (intentError) return intentError;

@@ -62,6 +62,7 @@ export const TEAM_EVENT_TYPES = [
 	"async.stale",
 	"task.waiting",
 	"task.resumed",
+	"task.retried",
 	"supervisor.contact",
 ] as const;
 export type TeamEventType = typeof TEAM_EVENT_TYPES[number];

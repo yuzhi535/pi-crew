@@ -11,6 +11,7 @@ export function piTeamsHelp(): string {
 		"- /team-summary <runId>",
 		"- /team-resume <runId>",
 		"- /team-cancel <runId>",
+	"- /team-retry <runId> [taskId]",
 		"",
 		"Inspection:",
 		"- /team-events <runId>",
