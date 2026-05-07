@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __test__clearManifestCache, __test__manifestCacheSize, createRunManifest, loadRunManifestById, saveRunTasks, saveRunTasksAsync, saveRunManifestAsync } from "../../src/state/state-store.ts";
+import { __test__clearManifestCache, __test__manifestCacheSize, createRunManifest, createRunPaths, createTasksFromWorkflow, loadRunManifestById, loadRunManifestByIdAsync, saveRunManifest, saveRunTasks, saveRunTasksAsync, saveRunManifestAsync, updateRunStatus } from "../../src/state/state-store.ts";
 import { DEFAULT_CACHE } from "../../src/config/defaults.ts";
 import { createManifestCache } from "../../src/runtime/manifest-cache.ts";
 import type { TeamConfig } from "../../src/teams/team-config.ts";
@@ -235,6 +235,173 @@ test("createRunManifest resolves project root from parent .git directory", () =>
 		assert.equal(fs.existsSync(manifestPath), true);
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+// --- New tests appended below ---
+
+test("saveRunManifest persists manifest synchronously", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-save-manifest-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const created = createRunManifest({ cwd, team, workflow, goal: "save-manifest" });
+		const updatedManifest = { ...created.manifest, summary: "sync save test" };
+		saveRunManifest(updatedManifest);
+		__test__clearManifestCache();
+		const loaded = loadRunManifestById(cwd, created.manifest.runId);
+		assert.equal(loaded?.manifest.summary, "sync save test");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("createRunPaths generates correct directory structure", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-paths-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const paths = createRunPaths(cwd);
+		assert.ok(paths.runId.startsWith("team_"));
+		assert.match(paths.stateRoot, /state[\\/]runs/);
+		assert.match(paths.artifactsRoot, /artifacts/);
+		assert.equal(paths.manifestPath, path.join(paths.stateRoot, "manifest.json"));
+		assert.equal(paths.tasksPath, path.join(paths.stateRoot, "tasks.json"));
+		assert.equal(paths.eventsPath, path.join(paths.stateRoot, "events.jsonl"));
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("createRunPaths accepts a custom run ID", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-custom-id-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const paths = createRunPaths(cwd, "my_custom_run_123");
+		assert.equal(paths.runId, "my_custom_run_123");
+		assert.match(paths.stateRoot, /my_custom_run_123/);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("createRunPaths rejects unsafe run IDs", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-unsafe-id-"));
+	try {
+		assert.throws(() => createRunPaths(cwd, "../traversal"), /Invalid runId/);
+		assert.throws(() => createRunPaths(cwd, "run with spaces"), /Invalid runId/);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("createTasksFromWorkflow builds tasks for each step", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-tasks-wf-"));
+	try {
+		const multiStepWorkflow: WorkflowConfig = {
+			...workflow,
+			steps: [
+				{ id: "explore", role: "planner", task: "Explore" },
+				{ id: "execute", role: "planner", task: "Execute", dependsOn: ["explore"] },
+			],
+		};
+		const tasks = createTasksFromWorkflow("run_123", multiStepWorkflow, team, cwd);
+		assert.equal(tasks.length, 2);
+		assert.equal(tasks[0].stepId, "explore");
+		assert.equal(tasks[0].status, "queued");
+		assert.equal(tasks[0].graph?.queue, "ready");
+		assert.equal(tasks[1].stepId, "execute");
+		assert.equal(tasks[1].dependsOn[0], "explore");
+		assert.equal(tasks[1].graph?.queue, "blocked");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("createTasksFromWorkflow uses agent from team roles", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-tasks-agent-"));
+	try {
+		const customTeam: TeamConfig = {
+			name: "custom",
+			description: "custom team",
+			source: "builtin",
+			filePath: "custom.md",
+			roles: [{ name: "planner", agent: "planner-agent" }, { name: "executor", agent: "exec-agent" }],
+		};
+		const multiRoleWorkflow: WorkflowConfig = {
+			name: "multi",
+			description: "multi role",
+			source: "builtin",
+			filePath: "multi.md",
+			steps: [
+				{ id: "plan", role: "planner", task: "Plan" },
+				{ id: "exec", role: "executor", task: "Execute" },
+			],
+		};
+		const tasks = createTasksFromWorkflow("run_abc", multiRoleWorkflow, customTeam, cwd);
+		assert.equal(tasks[0].agent, "planner-agent");
+		assert.equal(tasks[1].agent, "exec-agent");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("updateRunStatus transitions queued to running", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-update-status-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const created = createRunManifest({ cwd, team, workflow, goal: "status transition" });
+		assert.equal(created.manifest.status, "queued");
+		const updated = updateRunStatus(created.manifest, "running", "Starting run");
+		assert.equal(updated.status, "running");
+		assert.equal(updated.summary, "Starting run");
+		assert.ok(new Date(updated.updatedAt).getTime() >= new Date(created.manifest.updatedAt).getTime());
+		__test__clearManifestCache();
+		const loaded = loadRunManifestById(cwd, created.manifest.runId);
+		assert.equal(loaded?.manifest.status, "running");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("updateRunStatus throws on invalid transitions", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-bad-transition-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const created = createRunManifest({ cwd, team, workflow, goal: "bad transition" });
+		assert.throws(
+			() => updateRunStatus(created.manifest, "completed"),
+			/Invalid run status transition: queued -> completed/,
+		);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("updateRunStatus preserves previous summary when no new summary provided", () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-summary-preserve-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const created = createRunManifest({ cwd, team, workflow, goal: "summary preserve" });
+		const withSummary = { ...created.manifest, summary: "Existing summary" };
+		saveRunManifest(withSummary);
+		const updated = updateRunStatus(withSummary, "running");
+		assert.equal(updated.summary, "Existing summary");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("loadRunManifestByIdAsync loads manifest asynchronously", async () => {
+	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-async-load-"));
+	fs.mkdirSync(path.join(cwd, ".crew"));
+	try {
+		const created = createRunManifest({ cwd, team, workflow, goal: "async load" });
+		__test__clearManifestCache();
+		const loaded = await loadRunManifestByIdAsync(cwd, created.manifest.runId);
+		assert.equal(loaded?.manifest.runId, created.manifest.runId);
+		assert.equal(loaded?.manifest.goal, "async load");
+		assert.equal(loaded?.tasks.length, 1);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
 
