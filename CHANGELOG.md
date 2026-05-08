@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+## 0.1.49
+
+### Added
+
+- **Caveman output contracts** — Role-based output validation framework with `output-validator.ts`: regex-based format checking for explorer, executor, reviewer, verifier, security-reviewer roles. Non-blocking: validation failures emit `task.output_validation` events + set `needs_attention` but do NOT fail the task.
+- **Prose compressor** — `prose-compressor.ts` compresses verbose worker output for token-sensitive contexts (role-aware compression levels).
+- **Sensitive paths** — Word-boundary-aware token matching in `sensitive-paths.ts` prevents false positives (e.g. `secretary.ts` no longer flagged as `secret`).
+- **Symlink-safe I/O** — Artifact and shared output paths reject traversal attempts and symlinked root escapes.
+- **Output contract eval harness** — 19 unit tests covering three-arm evaluation (contract vs terse vs baseline), format compliance, token savings, regex safety (no `/g` lastIndex state leak).
+
+### Changed
+
+- **Delegation policy rewritten** — Replaced advisory "you should consider" text with a mandatory decision table: concrete thresholds (>3 files read OR >2 files edit = MUST delegate), explicit YES/NO cases per task type, conflict-safe task splitting rules. Injected into every session via `before_agent_start` hook.
+- **Powerbar dedup** — `powerbar-publisher.ts` now skips `powerbar:update` emit when segment data is unchanged (inspired by pi-powerbar's `segmentEquals` pattern). Combined with existing 200ms coalescing for minimal unnecessary renders.
+- **UI responsiveness** — `task-runner.ts` now emits `streamBridge` event immediately after `task.started`, giving the widget agent status within ~100ms instead of 2-5s (child process startup delay).
+- **"spawning…" indicator** — Widget shows "spawning…" for agents < 5 seconds old with no tool activity, distinguishing from "thinking…" for long-running agents.
+
+### Fixed
+
+- **H1: MCP proxy fallback** — `mcp-proxy.ts` now falls back to `enableMcp: true` when `createMcpProxyTools()` returns empty, so child sessions self-discover MCP instead of losing all access.
+- **H2: parallel-utils throw undefined** — `mapConcurrent` now throws the actual error instead of `throw undefined`.
+- **H3: Semaphore over-release** — `release()` guard against `#current > 0` prevents over-release corruption.
+- **M1: IRC tool TOCTOU** — `irc-tool.ts` wraps `sendIrcMessage`/`broadcastIrcMessage` in try-catch.
+- **M2: submit-result ordering** — Builds response string before calling `onYield`, wrapped in try-catch.
+- **M3: Sensitive paths false positives** — Word-boundary-aware token matching replaces substring matching.
+- **M4: atomic-write sleepSync** — Added WARNING comment about blocking main thread.
+- **M7: URL regex trailing punctuation** — Precise regex excludes trailing punctuation from URL matches.
+- **L1: parent-guard comment** — Corrected misleading comment about `process.kill` on Windows.
+- **Yield handler DRY** — Extracted `extractYieldDataFromArgs` helper, `isObjectRecord`/`isStringRecord` type guards, safe `find()` pattern.
+- **Event-log-rotation TOCTOU** — `compactEventLog` re-reads file after initial read to merge concurrent appends; `readEvents` skips corrupt JSON lines.
+- **Ghost agent dedup** — Fixed duplicate agent records in `crew-agent-records` after crash recovery.
+
+### Research
+
+- `docs/research/AGENT-EXECUTION-ARCHITECTURE.md` — Detailed comparison of 3 execution modes (oh-my-pi in-process, pi-crew child-process, pi-crew live-session).
+- `docs/research/UI-RESPONSIVENESS-AUDIT.md` — Root cause analysis for 2-5s agent spawn visibility delay, 5 proposed fixes with priority matrix.
+- `docs/research/DEEP-RESEARCH-PI-POWERBAR.md` — Deep analysis of pi-powerbar architecture (producer/consumer pattern, rendering, settings, comparison with pi-crew's powerbar publisher).
+
 ## 0.1.48
 
 ### Added
