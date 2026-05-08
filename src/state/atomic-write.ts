@@ -4,6 +4,42 @@ import { logInternalError } from "../utils/internal-error.ts";
 
 const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
 
+/**
+ * Symlink-safe file write guard (caveman-inspired).
+ * Returns true if the path is safe to write, false if it's a symlink or
+ * inside a symlinked directory owned by another user.
+ */
+function isSymlinkSafePath(filePath: string): boolean {
+	try {
+		const dir = path.dirname(filePath);
+		// Check if parent directory is a symlink
+		try {
+			const dirStat = fs.lstatSync(dir);
+			if (dirStat.isSymbolicLink()) {
+				// Resolve and verify ownership on Unix
+				const realDir = fs.realpathSync(dir);
+				const realStat = fs.statSync(realDir);
+				if (!realStat.isDirectory()) return false;
+				if (typeof process.getuid === "function" && realStat.uid !== process.getuid()) return false;
+			}
+		} catch {
+			// Directory doesn't exist yet — that's OK, mkdirSync will create it
+		}
+
+		// Check if target file itself is a symlink
+		try {
+			const fileStat = fs.lstatSync(filePath);
+			if (fileStat.isSymbolicLink()) return false;
+		} catch {
+			// File doesn't exist yet — that's OK
+		}
+
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function sleepSync(ms: number): void {
 	try {
 		const buffer = new SharedArrayBuffer(4);
@@ -56,10 +92,15 @@ export async function __test__renameWithRetryAsync(tempPath: string, filePath: s
 }
 
 export function atomicWriteFile(filePath: string, content: string): void {
+	if (!isSymlinkSafePath(filePath)) throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+	// Write temp with restrictive permissions
+	const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
 	try {
-		fs.writeFileSync(tempPath, content, "utf-8");
+		const fd = fs.openSync(tempPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW, 0o644);
+		fs.writeSync(fd, content, undefined, "utf-8");
+		fs.closeSync(fd);
 		__test__renameWithRetry(tempPath, filePath);
 	} catch (error) {
 		try {
@@ -73,6 +114,7 @@ export function atomicWriteFile(filePath: string, content: string): void {
 
 
 export async function atomicWriteFileAsync(filePath: string, content: string): Promise<void> {
+	if (!isSymlinkSafePath(filePath)) throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
 	await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
 	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
 	try {

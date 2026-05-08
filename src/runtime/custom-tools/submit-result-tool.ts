@@ -49,8 +49,8 @@ export function createSubmitResultTool(
 		name: "submit_result",
 		label: "Submit Result",
 		description:
-			"Submit your final task result. Call this tool when you have completed your assigned task. " +
-			"Provide a summary of what you did, optional artifacts (file paths or content), and optional structured data.",
+			"Submit final task result. Call when task complete. " +
+			"Provide summary, optional artifacts (file paths/content), optional structured data.",
 		parameters: SubmitResultParams,
 		promptSnippet: "Submit your task result when done using submit_result",
 		promptGuidelines: [

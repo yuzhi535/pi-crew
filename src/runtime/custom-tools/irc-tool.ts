@@ -66,8 +66,8 @@ export function createIrcTool(
 		name: "irc",
 		label: "IRC",
 		description:
-			"Send messages to other live agents running in the same team. " +
-			'Use `op: "list"` to see available peers, `op: "send"` with `to` (agent ID or "all") and `message` to communicate.',
+			"Send messages to other live agents in same team. " +
+			'Use `op: "list"` to see peers, `op: "send"` with `to` (agent ID or "all") and `message` to communicate.',
 		parameters: IrcParams,
 		promptSnippet: "Send messages to other live agents via the irc tool",
 		promptGuidelines: [

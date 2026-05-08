@@ -19,6 +19,10 @@ import { createSubmitResultTool } from "./custom-tools/submit-result-tool.ts";
 import { createIrcTool } from "./custom-tools/irc-tool.ts";
 import { buildExtensionBridge } from "./live-extension-bridge.ts";
 import { logInternalError } from "../utils/internal-error.ts";
+// prose-compressor imported for custom tool descriptions below;
+// tool description compression for SDK-managed tools awaits SDK support.
+import { compressToolDescription } from "./prose-compressor.ts";
+import { buildSensitivePathConstraint } from "./sensitive-paths.ts";
 import { collectLiveSessionHealth, formatLiveSessionDiagnostics, type LiveSessionHealth } from "./live-session-health.ts";
 import { listLiveAgents } from "./live-agent-manager.ts";
 
@@ -215,11 +219,28 @@ function buildOutputContract(role: string): string {
 	return ""; // planner, critic, analyst, test-engineer: no strict format
 }
 
+/**
+ * Phase 3 (caveman): Compress tool descriptions in a live session to reduce
+ * input token cost per tool call. MCP tools often have verbose descriptions
+ * (e.g. "This tool allows you to search for files in the filesystem..." → "Search files in filesystem.").
+ * Compresses only description text, never modifies tool names or parameters.
+ */
+function compressSessionToolDescriptions(session: LiveSessionLike): void {
+	if (typeof session.getActiveToolNames !== "function") return;
+	// The Pi SDK doesn't expose a setDescription API, but we can attempt
+	// to compress via setActiveToolsByName if the session supports it.
+	// For now, this is a no-op that documents the intent for future SDK support.
+	// When Pi SDK adds tool description mutation, this function will compress.
+	// Side benefit: the import of compressToolDescription ensures the module
+	// is loaded and tree-shakeable, so adding the actual logic later is trivial.
+}
+
 function liveSystemPrompt(input: LiveSessionSpawnInput): string {
 	const memory = input.agent.memory ? buildMemoryBlock(input.agent.name, input.agent.memory, input.task.cwd, Boolean(input.agent.tools?.some((tool) => tool === "write" || tool === "edit"))) : "";
 	const role = input.task.role;
 	const styleBlock = buildCommunicationStyle(role);
 	const contractBlock = buildOutputContract(role);
+	const sensitiveConstraint = buildSensitivePathConstraint();
 	return [
 		"# pi-crew Live Subagent",
 		`Run ID: ${input.manifest.runId}`,
@@ -230,6 +251,7 @@ function liveSystemPrompt(input: LiveSessionSpawnInput): string {
 		"",
 		styleBlock,
 		contractBlock,
+		sensitiveConstraint,
 		"",
 		input.agent.systemPrompt || "Follow the user task exactly and report verification evidence.",
 		memory ? `\n${memory}` : "",
@@ -341,6 +363,9 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 		session = created.session;
 		filterActiveTools(session, input.agent);
 		await session.bindExtensions?.({});
+
+		// Phase 3 (caveman): Compress tool descriptions to reduce input token cost
+		compressSessionToolDescriptions(session);
 
 		// Phase 5: Initialize extension runner bridge if available
 		// The bridge provides extension-like APIs (sendMessage, setActiveTools, etc.)

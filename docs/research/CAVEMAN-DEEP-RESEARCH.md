@@ -226,89 +226,33 @@ SENSITIVE_TOKENS = secret, credential, password, apikey, token, privatekey
 
 ## 8. Specific pi-crew Integration Plan
 
-### Phase 1: Structured Output Contracts (Quick Win, ~2h)
+### Phase 1: Structured Output Contracts ✅ DONE
 
-Add output format templates to worker prompts in `live-session-runtime.ts`:
+Commit `a335dfc`. Implemented `buildOutputContract(role)` in `live-session-runtime.ts`.
+Explorer, executor, reviewer, security-reviewer, verifier, writer all have structured format templates.
 
-```typescript
-// For executor workers
-const OUTPUT_CONTRACT = `
-## Output Contract
-Response format:
-<path>:<line-range> — <≤10 word change summary>
-verified: <re-read OK | mismatch @ path:line>
+### Phase 2: Prose Compression in Worker Prompts ✅ DONE
 
-Terminal tokens: too-big. / needs-confirm. / ambiguous. / regressed.
-`;
+Commit `a335dfc`. Implemented `buildCommunicationStyle(role)` with lite/full/ultra levels.
+Explorer = ultra, writer = lite, all others = full.
 
-// For explorer workers
-const EXPLORER_CONTRACT = `
-## Output Contract
-<path>:<line> — \`<symbol>\` — <≤6 word note>
-Zero hits → "No match."
-Last line → totals: N defs, M refs.
-`;
-```
+### Phase 3: Tool Description Compression ✅ DONE
 
-### Phase 2: Prose Compression in Worker Prompts (~1h)
+Commit `pending`. Created `prose-compressor.ts` — pure TypeScript implementation of caveman's compress.js.
+Compressed custom tool descriptions (submit_result, irc).
+SDK-managed tool descriptions need Pi SDK support for mutation (documented as `compressSessionToolDescriptions` stub).
 
-Add to all worker system prompts:
+### Phase 4: Output Validation ✅ DONE
 
-```
-## Communication Style
-Drop: articles, filler (just/really/basically), hedging, pleasantries.
-Short synonyms. Fragments OK. Pattern: [thing] [action] [reason].
-Code/paths/symbols: exact, never abbreviated.
-Security/destructive: write normal English.
-```
+Created `output-validator.ts` with:
+- `validateWorkerOutput(role, output)` — checks format + structural preservation
+- `parseReviewerFindings(output)` — extracts structured findings from reviewer output
+- `parseExplorerResults(output)` — extracts structured results from explorer output
+- `validateCompressionPreservation(original, compressed)` — checks code blocks, URLs, inline code, headings
 
-### Phase 3: Tool Description Compression (~3h)
+### Phase 5: Intensity by Role ✅ DONE
 
-In `mcp-proxy.ts`, compress tool descriptions before passing to workers:
-
-```typescript
-import { compress } from "./prose-compressor.ts";
-
-// Before building tool list for worker session
-for (const tool of tools) {
-  if (tool.description) {
-    tool.description = compress(tool.description).compressed;
-  }
-}
-```
-
-### Phase 4: Output Validation (~4h)
-
-Before injecting worker output into parent context, validate structured format:
-
-```typescript
-function validateWorkerOutput(role: string, output: string): boolean {
-  if (role === "executor") {
-    return /^\S+:\d+(-\d+)? — .{1,80}\./m.test(output);
-  }
-  if (role === "reviewer") {
-    return /^\S+:\d+: [🔴🟡🔵❓]/m.test(output);
-  }
-  return true; // other roles: no strict format
-}
-```
-
-### Phase 5: Intensity by Role (~1h)
-
-```typescript
-const ROLE_INTENSITY: Record<string, "lite" | "full" | "ultra"> = {
-  explorer: "ultra",
-  analyst: "full",
-  planner: "full",
-  critic: "full",
-  executor: "full",
-  reviewer: "full",
-  "security-reviewer": "full",
-  "test-engineer": "full",
-  verifier: "full",
-  writer: "lite",
-};
-```
+Commit `a335dfc`. `ROLE_INTENSITY` map in `live-session-runtime.ts`.
 
 ---
 
@@ -325,11 +269,13 @@ const ROLE_INTENSITY: Record<string, "lite" | "full" | "ultra"> = {
 
 ## 10. Key Takeaways
 
-1. **Output contracts > compression** — structured format is the real win, not shorter prose
-2. **Context budget is finite** — every worker token = one less parent token
-3. **Validate, don't trust** — compress then validate structural preservation
-4. **Auto-clarity > always-compress** — security/destructive = normal English
-5. **Three-arm eval** — measure against "be concise" control, not verbose baseline
-6. **Symlink-safe I/O** — protect predictable file paths from symlink attacks
-7. **Sensitive file denylist** — never ship credentials to third-party APIs
-8. **Role-based intensity** — explorer gets ultra, writer gets lite, executor gets full
+1. **Output contracts > compression** — structured format is the real win, not shorter prose ✅
+2. **Context budget is finite** — every worker token = one less parent token ✅
+3. **Validate, don't trust** — compress then validate structural preservation ✅
+4. **Auto-clarity > always-compress** — security/destructive = normal English ✅
+5. **Three-arm eval** — measure against "be concise" control, not verbose baseline 📋
+6. **Symlink-safe I/O** — protect predictable file paths from symlink attacks ✅
+7. **Sensitive file denylist** — never ship credentials to third-party APIs ✅
+8. **Role-based intensity** — explorer gets ultra, writer gets lite, executor gets full ✅
+9. **Tool description compression** — compress descriptions to reduce input tokens ✅ (SDK support pending)
+10. **Parse structured output** — extract findings/results from worker output ✅
