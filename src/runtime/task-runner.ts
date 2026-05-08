@@ -98,6 +98,9 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 	if (runtimeKind === "child-process") ({ task, tasks } = checkpointTask(manifest, tasks, task, "started"));
 	upsertCrewAgent(manifest, recordFromTask(manifest, task, runtimeKind));
 	appendEvent(manifest.eventsPath, { type: "task.started", runId: manifest.runId, taskId: task.id, data: { role: task.role, agent: task.agent, runtime: runtimeKind, cwd: task.cwd, worktreePath: workspace.worktreePath, worktreeBranch: workspace.branch, worktreeReused: workspace.reused } });
+	// Emit immediate UI notification so widget shows agent as "running" within ~100ms
+	// instead of waiting for child process first JSON event (2-5s delay).
+	streamBridge?.handler({ runId: manifest.runId, taskId: task.id, eventType: "task.started", timestamp: Date.now() });
 	const permissionMode = permissionForRole(task.role);
 	const renderedSkills = input.skillBlock === undefined ? renderSkillInstructions({ cwd: task.cwd, role: task.role, agent: input.agent, teamRole: { skills: input.teamRoleSkills }, step: input.step, override: input.skillOverride }) : undefined;
 	const skillBlock = input.skillBlock ?? renderedSkills?.block;

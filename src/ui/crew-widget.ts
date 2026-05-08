@@ -79,7 +79,11 @@ function agentActivity(agent: CrewAgentRecord): string {
 	if (recent) return recent.replace(/\s+/g, " ").trim();
 	if (agent.progress?.activityState === "needs_attention") return "needs attention";
 	if (agent.status === "queued") return "queued";
-	if (agent.status === "running") return "thinking…";
+	if (agent.status === "running") {
+		const age = agent.startedAt ? Date.now() - new Date(agent.startedAt).getTime() : Infinity;
+		if (age < 5000 && !agent.progress?.currentTool) return "spawning…";
+		return "thinking…";
+	}
 	if (agent.status === "failed") return agent.error ?? "failed";
 	return "done";
 }
