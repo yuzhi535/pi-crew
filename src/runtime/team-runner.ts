@@ -648,6 +648,9 @@ async function executeTeamRunCore(
 			}
 		}
 		const batchTasks = readyBatch.filter((task) => tasks.find((t) => t.id === task.id && t.status !== "skipped"));
+		if (batchTasks.length > 1) {
+			appendEvent(manifest.eventsPath, { type: "task.parallel_start", runId: manifest.runId, message: `Launching ${batchTasks.length} tasks in PARALLEL (concurrency=${concurrency.selectedCount}): ${batchTasks.map((t) => `${t.role}(${t.id})`).join(", ")}`, data: { taskIds: batchTasks.map((t) => t.id), roles: batchTasks.map((t) => t.role), concurrency: concurrency.selectedCount } });
+		}
 		const results = await mapConcurrent(
 			batchTasks,
 			concurrency.selectedCount,

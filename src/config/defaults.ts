@@ -31,12 +31,12 @@ export const DEFAULT_CONCURRENCY = {
 	hardCap: 8,
 	workflow: {
 		parallelResearch: 4,
-		research: 2,
-		implementation: 2,
-		review: 2,
-		default: 2,
+		research: 3,
+		implementation: 4,
+		review: 3,
+		default: 3,
 	},
-	fallback: 1,
+	fallback: 2,
 };
 
 export const DEFAULT_EVENT_LOG = {

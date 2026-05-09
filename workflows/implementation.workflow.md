@@ -31,8 +31,13 @@ ADAPTIVE_PLAN_JSON_START
 ADAPTIVE_PLAN_JSON_END
 
 Rules:
-- Choose the smallest effective number of subagents.
-- Use parallel tasks in the same phase only when their work is independent.
-- Later phases depend on all tasks in the previous phase.
+- **MAXIMIZE PARALLELISM**: Put independent tasks in the SAME phase so they run concurrently.
+  For example, if a task needs exploration + implementation + review, use 3 phases:
+  Phase 1: explorers (2-3 in parallel), Phase 2: executors (2-3 in parallel), Phase 3: reviewers (2 in parallel).
+  NEVER create sequential phases when tasks are independent.
+- Choose the smallest effective number of subagents per phase.
+- Tasks within the same phase run in parallel; phases run sequentially.
 - Include verification/review tasks when implementation is requested.
 - Do not include more than 12 total subagents; split or summarize oversized plans instead.
+- A good plan for a complex task has 2-4 phases with 2-4 parallel tasks each.
+- A simple task may have just 1-2 phases with 1-2 tasks.

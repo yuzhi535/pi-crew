@@ -23,7 +23,9 @@ export function defaultWorkflowConcurrency(workflowName: string, workflowMaxConc
 	if (workflowMaxConcurrency !== undefined) return workflowMaxConcurrency;
 	if (workflowName === "parallel-research") return DEFAULT_CONCURRENCY.workflow.parallelResearch;
 	if (workflowName === "research") return DEFAULT_CONCURRENCY.workflow.research;
-	if (workflowName === "implementation" || workflowName === "review" || workflowName === "default") return DEFAULT_CONCURRENCY.workflow.implementation;
+	if (workflowName === "implementation") return DEFAULT_CONCURRENCY.workflow.implementation;
+	if (workflowName === "review") return DEFAULT_CONCURRENCY.workflow.review;
+	if (workflowName === "default") return DEFAULT_CONCURRENCY.workflow.default;
 	return DEFAULT_CONCURRENCY.fallback;
 }
 

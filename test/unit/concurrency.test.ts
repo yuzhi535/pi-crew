@@ -4,11 +4,11 @@ import { defaultWorkflowConcurrency, resolveBatchConcurrency } from "../../src/r
 
 test("default workflow concurrency preserves existing workflow defaults", () => {
 	assert.equal(defaultWorkflowConcurrency("parallel-research"), 4);
-	assert.equal(defaultWorkflowConcurrency("research"), 2);
-	assert.equal(defaultWorkflowConcurrency("implementation"), 2);
-	assert.equal(defaultWorkflowConcurrency("review"), 2);
-	assert.equal(defaultWorkflowConcurrency("default"), 2);
-	assert.equal(defaultWorkflowConcurrency("unknown"), 1);
+	assert.equal(defaultWorkflowConcurrency("research"), 3);
+	assert.equal(defaultWorkflowConcurrency("implementation"), 4);
+	assert.equal(defaultWorkflowConcurrency("review"), 3);
+	assert.equal(defaultWorkflowConcurrency("default"), 3);
+	assert.equal(defaultWorkflowConcurrency("unknown"), 2);
 	assert.equal(defaultWorkflowConcurrency("review", 6), 6);
 	assert.equal(defaultWorkflowConcurrency("unknown", 7), 7);
 });
@@ -38,7 +38,7 @@ test("team concurrency can raise workflow-constrained default when no limit is s
 
 test("zero ready tasks selects zero while positive ready tasks select at least one", () => {
 	assert.equal(resolveBatchConcurrency({ workflowName: "unknown", readyCount: 0 }).selectedCount, 0);
-	assert.equal(resolveBatchConcurrency({ workflowName: "unknown", readyCount: 2 }).selectedCount, 1);
+	assert.equal(resolveBatchConcurrency({ workflowName: "unknown", readyCount: 2 }).selectedCount, 2);
 });
 
 test("worker concurrency is capped by default", () => {
