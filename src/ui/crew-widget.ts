@@ -42,6 +42,7 @@ interface CrewWidgetModel {
 	notificationCount?: number;
 	manifestCache?: ManifestCache;
 	snapshotCache?: RunSnapshotCache;
+	preloadManifests?: TeamRunManifest[];
 }
 
 export interface CrewWidgetState {
@@ -261,7 +262,7 @@ class CrewWidgetComponent implements WidgetComponent {
 	}
 
 	render(width: number): string[] {
-		const runs = activeWidgetRuns(this.model.cwd, this.model.manifestCache, this.model.snapshotCache);
+		const runs = activeWidgetRuns(this.model.cwd, this.model.manifestCache, this.model.snapshotCache, this.model.preloadManifests);
 		const signature = `${this.buildSignature(runs)}:${this.model.notificationCount ?? 0}`;
 		const runningGlyph = SPINNER[this.model.frame % SPINNER.length] ?? SPINNER[0];
 		const headerGlyph = runs.length ? SPINNER[0] : " ";
@@ -321,7 +322,7 @@ export function updateCrewWidget(
 		return;
 	}
 	const needsWidgetInstall = state.lastVisibility !== "visible" || state.lastPlacement !== placement || state.lastKey !== WIDGET_KEY || state.lastMaxLines !== maxLines || state.lastCwd !== ctx.cwd || !state.model;
-	if (!state.model) state.model = { cwd: ctx.cwd, frame: state.frame, maxLines, notificationCount: state.notificationCount ?? 0, manifestCache, snapshotCache };
+	if (!state.model) state.model = { cwd: ctx.cwd, frame: state.frame, maxLines, notificationCount: state.notificationCount ?? 0, manifestCache, snapshotCache, preloadManifests: preloadedManifests };
 	else {
 		state.model.cwd = ctx.cwd;
 		state.model.frame = state.frame;
@@ -329,6 +330,7 @@ export function updateCrewWidget(
 		state.model.notificationCount = state.notificationCount ?? 0;
 		state.model.manifestCache = manifestCache;
 		state.model.snapshotCache = snapshotCache;
+		state.model.preloadManifests = preloadedManifests;
 	}
 	if (needsWidgetInstall) {
 		const model = state.model;

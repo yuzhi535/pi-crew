@@ -542,7 +542,16 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		const fallbackMs = loadedConfig.config.ui?.dashboardLiveRefreshMs ?? DEFAULT_UI.refreshMs;
 		renderScheduler = new RenderScheduler(pi.events, renderTick, {
 			fallbackMs,
-			onInvalidate: () => getRunSnapshotCache(ctx.cwd).invalidate(),
+			onInvalidate: (payload: unknown) => {
+				// Invalidate only the specific run, not the entire cache.
+				// Full cache.clear() causes widget flicker — the widget component's
+				// render() may run before renderTick rebuilds the preloaded frame,
+				// seeing an empty cache and returning no agents.
+				const runId = typeof payload === "object" && payload !== null && "runId" in payload && typeof (payload as { runId: unknown }).runId === "string"
+					? (payload as { runId: string }).runId
+					: undefined;
+				getRunSnapshotCache(ctx.cwd).invalidate(runId);
+			},
 		});
 		// Start async preload loop — refreshes snapshot cache in background
 		startPreloadLoop(fallbackMs);
