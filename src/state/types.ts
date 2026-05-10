@@ -267,6 +267,15 @@ export interface TeamTaskState {
 		lastDecision?: PolicyDecision;
 	};
 	controlReservation?: ControlReservation;
+
+	/** Structured diagnostics per task (ASI pattern from pi-autoresearch). */
+	diagnostics?: Record<string, unknown>;
+
+	/** Segment counter for task retry isolation. Default 0 (first attempt). Incremented on retry. */
+	segment?: number;
+
+	/** Parsed metric key-values from worker output (CREW_METRIC lines). */
+	metrics?: Record<string, number>;
 }
 
 export interface ControlReservation {
