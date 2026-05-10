@@ -91,10 +91,6 @@ export const DEFAULT_CACHE = {
 	manifestMaxEntries: 64,
 };
 
-export const DEFAULT_METRIC_PARSER = {
-	linePrefix: "CREW_METRIC" as const,
-};
-
 export const DEFAULT_SUBAGENT = {
 	stuckBlockedNotifyMs: 5 * 60_000,
 };

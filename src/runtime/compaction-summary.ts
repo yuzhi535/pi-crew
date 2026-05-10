@@ -38,8 +38,10 @@ export function summaryPathsFor(stateRoot: string): SummaryPaths {
 }
 
 /**
- * Read the last N lines from a text file efficiently.
- * Reads from the end of the file to avoid loading the entire file into memory.
+ * Read the last N lines from a text file.
+ *
+ * Note: Currently reads the entire file into memory then slices.
+ * For very large event logs, consider a reverse reader approach.
  */
 function readTailLines(filePath: string, maxLines: number): string[] {
 	if (!fs.existsSync(filePath)) return [];

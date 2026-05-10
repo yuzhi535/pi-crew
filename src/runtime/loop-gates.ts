@@ -113,14 +113,9 @@ export function computeTaskProgressSignal(task: TeamTaskState, artifactsDir: str
 	let ranTests = false;
 	const textToSearch = [
 		task.error ?? "",
-		task.taskPacket?.objective ?? "",
+		task.terminalEvidence ? JSON.stringify(task.terminalEvidence) : "",
+		task.diagnostics ? JSON.stringify(task.diagnostics) : "",
 	].join(" ");
-
-	// Also check diagnostics for test-related info
-	if (task.diagnostics) {
-		const diagText = JSON.stringify(task.diagnostics);
-		textToSearch.concat(diagText);
-	}
 
 	const lowerText = textToSearch.toLowerCase();
 	ranTests = TEST_KEYWORDS.some((keyword) => lowerText.includes(keyword.toLowerCase()));

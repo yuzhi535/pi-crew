@@ -125,7 +125,8 @@ describe("computeTaskProgressSignal", () => {
 		assert.equal(signal.ranTests, true);
 	});
 
-	it("detects ranTests from task packet objective with test keywords", () => {
+	it("detects ranTests from task packet objective is no longer used", () => {
+		// Note: objective is instructions, not output — removed from search text per review
 		const task = makeTask({
 			taskPacket: {
 				objective: "Run all tests and report results",
@@ -144,6 +145,23 @@ describe("computeTaskProgressSignal", () => {
 					allowManualEvidence: false,
 				},
 			},
+		});
+		const signal = computeTaskProgressSignal(task, "/tmp");
+		// Objective alone should NOT trigger ranTests — it's instructions, not output
+		assert.equal(signal.ranTests, false);
+	});
+
+	it("detects ranTests from task diagnostics with test keywords", () => {
+		const task = makeTask({
+			diagnostics: { result: "all tests passed: 42 tests ran successfully" },
+		});
+		const signal = computeTaskProgressSignal(task, "/tmp");
+		assert.equal(signal.ranTests, true);
+	});
+
+	it("detects ranTests from task result field with test keywords", () => {
+		const task = makeTask({
+			terminalEvidence: [{ operation: "worker", status: "completed", finishedAt: "2026-01-01T00:01:00Z", reason: { code: "success", message: "Test suite completed: 15 passed, 0 failed" } }],
 		});
 		const signal = computeTaskProgressSignal(task, "/tmp");
 		assert.equal(signal.ranTests, true);

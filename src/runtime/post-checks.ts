@@ -54,6 +54,10 @@ function resolveScriptPath(config: PostCheckConfig): string | undefined {
  * If no script path is available (neither config nor env var), the check
  * passes by default with a note.
  *
+ * **Security note:** The script path is user-configurable (config or env var)
+ * and executed with full inherited environment. Only use with trusted script
+ * paths. No path containment validation is performed.
+ *
  * @param config - Post-check configuration (script path and timeout)
  * @param cwd - Working directory for script execution
  * @returns PostCheckResult with pass/fail status, output, and timing

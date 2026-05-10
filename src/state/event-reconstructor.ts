@@ -30,10 +30,10 @@ const TASK_LIFECYCLE_EVENT_TYPES = new Set([
 	"task.red",
 ]);
 
-/**
- * Mapping from event type to the reconstructed task status.
- * Events not in this map don't change the task status.
- */
+/** Terminal events that set finishedAt. */
+const TERMINAL_EVENTS = new Set(["task.completed", "task.failed", "task.cancelled", "task.skipped"]);
+
+/** Mapping from event type to the reconstructed task status. */
 const EVENT_STATUS_MAP: Readonly<Record<string, string>> = {
 	"task.created": "created",
 	"task.started": "running",
@@ -79,38 +79,18 @@ export interface ReconstructionResult {
 /** Input: either a file path to read events from, or an in-memory array. */
 export type EventSource = string | TeamEvent[];
 
-/**
- * Determine if an event carries task lifecycle information we can reconstruct from.
- */
 function isTaskLifecycleEvent(event: TeamEvent): boolean {
 	return TASK_LIFECYCLE_EVENT_TYPES.has(event.type);
 }
 
-/**
- * Derive a task status string from an event type.
- * Returns undefined for event types that don't change status.
- */
 function statusFromEventType(eventType: string): string | undefined {
 	return EVENT_STATUS_MAP[eventType];
 }
 
-/**
- * Safely extract a string from unknown data.
- */
-function safeString(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
-}
-
-/**
- * Safely extract a number from unknown data.
- */
 function safeNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-/**
- * Safely extract a Record<string, unknown> from unknown data.
- */
 function safeRecord(value: unknown): Record<string, unknown> | undefined {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return undefined;
@@ -118,9 +98,6 @@ function safeRecord(value: unknown): Record<string, unknown> | undefined {
 	return value as Record<string, unknown>;
 }
 
-/**
- * Safely extract a Record<string, number> from unknown data.
- */
 function safeNumericRecord(value: unknown): Record<string, number> | undefined {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return undefined;
@@ -137,27 +114,67 @@ function safeNumericRecord(value: unknown): Record<string, number> | undefined {
 	return record;
 }
 
-/**
- * Parse a raw line into a TeamEvent, returning undefined for malformed lines.
- */
 function parseEventLine(line: string): TeamEvent | undefined {
 	const trimmed = line.trim();
-	if (trimmed.length === 0) {
-		return undefined;
-	}
+	if (trimmed.length === 0) return undefined;
 	try {
 		const parsed = JSON.parse(trimmed);
-		if (typeof parsed !== "object" || parsed === null) {
-			return undefined;
-		}
-		// Minimal shape validation: must have type and runId
-		if (typeof parsed.type !== "string" || typeof parsed.runId !== "string") {
-			return undefined;
-		}
+		if (typeof parsed !== "object" || parsed === null) return undefined;
+		if (typeof parsed.type !== "string" || typeof parsed.runId !== "string") return undefined;
 		return parsed as TeamEvent;
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * Process a stream of validated TeamEvents into reconstructed task states.
+ * Shared logic for both file-based and line-based reconstruction.
+ */
+function processEvents(events: Iterable<TeamEvent>, eventCount: number, corruptedCount: number): ReconstructionResult {
+	const tasks = new Map<string, ReconstructedTaskState>();
+
+	for (const event of events) {
+		if (typeof event.taskId !== "string" || event.taskId.length === 0) continue;
+		if (!isTaskLifecycleEvent(event)) continue;
+
+		const taskId = event.taskId;
+		let task = tasks.get(taskId);
+		if (!task) {
+			task = { id: taskId, status: "created" };
+			tasks.set(taskId, task);
+		}
+
+		const newStatus = statusFromEventType(event.type);
+		if (newStatus && RECONSTRUCTABLE_STATUSES.has(newStatus)) {
+			task.status = newStatus;
+		}
+
+		if (event.type === "task.started") {
+			task.startedAt = event.time;
+		}
+
+		if (TERMINAL_EVENTS.has(event.type)) {
+			task.finishedAt = event.time;
+		}
+
+		if (event.type === "task.failed" && event.message) {
+			task.error = event.message;
+		}
+
+		if (event.data) {
+			const segment = safeNumber(event.data.segment);
+			if (segment !== undefined) task.segment = segment;
+
+			const diagnostics = safeRecord(event.data.diagnostics);
+			if (diagnostics !== undefined) task.diagnostics = diagnostics;
+
+			const metrics = safeNumericRecord(event.data.metrics);
+			if (metrics !== undefined) task.metrics = metrics;
+		}
+	}
+
+	return { tasks, eventCount, corruptedCount };
 }
 
 /**
@@ -168,82 +185,7 @@ function parseEventLine(line: string): TeamEvent | undefined {
  */
 export function reconstructTasksFromEvents(source: EventSource): ReconstructionResult {
 	const events: TeamEvent[] = typeof source === "string" ? readEvents(source) : source;
-	const tasks = new Map<string, ReconstructedTaskState>();
-	let eventCount = 0;
-	let corruptedCount = 0;
-
-	for (const rawEvent of events) {
-		eventCount++;
-
-		// Validate event shape
-		if (typeof rawEvent !== "object" || rawEvent === null) {
-			corruptedCount++;
-			continue;
-		}
-
-		const event = rawEvent as TeamEvent;
-
-		// Must have a taskId to be relevant for task reconstruction
-		if (typeof event.taskId !== "string" || event.taskId.length === 0) {
-			continue;
-		}
-
-		// Filter to lifecycle events only
-		if (!isTaskLifecycleEvent(event)) {
-			continue;
-		}
-
-		const taskId = event.taskId;
-
-		// Get or create task state
-		let task = tasks.get(taskId);
-		if (!task) {
-			task = { id: taskId, status: "created" };
-			tasks.set(taskId, task);
-		}
-
-		// Derive status from event type
-		const newStatus = statusFromEventType(event.type);
-		if (newStatus && RECONSTRUCTABLE_STATUSES.has(newStatus)) {
-			task.status = newStatus;
-		}
-
-		// Track timing
-		if (event.type === "task.started") {
-			task.startedAt = event.time;
-		}
-
-		// Terminal events set finishedAt
-		const terminalEvents = new Set(["task.completed", "task.failed", "task.cancelled", "task.skipped"]);
-		if (terminalEvents.has(event.type)) {
-			task.finishedAt = event.time;
-		}
-
-		// Error message from failed events
-		if (event.type === "task.failed" && event.message) {
-			task.error = event.message;
-		}
-
-		// Extract structured data from event.data
-		if (event.data) {
-			const segment = safeNumber(event.data.segment);
-			if (segment !== undefined) {
-				task.segment = segment;
-			}
-
-			const diagnostics = safeRecord(event.data.diagnostics);
-			if (diagnostics !== undefined) {
-				task.diagnostics = diagnostics;
-			}
-
-			const metrics = safeNumericRecord(event.data.metrics);
-			if (metrics !== undefined) {
-				task.metrics = metrics;
-			}
-		}
-	}
-
-	return { tasks, eventCount, corruptedCount };
+	return processEvents(events, events.length, 0);
 }
 
 /**
@@ -260,9 +202,7 @@ export function reconstructTasksFromLines(lines: string[]): ReconstructionResult
 
 	for (const line of lines) {
 		const trimmed = line.trim();
-		if (trimmed.length === 0) {
-			continue;
-		}
+		if (trimmed.length === 0) continue;
 		const event = parseEventLine(trimmed);
 		if (event === undefined) {
 			corruptedCount++;
@@ -273,61 +213,5 @@ export function reconstructTasksFromLines(lines: string[]): ReconstructionResult
 		eventCount++;
 	}
 
-	// Now run the reconstruction on the successfully parsed events
-	const tasks = new Map<string, ReconstructedTaskState>();
-
-	for (const event of parsedEvents) {
-		if (typeof event.taskId !== "string" || event.taskId.length === 0) {
-			continue;
-		}
-
-		if (!isTaskLifecycleEvent(event)) {
-			continue;
-		}
-
-		const taskId = event.taskId;
-
-		let task = tasks.get(taskId);
-		if (!task) {
-			task = { id: taskId, status: "created" };
-			tasks.set(taskId, task);
-		}
-
-		const newStatus = statusFromEventType(event.type);
-		if (newStatus && RECONSTRUCTABLE_STATUSES.has(newStatus)) {
-			task.status = newStatus;
-		}
-
-		if (event.type === "task.started") {
-			task.startedAt = event.time;
-		}
-
-		const terminalEvents = new Set(["task.completed", "task.failed", "task.cancelled", "task.skipped"]);
-		if (terminalEvents.has(event.type)) {
-			task.finishedAt = event.time;
-		}
-
-		if (event.type === "task.failed" && event.message) {
-			task.error = event.message;
-		}
-
-		if (event.data) {
-			const segment = safeNumber(event.data.segment);
-			if (segment !== undefined) {
-				task.segment = segment;
-			}
-
-			const diagnostics = safeRecord(event.data.diagnostics);
-			if (diagnostics !== undefined) {
-				task.diagnostics = diagnostics;
-			}
-
-			const metrics = safeNumericRecord(event.data.metrics);
-			if (metrics !== undefined) {
-				task.metrics = metrics;
-			}
-		}
-	}
-
-	return { tasks, eventCount, corruptedCount };
+	return processEvents(parsedEvents, eventCount, corruptedCount);
 }
