@@ -2,7 +2,20 @@ import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { loadRunManifestById } from "../../state/state-store.ts";
 import { readCrewAgents } from "../../runtime/crew-agent-records.ts";
 import { loadConfig } from "../../config/config.ts";
-import { DurableTranscriptViewer } from "../../ui/transcript-viewer.ts";
+// Lazy-loaded: DurableTranscriptViewer is 658ms — only needed for /crew transcript command
+import type { DurableTranscriptViewer as DurableTranscriptViewerType } from "../../ui/transcript-viewer.ts";
+let _cachedViewer: typeof DurableTranscriptViewerType | undefined;
+let _viewerPromise: Promise<typeof DurableTranscriptViewerType> | undefined;
+async function getViewer(): Promise<typeof DurableTranscriptViewerType> {
+	if (_cachedViewer) return _cachedViewer;
+	if (!_viewerPromise) {
+		_viewerPromise = import("../../ui/transcript-viewer.ts").then((mod) => {
+			_cachedViewer = mod.DurableTranscriptViewer;
+			return mod.DurableTranscriptViewer;
+		});
+	}
+	return _viewerPromise;
+}
 
 export async function selectAgentTask(ctx: ExtensionCommandContext, runId: string | undefined, taskId?: string): Promise<{ runId: string; taskId?: string } | undefined> {
 	if (!runId) return undefined;
@@ -26,6 +39,7 @@ export async function openTranscriptViewer(ctx: ExtensionCommandContext, initial
 	const loaded = loadRunManifestById(ctx.cwd, runId);
 	if (!loaded) return false;
 	const uiConfig = loadConfig(ctx.cwd).config.ui;
+	const DurableTranscriptViewer = await getViewer();
 	await ctx.ui.custom<undefined>((_tui, theme, _keybindings, done) => new DurableTranscriptViewer(loaded.manifest, theme, done, taskId, { maxTailBytes: uiConfig?.transcriptTailBytes }), {
 		overlay: true,
 		overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" },

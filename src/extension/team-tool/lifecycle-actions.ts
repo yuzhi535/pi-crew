@@ -86,6 +86,10 @@ export async function handleForget(params: TeamToolParamsValue, ctx: TeamContext
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "forget", status: "error" }, true);
 
+	// Ownership check — prevent cross-session deletion
+	const foreignRun = typeof loaded.manifest.ownerSessionId === "string" && loaded.manifest.ownerSessionId !== ctx.sessionId;
+	if (foreignRun) return result(`Run ${params.runId} belongs to another session; not forgotten.`, { action: "forget", status: "error", runId: loaded.manifest.runId }, true);
+
 	const hookReport = await executeHook("before_forget", { runId: loaded.manifest.runId, cwd: ctx.cwd });
 	appendHookEvent(loaded.manifest, hookReport);
 	if (hookReport.outcome === "block") {
@@ -97,10 +101,10 @@ export async function handleForget(params: TeamToolParamsValue, ctx: TeamContext
 	const intent = intentFromConfig(params.config);
 	appendEvent(loaded.manifest.eventsPath, { type: "run.forget_requested", runId: loaded.manifest.runId, message: "Run state and artifacts are being forgotten.", data: { force: params.force === true, removedWorktrees: cleanup.removed, preservedWorktrees: cleanup.preserved, intent } });
 	const crewRoot = projectCrewRoot(loaded.manifest.cwd);
-	resolveRealContainedPath(crewRoot, loaded.manifest.stateRoot);
-	resolveRealContainedPath(crewRoot, loaded.manifest.artifactsRoot);
-	fs.rmSync(loaded.manifest.stateRoot, { recursive: true, force: true });
-	fs.rmSync(loaded.manifest.artifactsRoot, { recursive: true, force: true });
+	const resolvedStateRoot = resolveRealContainedPath(crewRoot, loaded.manifest.stateRoot);
+	const resolvedArtifactsRoot = resolveRealContainedPath(crewRoot, loaded.manifest.artifactsRoot);
+	fs.rmSync(resolvedStateRoot, { recursive: true, force: true });
+	fs.rmSync(resolvedArtifactsRoot, { recursive: true, force: true });
 	return result([`Forgot run ${loaded.manifest.runId}.`, `Removed state: ${loaded.manifest.stateRoot}`, `Removed artifacts: ${loaded.manifest.artifactsRoot}`, ...(cleanup.removed.length ? ["Removed worktrees:", ...cleanup.removed.map((item) => `- ${item}`)] : [])].join("\n"), { action: "forget", status: "ok", runId: loaded.manifest.runId, intent });
 }
 
