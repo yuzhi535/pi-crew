@@ -167,9 +167,12 @@ export async function atomicWriteJsonAsync<T>(filePath: string, value: T): Promi
 
 export function readJsonFile<T>(filePath: string): T | undefined {
 	try {
-		if (!fs.existsSync(filePath)) return undefined;
 		return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
-	} catch {
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code !== "ENOENT" && code !== "ENOTDIR") {
+			logInternalError("readJsonFile", err, `filePath=${filePath}`);
+		}
 		return undefined;
 	}
 }

@@ -79,7 +79,7 @@ async function ui(): Promise<NonNullable<typeof _uiCache>> {
 					import("../../ui/overlays/agent-picker-overlay.ts"),
 					import("../../ui/mascot.ts"),
 				]);
-				_uiCache = {
+				const cache = {
 					RunDashboard: rd.RunDashboard,
 					DurableTextViewer: tv.DurableTextViewer,
 					ConfirmOverlay: co.ConfirmOverlay,
@@ -88,7 +88,8 @@ async function ui(): Promise<NonNullable<typeof _uiCache>> {
 					AgentPickerOverlay: ap.AgentPickerOverlay,
 					AnimatedMascot: ma.AnimatedMascot,
 				};
-				return _uiCache!;
+				_uiCache = cache;
+				return cache;
 			})();
 		}
 		return _uiCachePromise;
