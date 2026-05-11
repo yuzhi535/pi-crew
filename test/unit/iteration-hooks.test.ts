@@ -90,23 +90,23 @@ describe("runIterationHook", () => {
 		}
 	});
 
-	it("reports timeout when script runs longer than 30 seconds", async () => {
+	it("reports timeout when script runs longer than timeout", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-hook-"));
 		try {
 			const scriptPath = path.join(dir, "slow.sh");
-			// Sleep for 35 seconds — will be killed by the 30s timeout
+			// Sleep for 5 seconds — will be killed by the 2s timeout passed below
 			fs.writeFileSync(
 				scriptPath,
-				"#!/bin/bash\nsleep 35\necho done\nexit 0\n",
+				"#!/bin/bash\nsleep 5\necho done\nexit 0\n",
 			);
 			fs.chmodSync(scriptPath, 0o755);
 
 			const payload = makePayload({ cwd: dir });
-			const result = await runIterationHook(payload, scriptPath);
+			const result = await runIterationHook(payload, scriptPath, { timeoutMs: 2000 });
 
 			assert.equal(result.fired, true);
 			assert.equal(result.timedOut, true);
-			assert.ok(result.durationMs >= 25_000);
+			assert.ok(result.durationMs >= 1_500);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

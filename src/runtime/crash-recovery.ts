@@ -229,11 +229,10 @@ export function purgeStaleActiveRunIndex(staleThresholdMs = 300_000, now = Date.
 			continue;
 		}
 
-		// 4. Terminal status → no longer active
+		// 4. Terminal status → no longer active (just unregister, don't delete files)
 		const terminalStatuses = new Set(["completed", "failed", "cancelled", "blocked"]);
 		if (manifest && terminalStatuses.has(manifest.status ?? "")) {
 			unregisterActiveRun(entry.runId);
-			tryRemoveRunDirectories(entry);
 			purged.push(entry.runId);
 			continue;
 		}

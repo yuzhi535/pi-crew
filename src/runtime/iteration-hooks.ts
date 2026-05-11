@@ -122,6 +122,7 @@ function isScriptRunnable(scriptPath: string): boolean {
 export async function runIterationHook(
 	payload: HookPayload,
 	hookScriptPath: string,
+	options?: { timeoutMs?: number },
 ): Promise<HookResult> {
 	if (!isScriptRunnable(hookScriptPath)) {
 		return notFiredResult();
@@ -140,10 +141,11 @@ export async function runIterationHook(
 		});
 
 		let killed = false;
+		const timeoutMs = options?.timeoutMs ?? HOOK_TIMEOUT_MS;
 		const timeout = setTimeout(() => {
 			killed = true;
 			child.kill("SIGKILL");
-		}, HOOK_TIMEOUT_MS);
+		}, timeoutMs);
 
 		child.stdout.on("data", (chunk: Buffer) => {
 			stdoutChunks.push(chunk);
