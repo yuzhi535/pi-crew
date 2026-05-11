@@ -12,7 +12,7 @@ import { configRecord, result, type TeamContext } from "./context.ts";
 import { enforceDestructiveIntent, intentFromConfig } from "./intent-policy.ts";
 import { executeHook, appendHookEvent } from "../../hooks/registry.ts";
 import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
-import { projectCrewRoot } from "../../utils/paths.ts";
+import { projectCrewRoot, userCrewRoot } from "../../utils/paths.ts";
 
 export function handleWorktrees(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	if (!params.runId) return result("Worktrees requires runId.", { action: "worktrees", status: "error" }, true);
@@ -67,12 +67,12 @@ export async function handlePrune(params: TeamToolParamsValue, ctx: TeamContext)
 	if (keep < 0 || !Number.isInteger(keep)) return result("keep must be an integer >= 0.", { action: "prune", status: "error" }, true);
 	const intent = intentFromConfig(params.config);
 	const pruned = pruneFinishedRuns(ctx.cwd, keep, { intent, signal: ctx.signal });
-	const firstRunId = pruned.kept[0] ?? pruned.removed[0];
-	if (firstRunId) {
-		const manifest = loadRunManifestById(ctx.cwd, firstRunId)?.manifest;
-		if (manifest) {
-			const hookReport = await executeHook("before_cleanup", { runId: manifest.runId, cwd: ctx.cwd });
-			appendHookEvent(manifest, hookReport);
+	// Fire hook once with all removed run IDs for batch visibility
+	if (pruned.removed.length > 0) {
+		const sampleManifest = loadRunManifestById(ctx.cwd, pruned.removed[0])?.manifest;
+		if (sampleManifest) {
+			const hookReport = await executeHook("before_cleanup", { runId: sampleManifest.runId, cwd: ctx.cwd, data: { removedRunIds: pruned.removed, keptCount: pruned.kept.length } });
+			appendHookEvent(sampleManifest, hookReport);
 		}
 	}
 	return result([`Pruned finished pi-crew runs.`, `Kept: ${pruned.kept.length}`, `Removed: ${pruned.removed.length}`, ...(pruned.auditPath ? [`Audit: ${pruned.auditPath}`] : []), ...(pruned.removed.length ? ["Removed runs:", ...pruned.removed.map((runId) => `- ${runId}`)] : [])].join("\n"), { action: "prune", status: "ok", intent });
@@ -100,7 +100,8 @@ export async function handleForget(params: TeamToolParamsValue, ctx: TeamContext
 	if (cleanup.preserved.length > 0 && !params.force) return result([`Run '${params.runId}' has preserved worktrees. Use force: true to forget anyway.`, ...cleanup.preserved.map((item) => `- ${item.path}: ${item.reason}`)].join("\n"), { action: "forget", status: "error", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot }, true);
 	const intent = intentFromConfig(params.config);
 	appendEvent(loaded.manifest.eventsPath, { type: "run.forget_requested", runId: loaded.manifest.runId, message: "Run state and artifacts are being forgotten.", data: { force: params.force === true, removedWorktrees: cleanup.removed, preservedWorktrees: cleanup.preserved, intent } });
-	const crewRoot = projectCrewRoot(loaded.manifest.cwd);
+	// Determine scope from manifest paths (project vs user-level runs)
+	const crewRoot = loaded.manifest.stateRoot.startsWith(userCrewRoot()) ? userCrewRoot() : projectCrewRoot(loaded.manifest.cwd);
 	const resolvedStateRoot = resolveRealContainedPath(crewRoot, loaded.manifest.stateRoot);
 	const resolvedArtifactsRoot = resolveRealContainedPath(crewRoot, loaded.manifest.artifactsRoot);
 	fs.rmSync(resolvedStateRoot, { recursive: true, force: true });
@@ -114,6 +115,10 @@ export async function handleCleanup(params: TeamToolParamsValue, ctx: TeamContex
 	if (!params.runId) return result("Cleanup requires runId.", { action: "cleanup", status: "error" }, true);
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "cleanup", status: "error" }, true);
+
+	// Ownership check — prevent cross-session worktree cleanup
+	const foreignRun = typeof loaded.manifest.ownerSessionId === "string" && loaded.manifest.ownerSessionId !== ctx.sessionId;
+	if (foreignRun) return result(`Run ${params.runId} belongs to another session; not cleaned up.`, { action: "cleanup", status: "error", runId: loaded.manifest.runId }, true);
 
 	const hookReport = await executeHook("before_cleanup", { runId: loaded.manifest.runId, cwd: ctx.cwd });
 	appendHookEvent(loaded.manifest, hookReport);
