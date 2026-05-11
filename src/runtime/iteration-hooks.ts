@@ -135,7 +135,7 @@ export async function runIterationHook(
 	return new Promise<HookResult>((resolve) => {
 		const child = spawn("bash", [hookScriptPath], {
 			cwd: payload.cwd,
-			env: { ...process.env },
+			env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/tmp", USER: process.env.USER, LANG: process.env.LANG, PI_CREW_HOOK: "1" },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 

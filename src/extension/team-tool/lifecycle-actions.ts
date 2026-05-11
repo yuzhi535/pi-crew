@@ -13,6 +13,7 @@ import { enforceDestructiveIntent, intentFromConfig } from "./intent-policy.ts";
 import { executeHook, appendHookEvent } from "../../hooks/registry.ts";
 import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
 import { projectCrewRoot, userCrewRoot } from "../../utils/paths.ts";
+import * as path from "node:path";
 
 export function handleWorktrees(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	if (!params.runId) return result("Worktrees requires runId.", { action: "worktrees", status: "error" }, true);
@@ -60,6 +61,9 @@ export async function handleExport(params: TeamToolParamsValue, ctx: TeamContext
 	return result([`Exported run ${loaded.manifest.runId}.`, `JSON: ${exported.jsonPath}`, `Markdown: ${exported.markdownPath}`].join("\n"), { action: "export", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 }
 
+// Note: handlePrune has no ownership check — intentionally cross-session.
+// Prune is a maintenance-level operation that removes ALL finished runs
+// regardless of which session created them. Requires confirm: true.
 export async function handlePrune(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
 	const intentError = enforceDestructiveIntent("prune", params, ctx.config);
 	if (intentError) return intentError;
@@ -102,7 +106,7 @@ export async function handleForget(params: TeamToolParamsValue, ctx: TeamContext
 	const intent = intentFromConfig(params.config);
 	appendEvent(loaded.manifest.eventsPath, { type: "run.forget_requested", runId: loaded.manifest.runId, message: "Run state and artifacts are being forgotten.", data: { force: params.force === true, removedWorktrees: cleanup.removed, preservedWorktrees: cleanup.preserved, intent } });
 	// Determine scope from manifest paths (project vs user-level runs)
-	const crewRoot = loaded.manifest.stateRoot.startsWith(userCrewRoot()) ? userCrewRoot() : projectCrewRoot(loaded.manifest.cwd);
+	const crewRoot = loaded.manifest.stateRoot.startsWith(userCrewRoot() + path.sep) ? userCrewRoot() : projectCrewRoot(loaded.manifest.cwd);
 	const resolvedStateRoot = resolveRealContainedPath(crewRoot, loaded.manifest.stateRoot);
 	const resolvedArtifactsRoot = resolveRealContainedPath(crewRoot, loaded.manifest.artifactsRoot);
 	fs.rmSync(resolvedStateRoot, { recursive: true, force: true });

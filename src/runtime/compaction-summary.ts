@@ -4,6 +4,9 @@
  *
  * Distilled from pi-autoresearch's compaction-summary pattern.
  */
+
+class GiantLineFallbackError extends Error { constructor() { super("GIANT_LINE_FALLBACK"); this.name = "GiantLineFallbackError"; } }
+
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
@@ -79,7 +82,7 @@ function readTailLines(filePath: string, maxLines: number): string[] {
 					// No newline found in the entire tail chunk — single giant line.
 					// Fall back to reading the full file to avoid data loss.
 					// Note: fd will be closed by the outer finally block.
-					throw new Error("__GIANT_LINE_FALLBACK__");
+					throw new GiantLineFallbackError();
 				}
 			}
 
@@ -91,7 +94,7 @@ function readTailLines(filePath: string, maxLines: number): string[] {
 		}
 	} catch (err) {
 		// Giant-line fallback: fd already closed by finally above.
-		if (err instanceof Error && err.message === "__GIANT_LINE_FALLBACK__") {
+		if (err instanceof GiantLineFallbackError) {
 			const stat = fs.statSync(filePath);
 			if (stat.size > MAX_FALLBACK_READ) return [];
 			const content = fs.readFileSync(filePath, "utf-8");

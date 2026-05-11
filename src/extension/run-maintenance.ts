@@ -27,7 +27,7 @@ function isFinished(run: TeamRunManifest): boolean {
 
 function isSafeToPrune(cwd: string, run: TeamRunManifest): boolean {
 	try {
-		const crewRoot = projectCrewRoot(cwd);
+		const crewRoot = run.stateRoot.startsWith(userCrewRoot() + path.sep) ? userCrewRoot() : projectCrewRoot(cwd);
 		resolveRealContainedPath(crewRoot, run.stateRoot);
 		resolveRealContainedPath(crewRoot, run.artifactsRoot);
 		return true;

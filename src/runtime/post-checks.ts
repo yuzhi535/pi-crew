@@ -84,7 +84,7 @@ export async function runPostCheck(config: PostCheckConfig, cwd: string): Promis
 				timeout: timeoutMs,
 				encoding: "utf-8",
 				maxBuffer: 10 * 1024 * 1024, // 10 MB
-				env: { ...process.env },
+				env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/tmp", USER: process.env.USER, LANG: process.env.LANG, PI_CREW_POST_CHECK: "1" },
 			});
 
 			const durationMs = Date.now() - startTime;

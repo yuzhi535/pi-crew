@@ -21,6 +21,12 @@ function importRoot(cwd: string, scope: "project" | "user"): string {
 
 export function importRunBundle(cwd: string, bundlePath: string, scope: "project" | "user" = "project"): ImportedRunBundleInfo {
 	const resolvedPath = path.isAbsolute(bundlePath) ? bundlePath : path.resolve(cwd, bundlePath);
+	// Path containment: only allow reading bundles from cwd or user home
+	const allowedBases = [cwd];
+	try { allowedBases.push(userCrewRoot()); } catch { /* ignore */ }
+	try { allowedBases.push(projectCrewRoot(cwd)); } catch { /* ignore */ }
+	const isContained = allowedBases.some((base) => resolvedPath.startsWith(base + path.sep) || resolvedPath === base);
+	if (!isContained) throw new Error(`Import path must be within project directory or crew root: ${resolvedPath}`);
 	const raw = JSON.parse(fs.readFileSync(resolvedPath, "utf-8")) as unknown;
 	assertRunBundle(raw);
 	const runId = assertSafePathId("runId", raw.manifest.runId);
