@@ -27,4 +27,4 @@ role: verifier
 dependsOn: code-review, security-review
 verify: true
 
-Summarize review outcome and pass/fail status.
+Summarize the review outcome. Read ONLY the specific files and lines referenced in reviewer and security-reviewer findings to confirm they exist and the findings are valid. Do NOT run npm test or full test suites. Give PASS if findings are confirmed, FAIL if any critical finding is a false positive.

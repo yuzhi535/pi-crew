@@ -27,3 +27,4 @@ dependsOn: execute
 verify: true
 
 Verify completion for: {goal}
+Read ONLY the changed files (from executor context). Do NOT run npm test or full test suites — use targeted grep/read commands only. Give PASS or FAIL with specific evidence.

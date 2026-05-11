@@ -31,6 +31,8 @@ export interface AgentConfig {
 	defaultTools?: string[] | null;
 	/** Context mode: "fresh" = clean start, "fork" = inherit parent session context */
 	contextMode?: "fresh" | "fork";
+	/** Maximum turns for this agent. Overrides runtime config if set. */
+	maxTurns?: number;
 	disabled?: boolean;
 	override?: { source: "config"; path: string };
 }
