@@ -60,7 +60,7 @@ test("child Pi response timeout treats filtered stdout JSON as activity", async 
 	delete process.env.PI_TEAMS_MOCK_CHILD_PI;
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-child-filtered-activity-"));
 	try {
-		const fakePi = path.join(dir, "fake-pi.js");
+		const fakePi = path.join(process.cwd(), "node_modules", ".bin", "fake-pi-phase3.js");
 		fs.writeFileSync(fakePi, `
 console.log(JSON.stringify({ type: "message_update", message: { content: [{ type: "thinking", text: "still working" }] } }));
 setTimeout(() => console.log(JSON.stringify({ type: "message_update", message: { content: [{ type: "thinking", text: "still working" }] } })), 600);
@@ -90,7 +90,7 @@ test("child Pi final-drain termination after final assistant output is treated a
 	delete process.env.PI_TEAMS_MOCK_CHILD_PI;
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-child-final-drain-"));
 	try {
-		const fakePi = path.join(dir, "fake-pi.js");
+		const fakePi = path.join(process.cwd(), "node_modules", ".bin", "fake-pi-phase3-drain.js");
 		fs.writeFileSync(fakePi, `
 console.log(JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "final answer before lingering cleanup" }] } }));
 console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [], stopReason: "stop" } }));
