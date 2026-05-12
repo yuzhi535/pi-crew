@@ -15,8 +15,14 @@ test("background runner uses the jiti runtime loader for installed TypeScript", 
 
 test("background runner resolves hoisted jiti loader path", () => {
 	const root = path.join("tmp", "workspace", "node_modules", "pi-crew");
-	const hoisted = path.join("tmp", "workspace", "node_modules", "jiti", "lib", "jiti-register.mjs");
+	const hoisted = path.resolve(path.join("tmp", "workspace", "node_modules", "jiti", "lib", "jiti-register.mjs"));
 	assert.equal(resolveJitiRegisterPath(root, (candidate) => candidate === hoisted), hoisted);
+});
+
+test("background runner resolves local-source jiti loader in parent node_modules", () => {
+	const root = path.join("tmp", "workspace", "pi-crew");
+	const local = path.resolve(path.join("tmp", "workspace", "node_modules", "jiti", "lib", "jiti-register.mjs"));
+	assert.equal(resolveJitiRegisterPath(root, (candidate) => candidate === local), local);
 });
 
 test("background runner command fails fast when jiti loader is missing", () => {

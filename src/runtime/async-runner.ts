@@ -20,16 +20,25 @@ function jitiRegisterPathFromPackageJson(packageJsonPath: string): string {
 }
 
 export function resolveJitiRegisterPath(packageRoot = packageRootFromRuntime(), exists: FileExists = fs.existsSync): string | undefined {
-	const candidates = [
-		path.join(packageRoot, "node_modules", "jiti", "lib", "jiti-register.mjs"),
-		path.join(packageRoot, "..", "..", "node_modules", "jiti", "lib", "jiti-register.mjs"),
-	];
-	try {
-		candidates.push(jitiRegisterPathFromPackageJson(requireFromHere.resolve("jiti/package.json")));
-	} catch {
-		// Fall through to explicit candidate checks.
+	// Walk upward from packageRoot looking for node_modules/jiti/lib/jiti-register.mjs
+	let current = path.resolve(packageRoot);
+	const root = path.parse(current).root;
+	while (true) {
+		const candidate = path.join(current, "node_modules", "jiti", "lib", "jiti-register.mjs");
+		if (exists(candidate)) return candidate;
+		if (current === root) break;
+		const parent = path.dirname(current);
+		if (parent === current) break;
+		current = parent;
 	}
-	return [...new Set(candidates)].find((candidate) => exists(candidate));
+	// Fallback: require resolution (handles global installs or isolated stores)
+	try {
+		const fromRequire = jitiRegisterPathFromPackageJson(requireFromHere.resolve("jiti/package.json"));
+		if (exists(fromRequire)) return fromRequire;
+	} catch {
+		// Fall through.
+	}
+	return undefined;
 }
 
 export function getBackgroundRunnerCommand(runnerPath: string, cwd: string, runId: string, jitiRegisterPath: string | false | undefined = resolveJitiRegisterPath()): { args: string[]; loader: "jiti" } {
