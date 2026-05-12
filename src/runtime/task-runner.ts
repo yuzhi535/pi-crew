@@ -50,6 +50,8 @@ export interface TaskRunnerInput {
 	signal?: AbortSignal;
 	executeWorkers: boolean;
 	runtimeKind?: CrewRuntimeKind;
+	/** Per-role runtime override resolved from isolation policy. Takes precedence over runtimeKind. */
+	taskRuntimeOverride?: CrewRuntimeKind;
 	runtimeConfig?: CrewRuntimeConfig;
 	parentContext?: string;
 	parentModel?: unknown;
@@ -93,7 +95,7 @@ export async function runTeamTask(input: TaskRunnerInput): Promise<{ manifest: T
 		controlReservation: reserveControlChannel(input.task.id, manifest.runId),
 	} as TeamTaskState;
 	let tasks = updateTask(input.tasks, task);
-	const runtimeKind = input.runtimeKind ?? (input.executeWorkers ? "child-process" : "scaffold");
+	const runtimeKind = input.taskRuntimeOverride ?? input.runtimeKind ?? (input.executeWorkers ? "child-process" : "scaffold");
 	tasks = persistSingleTaskUpdate(manifest, tasks, task);
 	if (runtimeKind === "child-process") ({ task, tasks } = checkpointTask(manifest, tasks, task, "started"));
 	upsertCrewAgent(manifest, recordFromTask(manifest, task, runtimeKind));

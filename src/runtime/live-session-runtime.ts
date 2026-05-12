@@ -319,6 +319,20 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 	let jsonEvents = 0;
 	const collectedJsonEvents: Record<string, unknown>[] = [];
 	let yieldResult: YieldResult | undefined;
+
+	// Task 4: Error boundary hardening — per-agent AbortController for unhandled rejections
+	const agentAbort = new AbortController();
+	const agentId = `${input.manifest.runId}:${input.task.id}`;
+	let agentAbortFired = false;
+	let unhandledRejectionError: unknown;
+	const rejectionHandler = (err: unknown) => {
+		unhandledRejectionError = err;
+		agentAbortFired = true;
+		logInternalError("live-session.unhandled", err, `agentId=${agentId}`);
+		agentAbort.abort();
+	};
+	process.on("unhandledRejection", rejectionHandler);
+
 	try {
 		const agentDir = typeof mod.getAgentDir === "function" ? mod.getAgentDir() : undefined;
 		let resourceLoader: unknown;
@@ -341,7 +355,6 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 		const mcpProxy = buildMcpProxyFromSession([], { shareMcp: true });
 
 		// G1: Build custom tools (submit_result + irc)
-		const agentId = `${input.manifest.runId}:${input.task.id}`;
 		const submitResultTool = createSubmitResultTool((result) => {
 			customToolYieldResult = result;
 			customToolYieldResolved = true;
@@ -455,15 +468,25 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 			const timeoutPromise = new Promise<void>((_, reject) => {
 				const timer = setTimeout(() => reject(new Error(`Live-session timed out after ${sessionTimeoutMs}ms`)), sessionTimeoutMs);
 				timer.unref();
-				input.signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
+			});
+			// Also race against agentAbort (unhandled rejection) and input.signal
+			const abortRacePromise = new Promise<void>((_, reject) => {
+				const abortHandler = () => reject(new Error("Agent aborted"));
+				agentAbort.signal.addEventListener("abort", abortHandler, { once: true });
 			});
 			try {
-				await Promise.race([promptPromise, timeoutPromise]);
+				await Promise.race([promptPromise, timeoutPromise, abortRacePromise]);
 			} catch (promptError) {
 				const msg = promptError instanceof Error ? promptError.message : String(promptError);
 				if (msg.includes("timed out")) {
 					await session.abort?.();
 					updateLiveAgentStatus(agentId, "failed");
+					return { available: true, exitCode: 1, stdout: stdout.trim(), stderr: msg, jsonEvents, error: msg };
+				}
+				if (msg === "Agent aborted") {
+					await session.abort?.();
+					updateLiveAgentStatus(agentId, "failed");
+					input.onEvent?.({ type: "live-session.crash", agentId, error: String(unhandledRejectionError ?? "unhandled rejection"), recovered: true });
 					return { available: true, exitCode: 1, stdout: stdout.trim(), stderr: msg, jsonEvents, error: msg };
 				}
 				throw promptError;
@@ -581,10 +604,17 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 		updateLiveAgentStatus(`${input.manifest.runId}:${input.task.id}`, "failed");
 		return { available: true, exitCode: 1, stdout: stdout.trim(), stderr: message, jsonEvents, error: message };
 	} finally {
+		// Task 4: Remove unhandledRejection handler first
+		process.off("unhandledRejection", rejectionHandler);
+
 		// H6: Unsubscribe listeners FIRST before clearing timer to prevent race
 		unsubscribe?.();
 		unsubscribeControlRealtime?.();
 		if (controlTimer) clearInterval(controlTimer);
+
+		// Task 4: Session cleanup — abort if session exists and task didn't complete normally
+		if (session && agentAbortFired) {			await session.abort?.();
+		}
 
 		// Phase 8: Emit final health snapshot
 		try {

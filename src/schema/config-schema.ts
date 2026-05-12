@@ -41,6 +41,10 @@ export const PiTeamsRuntimeConfigSchema = Type.Object({
 	requirePlanApproval: Type.Optional(Type.Boolean()),
 	completionMutationGuard: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("warn"), Type.Literal("fail")])),
 	effectivenessGuard: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("warn"), Type.Literal("block"), Type.Literal("fail")])),
+	isolationPolicy: Type.Optional(Type.Object({
+		isolatedRoles: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+		defaultRuntime: Type.Optional(Type.Union([Type.Literal("live-session"), Type.Literal("child-process")])),
+	}, { additionalProperties: false })),
 }, { additionalProperties: false });
 
 export const PiTeamsControlConfigSchema = Type.Object({

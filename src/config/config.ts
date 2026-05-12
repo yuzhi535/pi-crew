@@ -48,6 +48,13 @@ export interface CrewRuntimeConfig {
 	completionMutationGuard?: CompletionMutationGuardMode;
 	effectivenessGuard?: EffectivenessGuardMode;
 	yield?: { enabled?: boolean; maxReminders?: number; reminderPrompt?: string };
+	/** Policy for per-role runtime selection. Not sensitive — safe to keep in project config. */
+	isolationPolicy?: {
+		/** Roles that should use child-process for crash isolation. Default: no roles. */
+		isolatedRoles?: string[];
+		/** Default runtime for roles not in isolatedRoles. Default: "live-session" (uses live-session). */
+		defaultRuntime?: "live-session" | "child-process";
+	};
 }
 
 export interface CrewControlConfig {
@@ -527,6 +534,18 @@ function parseLimitsConfig(value: unknown): CrewLimitsConfig | undefined {
 	return Object.values(limits).some((entry) => entry !== undefined) ? limits : undefined;
 }
 
+function parseIsolationPolicy(value: unknown): CrewRuntimeConfig["isolationPolicy"] | undefined {
+	const obj = asRecord(value);
+	if (!obj) return undefined;
+	const isolatedRoles = parseStringList(obj.isolatedRoles);
+	const defaultRuntime = parseWithSchema(Type.Union([Type.Literal("live-session"), Type.Literal("child-process")]), obj.defaultRuntime);
+	if (isolatedRoles === undefined && defaultRuntime === undefined) return undefined;
+	return {
+		...(isolatedRoles !== undefined ? { isolatedRoles } : {}),
+		...(defaultRuntime !== undefined ? { defaultRuntime } : {}),
+	};
+}
+
 function parseRuntimeConfig(value: unknown): CrewRuntimeConfig | undefined {
 	const obj = asRecord(value);
 	if (!obj) return undefined;
@@ -543,6 +562,7 @@ function parseRuntimeConfig(value: unknown): CrewRuntimeConfig | undefined {
 		requirePlanApproval: parseWithSchema(Type.Boolean(), obj.requirePlanApproval),
 		completionMutationGuard: parseWithSchema(Type.Union([Type.Literal("off"), Type.Literal("warn"), Type.Literal("fail")]), obj.completionMutationGuard),
 		effectivenessGuard: parseWithSchema(Type.Union([Type.Literal("off"), Type.Literal("warn"), Type.Literal("block"), Type.Literal("fail")]), obj.effectivenessGuard),
+		isolationPolicy: parseIsolationPolicy(obj.isolationPolicy),
 	};
 	return Object.values(runtime).some((entry) => entry !== undefined) ? runtime : undefined;
 }

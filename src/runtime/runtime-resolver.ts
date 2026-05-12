@@ -69,10 +69,11 @@ export async function resolveCrewRuntime(config: PiTeamsConfig, env: NodeJS.Proc
 	if (requestedMode === "scaffold") return scaffoldCaps(requestedMode, undefined, "explicit_dry_run");
 	if (workersDisabled) return scaffoldCaps(requestedMode, "Child worker execution disabled by config/env. Set runtime.mode=scaffold or executeWorkers=false only for dry runs.", "blocked");
 	if (requestedMode === "child-process") return childCaps(requestedMode);
-	if (requestedMode === "live-session" || (requestedMode === "auto" && config.runtime?.preferLiveSession === true)) {
+	if (requestedMode === "live-session" || requestedMode === "auto") {
 		const live = await isLiveSessionRuntimeAvailable(1500, env);
 		if (live.available) return liveCaps(requestedMode);
-		if (requestedMode === "live-session" && config.runtime?.allowChildProcessFallback === false) return scaffoldCaps(requestedMode, live.reason, "blocked");
+		if (requestedMode === "live-session" && config.runtime?.allowChildProcessFallback === false)
+			return scaffoldCaps(requestedMode, live.reason, "blocked");
 		return { ...childCaps(requestedMode), fallback: "child-process", reason: live.reason };
 	}
 	return childCaps(requestedMode);

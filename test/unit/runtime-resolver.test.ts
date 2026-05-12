@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { resolveCrewRuntime } from "../../src/runtime/runtime-resolver.ts";
 import { probeLiveSessionRuntime } from "../../src/runtime/live-session-runtime.ts";
 
-test("runtime resolver defaults to child-process workers", async () => {
+test("runtime resolver defaults to live-session (with fallback to child-process when SDK unavailable)", async () => {
 	const runtime = await resolveCrewRuntime({}, {} as NodeJS.ProcessEnv);
-	assert.equal(runtime.kind, "child-process");
-	assert.equal(runtime.transcript, true);
+	// "auto" mode now prefers live-session when the Pi SDK is available;
+	// falls back to child-process when it isn't.
+	assert.ok(["live-session", "child-process"].includes(runtime.kind), `expected live-session or child-process, got ${runtime.kind}`);
+	assert.equal(runtime.requestedMode, "auto");
 });
 
 test("runtime resolver supports explicit scaffold dry-run", async () => {
@@ -24,10 +26,11 @@ test("runtime resolver lets config disable workers", async () => {
 	assert.match(runtime.reason ?? "", /disabled/);
 });
 
-test("runtime resolver accepts canonical PI_CREW_EXECUTE_WORKERS", async () => {
+test("runtime resolver with PI_CREW_EXECUTE_WORKERS=1 prefers live-session, falls back to child-process", async () => {
 	const runtime = await resolveCrewRuntime({}, { PI_CREW_EXECUTE_WORKERS: "1" } as NodeJS.ProcessEnv);
-	assert.equal(runtime.kind, "child-process");
-	assert.equal(runtime.transcript, true);
+	// "auto" mode prefers live-session; the env var enables worker execution
+	// but doesn't force child-process. The resolved kind depends on SDK availability.
+	assert.ok(["live-session", "child-process"].includes(runtime.kind), `expected live-session or child-process, got ${runtime.kind}`);
 });
 
 test("runtime resolver can request live-session with safe fallback", async () => {

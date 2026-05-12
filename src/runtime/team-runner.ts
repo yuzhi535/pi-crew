@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import type { AgentConfig } from "../agents/agent-config.ts";
 import type { CrewLimitsConfig, CrewRuntimeConfig, CrewReliabilityConfig } from "../config/config.ts";
 import type { CrewRuntimeCapabilities } from "./runtime-resolver.ts";
+import type { CrewRuntimeKind } from "./crew-agent-runtime.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { executeHook, appendHookEvent } from "../hooks/registry.ts";
 import { appendEvent } from "../state/event-log.ts";
@@ -541,6 +542,19 @@ function dagReadyTaskIds(tasks: TeamTaskState[], completedIds: Set<string>): str
 	return getDagReadyTasks(plan, completedIds);
 }
 
+/**
+ * Resolve the effective runtime kind for a given task role using isolation policy.
+ * - scaffold is never overridden — scaffold stays scaffold.
+ * - If the role appears in `isolationPolicy.isolatedRoles`, use child-process (crash isolation).
+ * - Otherwise, fall back to the global `globalKind`.
+ */
+function resolveTaskRuntimeKind(globalKind: CrewRuntimeKind, role: string, isolationPolicy: CrewRuntimeConfig["isolationPolicy"]): CrewRuntimeKind {
+	if (globalKind === "scaffold") return "scaffold";
+	const isolatedRoles = isolationPolicy?.isolatedRoles ?? [];
+	if (isolatedRoles.includes(role)) return "child-process";
+	return globalKind;
+}
+
 export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ manifest: TeamRunManifest; tasks: TeamTaskState[] }> {
 	let workflow = input.workflow;
 	let manifest = updateRunStatus(input.manifest, "running", input.executeWorkers ? "Executing team workflow." : "Creating workflow prompts and placeholder results.");
@@ -726,7 +740,8 @@ async function executeTeamRunCore(
 				const step = findStep(workflow, task);
 				const agent = findAgent(input.agents, task);
 				const teamRole = input.team.roles.find((role) => role.name === task.role);
-				const baseInput = { manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: input.runtime?.kind, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, teamRoleModel: teamRole?.model, teamRoleSkills: teamRole?.skills, skillOverride: input.skillOverride, limits: input.limits, onJsonEvent: input.onJsonEvent };
+				const perTaskRuntime = resolveTaskRuntimeKind(runtimeKind, task.role, input.runtimeConfig?.isolationPolicy);
+				const baseInput = { manifest, tasks, task, step, agent, signal: input.signal, executeWorkers: input.executeWorkers, runtimeKind: runtimeKind, taskRuntimeOverride: perTaskRuntime !== runtimeKind ? perTaskRuntime : undefined, runtimeConfig: input.runtimeConfig, parentContext: input.parentContext, parentModel: input.parentModel, modelRegistry: input.modelRegistry, modelOverride: input.modelOverride, teamRoleModel: teamRole?.model, teamRoleSkills: teamRole?.skills, skillOverride: input.skillOverride, limits: input.limits, onJsonEvent: input.onJsonEvent };
 				if (input.reliability?.autoRetry !== true) return withCorrelation(childCorrelation(manifest.runId, task.id), () => runTeamTask(baseInput));
 				let lastFailed: { manifest: TeamRunManifest; tasks: TeamTaskState[] } | undefined;
 				let lastAttemptId: string | undefined;
