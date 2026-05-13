@@ -23,12 +23,17 @@ export class LiveConversationOverlay {
 	private rows: number;
 	private unsubscribe: (() => void) | undefined;
 
+	private handle: LiveAgentHandle;
+	private theme: CrewTheme;
+
 	constructor(
-		private handle: LiveAgentHandle,
-		private theme: CrewTheme,
+		handle: LiveAgentHandle,
+		theme: CrewTheme,
 		columns = 80,
 		rows = 24,
 	) {
+		this.handle = handle;
+		this.theme = theme;
 		this.columns = columns;
 		this.rows = rows;
 		// R8: Subscribe to real session events if available
