@@ -73,6 +73,8 @@ function agentsLockPath(manifest: TeamRunManifest): string {
 
 function removeStaleAgentsLock(lockPath: string, staleMs: number): boolean {
 	try {
+		const stat = fs.statSync(lockPath);
+		if (stat.size > 1024) return false;
 		const raw = fs.readFileSync(lockPath, "utf-8");
 		const parsed = JSON.parse(raw) as { createdAt?: unknown; pid?: unknown };
 		const createdAt = typeof parsed.createdAt === "string" ? Date.parse(parsed.createdAt) : NaN;

@@ -1,5 +1,6 @@
 import type { CrewAgentRecord } from "./crew-agent-runtime.ts";
 import type { IrcMessage } from "./live-irc.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 type LiveSessionHandle = {
 	steer?: (text: string) => Promise<void>;
@@ -50,7 +51,9 @@ export function updateLiveAgentStatus(agentId: string, status: CrewAgentRecord["
 }
 
 function safeDisposeLiveSession(handle: LiveAgentHandle): void {
-	try { handle.session.dispose?.(); } catch { /* best-effort cleanup */ }
+	try { handle.session.dispose?.(); } catch (error) {
+		logInternalError("live-agent-manager.dispose", error, `agentId=${handle.agentId}`);
+	}
 }
 
 export function removeLiveAgentHandle(agentId: string): LiveAgentHandle | undefined {

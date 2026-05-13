@@ -337,7 +337,7 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 	let stdout = "";
 	let jsonEvents = 0;
 	const collectedJsonEvents: Record<string, unknown>[] = [];
-	const maxCollectedJsonEvents = 200;
+	const maxCollectedJsonEvents = 1000;
 	let yieldResult: YieldResult | undefined;
 
 	const agentId = `${input.manifest.runId}:${input.task.id}`;

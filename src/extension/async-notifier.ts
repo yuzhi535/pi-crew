@@ -4,6 +4,7 @@ import { checkProcessLiveness, isActiveRunStatus } from "../runtime/process-stat
 import { loadRunManifestById, saveRunTasks, updateRunStatus } from "../state/state-store.ts";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
 import { readCrewAgents, saveCrewAgents } from "../runtime/crew-agent-records.ts";
+import { withRunLockSync } from "../state/locks.ts";
 import { listRuns } from "./run-index.ts";
 
 export interface AsyncNotifierState {
@@ -67,11 +68,16 @@ export function markDeadAsyncRunIfNeeded(run: TeamRunManifest, now = Date.now(),
 	const events = readEvents(run.eventsPath);
 	if (events.some(isAsyncTerminalEvent)) return undefined;
 	if (latestEventAgeMs(events, now) < quietMs) return undefined;
+	const asyncPid = run.async.pid;
 	const message = `Background runner died unexpectedly; check background.log (${liveness.detail}).`;
-	const failed = updateRunStatus(run, "failed", message);
-	markActiveTasksAndAgentsFailed(failed, message);
-	appendEvent(failed.eventsPath, { type: "async.died", runId: failed.runId, message, data: { pid: run.async.pid, detail: liveness.detail } });
-	return failed;
+	return withRunLockSync(run, () => {
+		const fresh = loadRunManifestById(run.cwd, run.runId);
+		if (!fresh || !isActiveRunStatus(fresh.manifest.status)) return undefined;
+		const failed = updateRunStatus(fresh.manifest, "failed", message);
+		markActiveTasksAndAgentsFailed(failed, message);
+		appendEvent(failed.eventsPath, { type: "async.died", runId: failed.runId, message, data: { pid: asyncPid, detail: liveness.detail } });
+		return failed;
+	});
 }
 
 export function startAsyncRunNotifier(ctx: ExtensionContext, state: AsyncNotifierState, intervalMs = 5000, options: AsyncNotifierOptions = {}): void {

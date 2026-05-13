@@ -138,7 +138,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	// child-process for async runs so the background runner spawns child Pi workers.
 	let effectiveRuntime = runtime;
 	if (runAsync && runtime.kind === "live-session") {
-		effectiveRuntime = { kind: "child-process", requestedMode: runtime.requestedMode, available: true, steer: false, resume: false, liveToolActivity: false, transcript: true, safety: "trusted" as const, fallback: "child-process", reason: "Background runner cannot use live-session; falling back to child-process." };
+		effectiveRuntime = { ...runtime, kind: "child-process", steer: false, resume: false, liveToolActivity: false, fallback: "child-process", reason: "Background runner cannot use live-session; falling back to child-process." };
 	}
 	const effectiveRuntimeResolution = effectiveRuntime !== runtime ? runtimeResolutionState(effectiveRuntime) : runtimeResolution;
 	const effectiveManifest = effectiveRuntime !== runtime ? { ...executionManifest, runtimeResolution: effectiveRuntimeResolution, updatedAt: new Date().toISOString() } : executionManifest;
