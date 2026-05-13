@@ -4,6 +4,7 @@ import type { AgentConfig } from "../agents/agent-config.ts";
 import type { CrewRuntimeConfig } from "../config/config.ts";
 import type { TeamRunManifest, TeamTaskState, UsageState } from "../state/types.ts";
 import { buildMemoryBlock } from "./agent-memory.ts";
+import { trackTaskUsage } from "./usage-tracker.ts";
 import { registerLiveAgent, disposeLiveAgentSession, terminateLiveAgent, updateLiveAgentStatus } from "./live-agent-manager.ts";
 import { applyLiveAgentControlRequest, applyLiveAgentControlRequests, type LiveAgentControlCursor } from "./live-agent-control.ts";
 import { subscribeLiveControlRealtime } from "./live-control-realtime.ts";
@@ -450,6 +451,17 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 						void session?.steer?.("You have reached your turn limit. Wrap up immediately — provide your final answer now.");
 					} else if (maxTurns !== undefined && softLimitReached && turnCount >= maxTurns + graceTurns) {
 						void session?.abort?.();
+					}
+				}
+				// Accumulate lifetime usage that survives compaction
+				if (obj?.type === "message_end" && (obj as any).message?.role === "assistant") {
+					const u = (obj as any).message?.usage;
+					if (u) {
+						trackTaskUsage(input.task.id, {
+							input: typeof u.input === "number" ? u.input : 0,
+							output: typeof u.output === "number" ? u.output : 0,
+							cacheWrite: typeof u.cacheWrite === "number" ? u.cacheWrite : 0,
+						});
 					}
 				}
 				input.onEvent?.(event);
