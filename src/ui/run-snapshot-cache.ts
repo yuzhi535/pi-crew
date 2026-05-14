@@ -552,7 +552,7 @@ function cancellationReasonFromEvents(events: TeamEvent[]): string | undefined {
 	return [...events].reverse().find((event) => event.type === "run.cancelled" && typeof event.data?.reason === "string")?.data?.reason as string | undefined;
 }
 
-function signatureFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt">, stamps: SnapshotStamps): string {
+function signatureFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt" | "sliceSignatures">, stamps: SnapshotStamps): string {
 	try {
 		const digest = createHash("sha256");
 		digest.update(JSON.stringify({
@@ -573,6 +573,28 @@ function signatureFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt">, sta
 		// Circular reference or non-serializable data — fall back to timestamp.
 		return String(Date.now());
 	}
+}
+
+/**
+ * 1.6 / 1.7 — compute one short hash per logical slice of the snapshot so
+ * dashboard panes / widget can short-circuit when their slice hasn't moved.
+ * The slice contents must mirror what `signatureFor` packs into each branch.
+ */
+function sliceSignaturesFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt" | "sliceSignatures">): RunUiSnapshot["sliceSignatures"] {
+	const hash = (value: unknown): string => {
+		try {
+			return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 12);
+		} catch {
+			return String(Date.now());
+		}
+	};
+	return {
+		tasks: hash(input.tasks.map((task) => [task.id, task.status, task.startedAt, task.finishedAt, task.agentProgress, task.usage])),
+		agents: hash(input.agents.map((agent) => [agent.id, agent.status, agent.startedAt, agent.completedAt, agent.toolUses, agent.progress, agent.usage, agent.model])),
+		mailbox: hash([input.mailbox, input.groupJoins]),
+		progress: hash([input.progress, input.usage, input.cancellationReason]),
+		events: hash(input.recentEvents.map((event) => [event.metadata?.seq, event.time, event.type, event.taskId, event.message, event.data?.reason])),
+	};
 }
 
 function stampsFor(manifest: TeamRunManifest, _agents: CrewAgentRecord[]): SnapshotStamps {
@@ -665,7 +687,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			recentOutputLines: recentOutputLines(loaded.manifest, agents, recentOutputLimit),
 		};
 		const stamps = stampsFor(loaded.manifest, agents);
-		const snapshot: RunUiSnapshot = { ...base, fetchedAt: Date.now(), signature: signatureFor(base, stamps) };
+		const snapshot: RunUiSnapshot = { ...base, fetchedAt: Date.now(), signature: signatureFor(base, stamps), sliceSignatures: sliceSignaturesFor(base) };
 		return { snapshot, stamps, loadedAtMs: snapshot.fetchedAt, lastAccessMs: snapshot.fetchedAt };
 	}
 
@@ -711,7 +733,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			recentOutputLines: recentOutput,
 		};
 		const stamps = await stampsForAsync(loaded.manifest, agents);
-		const snapshot: RunUiSnapshot = { ...base, fetchedAt: Date.now(), signature: signatureFor(base, stamps) };
+		const snapshot: RunUiSnapshot = { ...base, fetchedAt: Date.now(), signature: signatureFor(base, stamps), sliceSignatures: sliceSignaturesFor(base) };
 		return { snapshot, stamps, loadedAtMs: snapshot.fetchedAt, lastAccessMs: snapshot.fetchedAt };
 	}
 

@@ -47,6 +47,22 @@ export interface RunUiSnapshot {
 	cwd: string;
 	fetchedAt: number;
 	signature: string;
+	/**
+	 * 1.6 / 1.7 — per-slice signatures so dashboard panes can short-circuit
+	 * their own render when the slice they care about hasn't changed:
+	 *
+	 *     if (snapshot.sliceSignatures?.tasks === lastTaskSig) return cached;
+	 *
+	 * Optional for backwards-compat; consumers fall back to the full
+	 * `signature` when the field is missing.
+	 */
+	sliceSignatures?: {
+		tasks: string;
+		agents: string;
+		mailbox: string;
+		progress: string;
+		events: string;
+	};
 	manifest: TeamRunManifest;
 	tasks: TeamTaskState[];
 	agents: CrewAgentRecord[];
