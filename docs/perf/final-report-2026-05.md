@@ -3,9 +3,10 @@
 Date: 2026-05-14
 Branches: `perf/baseline-bench` → `perf/sprint-1` → `perf/sprint-2` →
 `perf/sprint-2.5` → `perf/sprint-3` → `perf/sprint-4` → `perf/sprint-5` →
-`perf/sprint-6-cleanup`
-Status: 6 sprint cycles + cleanup completed. 28 items shipped + 3 ADRs
-proposed + 5 items closed with technical rationale.
+`perf/sprint-6-cleanup` → `perf/sprint-7-scaffolding`
+Status: 7 sprint cycles + cleanup + scaffolding completed. 32 items
+shipped + 3 ADRs proposed. 4 caller-migration TODOs remain (Sprint 7
+ships the producer-side APIs they need).
 
 ## Cumulative bench delta (Sprint 0 → final)
 
@@ -103,19 +104,36 @@ projected to bring `register-startup.import.p95` to ≤ 250 ms after a
 - 2.4 active-run-registry binary mirror via `node:v8` serialize/deserialize
   with JSON dual-ship for legacy readers
 
-## Deferred items (closed with rationale after Sprint 6)
+### Sprint 7 — Scaffolding for last 4 deferred items (4 items)
 
-These remain not implemented because each requires a dedicated branch
-with infrastructure that's outside the original sprint scope. Each ADR
-or block-note in the Sprint 6 report explains the blocker.
+- 2.2 `appendEventBuffered` + `flushEventLogBuffer` — refactors
+  appendEvent into appendEventInsideLock; buffered queue flushes a
+  whole batch under a single withEventLogLockSync acquire while
+  preserving the monotonic seq invariant.
+- 2.1 `atomicWriteJsonCoalesced` + `flushPendingAtomicWrites` —
+  per-path 50 ms coalesce window with last-value-wins; auto-flush
+  on process.on(exit/SIGTERM/SIGINT).
+- 2.5 `saveCrewAgentsCoalesced` + `writeCrewAgentStatusCoalesced` +
+  `flushPendingAgentWrites` — wraps 2.1 for crew-agent-records.
+- 2.6 `src/runtime/child-pi-pool.ts` skeleton — flag + interface
+  (`acquirePooledChild` / `releasePooledChild` / `disposeWarmPool` +
+  `resolveWarmPoolSize`). Returns null until Pi runtime gains
+  wait-for-prompt handshake (ADR 0008).
 
-| ID | Item | Reason |
+## Caller-migration TODOs (after Sprint 7)
+
+The producer-side APIs are now in place. The 4 remaining "make the
+default path use them" tasks each require their own integration test
+harness so they ride out on follow-up branches:
+
+| ID | Migration | Producer API ready in |
 |---|---|---|
-| 2.1 | atomic-write coalescer | needs cross-process state-store reader redesign |
-| 2.2 | events.jsonl buffer 20 ms | needs sequence + lock protocol redesign |
-| 2.5 | lazy materialize crew-agent-records | depends on 2.2 |
-| 2.6 | child-pi warm pool | ADR 0008; needs ≥ 50-run soak harness |
-| 1.6 / 1.7 pane migration | dashboard pane → sliceSignatures consumer | framework shipped; per-pane refactor is its own branch |
+| 2.1 caller | switch `saveRunTasks` mergeTaskUpdates loop to `atomicWriteJsonCoalesced` | Sprint 7 (b8fe5d9) |
+| 2.2 caller | switch `task.progress` events in team-runner / task-runner to `appendEventBuffered` | Sprint 7 (34d8652) |
+| 2.5 caller | switch progress hook to `writeCrewAgentStatusCoalesced` and aggregate to `saveCrewAgentsCoalesced` | Sprint 7 (ddb77f7) |
+| 2.6 impl | flip `acquirePooledChild` from null-stub to actual pool once Pi supports the `PI_CREW_POOL_HEALTH=1` handshake | Sprint 7 (69d135d) |
+| 1.6 / 1.7 panes | dashboard panes read `snapshot.sliceSignatures.<slice>` and short-circuit | Sprint 6 (d2d76cb) |
+| 5.5 entry-flip | `pi.extensions[]` → `./dist/index.mjs` after 3-OS smoke | Sprint 6 (2ef4012) |
 
 ## Test surface
 
