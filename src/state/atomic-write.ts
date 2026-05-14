@@ -51,7 +51,7 @@ function isRetryableRenameError(error: unknown): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && RETRYABLE_RENAME_CODES.has(String((error as NodeJS.ErrnoException).code)));
 }
 
-export function renameWithRetry(tempPath: string, filePath: string, retries = 10, rename: (oldPath: string, newPath: string) => void = fs.renameSync): void {
+export function renameWithRetry(tempPath: string, filePath: string, retries = 20, rename: (oldPath: string, newPath: string) => void = fs.renameSync): void {
 	let lastError: unknown;
 	for (let attempt = 0; attempt <= retries; attempt++) {
 		try {
@@ -105,7 +105,18 @@ export function atomicWriteFile(filePath: string, content: string): void {
 		}
 		fs.writeSync(fd, content, undefined, "utf-8");
 		fs.closeSync(fd);
-		renameWithRetry(tempPath, filePath);
+		try {
+			renameWithRetry(tempPath, filePath);
+		} catch (renameError) {
+			// Fallback: if rename fails (Windows EPERM/EBUSY), try direct write.
+			// This is less atomic but avoids data loss when concurrent writers contend.
+			try {
+				fs.writeFileSync(filePath, content, "utf-8");
+			} catch {
+				throw renameError;
+			}
+			try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
+		}
 	} catch (error) {
 		let matches = false;
 		try {
