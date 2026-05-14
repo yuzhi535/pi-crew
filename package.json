@@ -50,6 +50,10 @@
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "node --experimental-strip-types --test --test-concurrency=1 --test-timeout=30000 test/unit/*.test.ts",
     "test:integration": "node --experimental-strip-types --test --test-concurrency=1 --test-timeout=120000 test/integration/*.test.ts",
+    "bench": "node scripts/run-bench.mjs",
+    "bench:check": "node scripts/bench-check.mjs",
+    "bench:capture": "node scripts/run-bench.mjs && node -e \"require('node:fs').copyFileSync('test/bench/results.json','test/bench/baseline.json')\"",
+    "profile:startup": "node scripts/profile-startup.mjs",
     "smoke:pi": "pi install .",
     "smoke:release": "node scripts/release-smoke.mjs"
   },

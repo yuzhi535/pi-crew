@@ -1,0 +1,58 @@
+{
+  "capturedAt": "2026-05-14T14:37:51.107Z",
+  "node": "v24.10.0",
+  "platform": "win32",
+  "results": {
+    "register-startup": {
+      "name": "register-startup",
+      "unit": "ms",
+      "iters": 20,
+      "import": {
+        "min": 519.81,
+        "p50": 534.58,
+        "p95": 655.39,
+        "p99": 655.39,
+        "max": 705.16
+      },
+      "register": {
+        "min": 23.03,
+        "p50": 25.21,
+        "p95": 27.51,
+        "p99": 27.51,
+        "max": 28.51
+      }
+    },
+    "render-flush": {
+      "name": "render-flush",
+      "unit": "ms",
+      "iters": 50,
+      "eventsPerIter": 200,
+      "min": 0.08,
+      "p50": 0.09,
+      "p95": 0.36,
+      "p99": 0.63,
+      "max": 0.97
+    },
+    "snapshot-cache": {
+      "name": "snapshot-cache",
+      "unit": "ms",
+      "iters": 50,
+      "tasks": 10,
+      "events": 200,
+      "cold": {
+        "min": 2.1,
+        "p50": 2.33,
+        "p95": 3.06,
+        "p99": 3.81,
+        "max": 4.55
+      },
+      "warm": {
+        "min": 2.13,
+        "p50": 2.35,
+        "p95": 3.06,
+        "p99": 3.24,
+        "max": 3.72
+      }
+    }
+  }
+}

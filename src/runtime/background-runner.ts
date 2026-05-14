@@ -82,6 +82,7 @@ async function main(): Promise<void> {
 		try {
 			const loaded = loadRunManifestById(cwd, runId);
 			if (loaded) {
+				// LAZY: only loaded on failure path to avoid pulling live-agent-manager into hot start.
 				const { terminateLiveAgentsForRun } = await import("./live-agent-manager.ts");
 				void terminateLiveAgentsForRun(loaded.manifest.runId, "failed").catch(() => {});
 			}
