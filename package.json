@@ -48,7 +48,7 @@
     "check:lazy-imports": "node scripts/check-lazy-imports.mjs",
     "typecheck": "tsc --noEmit && node --experimental-strip-types -e \"await import('./index.ts'); console.log('strip-types import ok')\"",
     "test": "npm run test:unit && npm run test:integration",
-    "test:unit": "node --experimental-strip-types --test --test-concurrency=1 --test-timeout=30000 test/unit/*.test.ts",
+    "test:unit": "node --experimental-strip-types --test --test-concurrency=4 --test-isolation=process --test-timeout=30000 test/unit/*.test.ts",
     "test:integration": "node --experimental-strip-types --test --test-concurrency=1 --test-timeout=120000 test/integration/*.test.ts",
     "bench": "node scripts/run-bench.mjs",
     "bench:check": "node scripts/bench-check.mjs",
