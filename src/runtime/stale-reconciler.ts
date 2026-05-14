@@ -1,5 +1,6 @@
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
 import { checkProcessLiveness } from "./process-status.ts";
+import { recordFromTask, upsertCrewAgent } from "./crew-agent-records.ts";
 
 /**
  * Result of reconciling a single stale run.
@@ -103,7 +104,10 @@ function repairStaleRun(
 		}
 		return task;
 	});
-
+	// Update agent records so widget sees cancelled status immediately
+	for (const task of repairedTasks) {
+		try { upsertCrewAgent(manifest, recordFromTask(manifest, task, "scaffold")); } catch { /* non-critical */ }
+	}
 	return repairedTasks;
 }
 

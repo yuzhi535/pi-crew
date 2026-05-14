@@ -2,6 +2,7 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import type { MetricRegistry } from "../observability/metric-registry.ts";
 import { appendEvent, scanSequence } from "../state/event-log.ts";
+import { recordFromTask, upsertCrewAgent } from "./crew-agent-records.ts";
 import { withRunLockSync } from "../state/locks.ts";
 import { loadRunManifestById, saveRunTasks, updateRunStatus } from "../state/state-store.ts";
 import type { TeamTaskState } from "../state/types.ts";
@@ -152,6 +153,7 @@ export function cancelOrphanedRuns(
 			});
 
 			saveRunTasks(fresh.manifest, repairedTasks);
+			for (const task of repairedTasks) { try { upsertCrewAgent(fresh.manifest, recordFromTask(fresh.manifest, task, "scaffold")); } catch { /* non-critical */ } }
 			updateRunStatus(fresh.manifest, "cancelled", `Orphaned run: owner session ${ownerId} no longer exists`);
 			appendEvent(fresh.manifest.eventsPath, { type: "crew.run.orphan_cancelled", runId: manifest.runId, message: `Auto-cancelled orphaned run (owner: ${ownerId})`, data: { ownerSessionId: ownerId, cancelledTasks: repairedTasks.filter((t) => t.status === "cancelled").length } });
 			cancelled.push(manifest.runId);
@@ -264,6 +266,7 @@ export function purgeStaleActiveRunIndex(staleThresholdMs = 300_000, now = Date.
 								return task;
 							});
 							saveRunTasks(fullLoaded.manifest, repairedTasks);
+							for (const task of repairedTasks) { try { upsertCrewAgent(fullLoaded.manifest, recordFromTask(fullLoaded.manifest, task, "scaffold")); } catch { /* non-critical */ } }
 							updateRunStatus(fullLoaded.manifest, "cancelled", "Orphaned run: worker process dead and no recent activity");
 							void terminateLiveAgentsForRun(fullLoaded.manifest.runId, "cancelled", appendEvent, fullLoaded.manifest.eventsPath).catch(() => {});
 						}
@@ -297,7 +300,10 @@ export function reconcileAllStaleRuns(cwd: string, manifestCache: ManifestCache,
 			if (!fresh || fresh.manifest.status !== "running") return;
 			const result = reconcileStaleRun(fresh.manifest, fresh.tasks, now);
 			if (result.repaired) {
-				if (result.repairedTasks) saveRunTasks(fresh.manifest, result.repairedTasks);
+				if (result.repairedTasks) {
+				saveRunTasks(fresh.manifest, result.repairedTasks);
+				for (const task of result.repairedTasks) { try { upsertCrewAgent(fresh.manifest, recordFromTask(fresh.manifest, task, "scaffold")); } catch { /* non-critical */ } }
+			}
 				updateRunStatus(fresh.manifest, "failed", `Stale run reconciled: ${result.detail}`);
 				void terminateLiveAgentsForRun(fresh.manifest.runId, "failed", appendEvent, fresh.manifest.eventsPath).catch(() => {});
 				appendEvent(fresh.manifest.eventsPath, { type: "crew.run.reconciled_stale", runId: manifest.runId, message: result.detail, data: { verdict: result.verdict } });
