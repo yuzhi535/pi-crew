@@ -32,42 +32,41 @@ $env:THRESHOLD_PCT = 10              # tighter
 $env:BASELINE = "test/bench/baseline-2026-05.json"
 ```
 
-## Bench results (commit 2026-05-14)
+## Bench results (commit 2026-05-14, end of Sprint 1)
 
-### register-startup (cold load via child process)
+> Sprint 0 captured the original baseline; Sprint 1 re-captured at the
+> end of the sprint. Subsequent sprint:check gates compare against this
+> table (the JSON in `test/bench/baseline.json`).
 
-| Metric | min | p50 | p95 | p99 | max |
-|---|---|---|---|---|---|
-| import (ms) — TS strip-types parse | 519.81 | 534.58 | 655.39 | 655.39 | 705.16 |
-| register (ms) — `registerPiTeams(piMock)` | 23.03 | 25.21 | 27.51 | 27.51 | 28.51 |
-
-iters: 20.
-
-> Insight: Bottleneck là `import` (≈ 600 ms p95). `registerPiTeams` thực tế chỉ ~27 ms.
-> → Sprint 2 (lazy phase 2) + Sprint 5 (bundle) phải kéo `import.p95` xuống.
-
-### render-flush (200 events / iter)
+### register-startup (cold load via child process, 20 iters)
 
 | Metric | min | p50 | p95 | p99 | max |
 |---|---|---|---|---|---|
-| ms | 0.08 | 0.09 | 0.36 | 0.63 | 0.97 |
+| import (ms) | 513.76 | 528.15 | 542.49 | 542.49 | 566.58 |
+| register (ms) | 23.32 | 24.27 | 25.49 | 25.49 | 26.45 |
 
-iters: 50.
-
-> Insight: `RenderScheduler` đã rất tốt (debounce + collapse). Sprint 1 thay đổi
-> kỳ vọng ổn định p95 < 0.5 ms, không kỳ vọng cải thiện đáng kể (đã ở mức nhiễu).
-
-### snapshot-cache (10 tasks, 200 events)
+### render-flush (200 events / iter, 100 iters)
 
 | Metric | min | p50 | p95 | p99 | max |
 |---|---|---|---|---|---|
-| cold (ms) | 2.10 | 2.33 | 3.06 | 3.81 | 4.55 |
-| warm (ms) | 2.13 | 2.35 | 3.06 | 3.24 | 3.72 |
+| ms | 0.07 | 0.10 | 0.25 | 1.02 | 1.12 |
 
-iters: 50.
+### snapshot-cache (10 tasks, 200 events, 50 iters)
 
-> Insight: cold ≈ warm vì snapshot cache TTL = 0 trong bench. Sprint 1 (1.4/1.5)
-> + Sprint 2 (1.3 fs watcher, 1.2 async stamps) kỳ vọng cold p95 -30% (~2.1 ms).
+| Metric | min | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|
+| cold (ms) | 2.14 | 2.42 | 2.82 | 2.92 | 3.01 |
+| warm (ms) | 2.16 | 2.41 | 2.70 | 2.75 | 3.99 |
+
+### Delta vs Sprint-0 baseline
+
+| Metric | Sprint 0 | Sprint 1 | Delta |
+|---|---|---|---|
+| register-startup.import.p95 | 655.39 | 542.49 | **−17.2 %** |
+| register-startup.register.p95 | 27.51 | 25.49 | **−7.3 %** |
+| render-flush.p95 | 0.36 | 0.25 | **−30.6 %** |
+| snapshot-cache.cold.p95 | 3.06 | 2.82 | **−7.8 %** |
+| snapshot-cache.warm.p95 | 3.06 | 2.70 | **−11.8 %** |
 
 ## Profile-startup (5 iters)
 
