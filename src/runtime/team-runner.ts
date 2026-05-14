@@ -562,6 +562,8 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		const result = await executeTeamRunCore(input, manifest, workflow);
 		resolveRunPromise(manifest.runId, result);
 		cleanupUsage();
+		// Terminate live agents for this run — agents are done when the run ends.
+		void terminateLiveAgentsForRun(manifest.runId, "completed").catch(() => {});
 		return result;
 	} catch (error) {
 		// P1: Catch unhandled errors — ensure manifest/tasks/agents are terminal so they don't stay "running" forever.

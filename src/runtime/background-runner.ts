@@ -78,6 +78,14 @@ async function main(): Promise<void> {
 		appendEvent(manifest.eventsPath, { type: "async.completed", runId: manifest.runId, data: { status: manifest.status, tasks: tasks.length } });
 		if (manifest.status === "failed" || manifest.status === "cancelled" || manifest.status === "blocked") process.exitCode = 1;
 	} catch (error) {
+		// Terminate live agents on failure too — agents are done when the run fails
+		try {
+			const loaded = loadRunManifestById(cwd, runId);
+			if (loaded) {
+				const { terminateLiveAgentsForRun } = await import("./live-agent-manager.ts");
+				void terminateLiveAgentsForRun(loaded.manifest.runId, "failed").catch(() => {});
+			}
+		} catch { /* best-effort */ }
 		const message = error instanceof Error ? error.message : String(error);
 		manifest = updateRunStatus(manifest, "failed", message);
 		appendEvent(manifest.eventsPath, { type: "async.failed", runId: manifest.runId, message });
