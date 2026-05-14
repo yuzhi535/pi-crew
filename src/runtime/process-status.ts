@@ -11,6 +11,9 @@ export interface ProcessLiveness {
 const ORPHANED_ACTIVE_RUN_MS = 10 * 60 * 1000;
 /** How long a completed run stays visible in the widget after completion. */
 const COMPLETED_VISIBILITY_GRACE_MS = 8000;
+/** Maximum age (ms) for an active run before it's considered stale.
+ * After this time, PID-only liveness is unreliable due to PID recycling. */
+const STALE_ACTIVE_RUN_MS = 30 * 60 * 1000;
 
 export function checkProcessLiveness(pid: number | undefined): ProcessLiveness {
 	if (pid === undefined || !Number.isInteger(pid) || pid <= 0) {
@@ -50,13 +53,30 @@ function hasDurableActiveAgentEvidence(agent: CrewAgentRecord): boolean {
 	return Boolean(agent.statusPath || agent.eventsPath || agent.outputPath || agent.progress || agent.toolUses || agent.jsonEvents);
 }
 
-export function hasStaleAsyncProcess(run: TeamRunManifest): boolean {
+export function hasStaleAsyncProcess(run: TeamRunManifest, now = Date.now()): boolean {
 	if (!isActiveRunStatus(run.status) || !run.async) return false;
-	return !checkProcessLiveness(run.async.pid).alive;
+	const pidAlive = checkProcessLiveness(run.async.pid).alive;
+	if (!pidAlive) return true;
+	// PID is alive, but check if the run is suspiciously old.
+	// PID recycling means a stale PID could point to an unrelated process.
+	const updatedAt = new Date(run.updatedAt).getTime();
+	const age = now - updatedAt;
+	if (Number.isFinite(updatedAt) && age > STALE_ACTIVE_RUN_MS) {
+		// Additional evidence: if no agent has recent activity, treat as stale.
+		// The real process would have updated the manifest within 30 minutes.
+		return true;
+	}
+	return false;
 }
 
 export function isDisplayActiveRun(run: TeamRunManifest, agents: CrewAgentRecord[] = [], now = Date.now()): boolean {
-	if (hasStaleAsyncProcess(run) || isLikelyOrphanedActiveRun(run, agents, now)) return false;
+	if (hasStaleAsyncProcess(run, now) || isLikelyOrphanedActiveRun(run, agents, now)) return false;
+	// Hard filter: if an active-status run hasn't been updated in > STALE_ACTIVE_RUN_MS
+	// and has no async PID tracking, it's a ghost from a crashed process.
+	if (isActiveRunStatus(run.status) && !run.async) {
+		const updatedAt = new Date(run.updatedAt).getTime();
+		if (Number.isFinite(updatedAt) && now - updatedAt > STALE_ACTIVE_RUN_MS) return false;
+	}
 	// Grace period: show completed runs for a few seconds so users see the result.
 	if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
 		const lastAgentActivity = agents.reduce<number>((max, agent) => {

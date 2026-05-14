@@ -162,6 +162,29 @@ export function getLiveAgent(agentIdOrTaskId: string): LiveAgentHandle | undefin
 	return liveAgents.get(agentIdOrTaskId) ?? [...liveAgents.values()].find((entry) => entry.taskId === agentIdOrTaskId);
 }
 
+/** Maximum time a non-running live agent handle stays in memory (10 minutes). */
+const STALE_HANDLE_MS = 10 * 60 * 1000;
+
+/** Remove dead live agent handles whose status is terminal and older than STALE_HANDLE_MS.
+ * Called periodically by the widget refresh cycle.
+ * Returns the number of handles evicted.
+ */
+export function evictStaleLiveAgentHandles(now = Date.now()): number {
+	let evicted = 0;
+	for (const [agentId, handle] of liveAgents) {
+		// Only evict terminal-status handles
+		if (handle.status !== "running" && handle.status !== "queued" && handle.status !== "waiting") {
+			const age = now - new Date(handle.updatedAt).getTime();
+			if (age > STALE_HANDLE_MS) {
+				liveAgents.delete(agentId);
+				safeDisposeLiveSession(handle);
+				evicted++;
+			}
+		}
+	}
+	return evicted;
+}
+
 export function listLiveAgents(): LiveAgentHandle[] {
 	return [...liveAgents.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }

@@ -4,7 +4,7 @@ import { listRecentRuns } from "../extension/run-index.ts";
 import { readCrewAgents } from "../runtime/crew-agent-records.ts";
 import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
 import { isDisplayActiveRun } from "../runtime/process-status.ts";
-import { listLiveAgents, type LiveAgentHandle } from "../runtime/live-agent-manager.ts";
+import { listLiveAgents, evictStaleLiveAgentHandles, type LiveAgentHandle } from "../runtime/live-agent-manager.ts";
 import { getTaskUsage } from "../runtime/usage-tracker.ts";
 import type { TeamRunManifest } from "../state/types.ts";
 import type { ManifestCache } from "../runtime/manifest-cache.ts";
@@ -185,6 +185,9 @@ function agentsFor(run: TeamRunManifest): CrewAgentRecord[] {
 }
 
 export function activeWidgetRuns(cwd: string, manifestCache?: ManifestCache, snapshotCache?: RunSnapshotCache, preloadedManifests?: TeamRunManifest[]): WidgetRun[] {
+	// Evict stale live-agent handles (terminal status, >10min old) to prevent memory leaks
+	// from crashed processes and old test sessions.
+	evictStaleLiveAgentHandles();
 	const runs = preloadedManifests ?? (manifestCache ? manifestCache.list(20) : listRecentRuns(cwd, 20));
 	return runs
 		.map((run) => {
