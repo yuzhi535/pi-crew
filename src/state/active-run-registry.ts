@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { serialize, deserialize } from "node:v8";
 import { DEFAULT_CACHE, DEFAULT_PATHS } from "../config/defaults.ts";
 import type { TeamRunManifest } from "./types.ts";
 import { atomicWriteJson } from "./atomic-write.ts";
@@ -7,6 +8,7 @@ import { userCrewRoot } from "../utils/paths.ts";
 import { isSafePathId } from "../utils/safe-paths.ts";
 import { sharedScanCache } from "../utils/scan-cache.ts";
 import { sleepSync } from "../utils/sleep.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 export interface ActiveRunRegistryEntry {
 	runId: string;
@@ -18,6 +20,11 @@ export interface ActiveRunRegistryEntry {
 
 function registryPath(): string {
 	return path.join(userCrewRoot(), DEFAULT_PATHS.state.runsSubdir, "active-run-index.json");
+}
+
+/** 2.4 — binary mirror of the JSON registry, written alongside for fast reads. */
+function registryBinaryPath(): string {
+	return path.join(userCrewRoot(), DEFAULT_PATHS.state.runsSubdir, "active-run-index.bin");
 }
 
 function registryLockPath(): string {
@@ -99,10 +106,18 @@ function normalizeEntry(value: unknown): ActiveRunRegistryEntry | undefined {
 
 export function readActiveRunRegistry(maxEntries = DEFAULT_CACHE.manifestMaxEntries): ActiveRunRegistryEntry[] {
 	let parsed: unknown;
+	// 2.4 — prefer the binary mirror (single deserialize, no JSON.parse on
+	// large arrays). Fall back to JSON when the binary is missing or
+	// corrupt; this lets a 2-release migration co-exist with old readers.
 	try {
-		parsed = JSON.parse(fs.readFileSync(registryPath(), "utf-8"));
+		const buf = fs.readFileSync(registryBinaryPath());
+		parsed = deserialize(buf);
 	} catch {
-		return [];
+		try {
+			parsed = JSON.parse(fs.readFileSync(registryPath(), "utf-8"));
+		} catch {
+			return [];
+		}
 	}
 	const entries = Array.isArray(parsed) ? parsed.map(normalizeEntry).filter((entry): entry is ActiveRunRegistryEntry => entry !== undefined) : [];
 	const byId = new Map<string, ActiveRunRegistryEntry>();
@@ -113,8 +128,18 @@ export function readActiveRunRegistry(maxEntries = DEFAULT_CACHE.manifestMaxEntr
 }
 
 function writeEntries(entries: ActiveRunRegistryEntry[]): void {
+	const trimmed = entries.slice(0, DEFAULT_CACHE.manifestMaxEntries);
 	fs.mkdirSync(path.dirname(registryPath()), { recursive: true });
-	atomicWriteJson(registryPath(), entries.slice(0, DEFAULT_CACHE.manifestMaxEntries));
+	// 2.4 — dual-ship: write both formats. Readers prefer binary; legacy
+	// readers (other tools / older releases) keep using the JSON file.
+	atomicWriteJson(registryPath(), trimmed);
+	try {
+		const tempBin = `${registryBinaryPath()}.${process.pid}.${Date.now()}.tmp`;
+		fs.writeFileSync(tempBin, serialize(trimmed));
+		fs.renameSync(tempBin, registryBinaryPath());
+	} catch (error) {
+		logInternalError("active-run-registry.binary-write", error);
+	}
 }
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "blocked"]);
