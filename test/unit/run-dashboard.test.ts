@@ -36,9 +36,8 @@ test("RunDashboard renders and selects runs", () => {
 		selected = selection;
 	});
 	const lines = dashboard.render(80);
-	assert.ok(lines.some((line) => line.includes("pi-crew dashboard")));
-	assert.ok(lines.some((line) => line.includes("Runs: 2")));
-	// Selected run shown as compact header "▸ team_a · completed ..."
+	assert.ok(lines.some((line) => line.includes("pi-crew")));
+	assert.ok(lines.some((line) => line.includes("2 runs")));
 	assert.ok(lines.some((line) => line.includes("team_a") && line.includes("completed")));
 	assert.ok(lines.some((line) => line.includes("team_a")));
 	dashboard.handleInput("j");
@@ -49,7 +48,7 @@ test("RunDashboard renders and selects runs", () => {
 test("RunDashboard renders a visibly right-sidebar title when requested", () => {
 	const dashboard = new RunDashboard([run("team_right", "running")], () => {}, {}, { placement: "right" });
 	const lines = dashboard.render(70);
-	assert.ok(lines.some((line) => line.includes("pi-crew sidebar")));
+	assert.ok(lines.some((line) => line.includes("pi-crew")));
 	assert.ok(lines.some((line) => line.includes("team_right")));
 });
 

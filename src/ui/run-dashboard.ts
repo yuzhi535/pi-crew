@@ -335,91 +335,73 @@ export class RunDashboard implements DashboardComponent {
 			
 			const lines: string[] = [
 				border("╭", "╮"),
-				row(`${fg("accent", "▐")} ${this.theme.bold(this.options.placement === "right" ? "pi-crew sidebar" : "pi-crew dashboard")}`),
-				row(`Runs: ${this.runs.length} · ${countByStatus(this.runs, this.options.snapshotCache)}  ·  1-6 panes · ↑↓ nav · Esc close`),
+				row(`${fg("accent", "▐")} ${this.theme.bold("pi-crew")} · ${this.runs.length} runs  ${fg("dim", "1-6 pane · ↑↓ · Enter · Esc")}`),
 				sep(),
 			];
 
 			if (this.runs.length === 0) {
-				lines.push(row("No runs found."));
+				lines.push(row(fg("dim", "No runs.")));
 			} else {
-				// Run list
-				const rows = groupedRuns(this.runs, this.options.snapshotCache).slice(0, 16);
+				// Run list (max 8 lines)
+				const rows = groupedRuns(this.runs, this.options.snapshotCache).slice(0, 8);
 				const selectableRuns = rows.filter((r) => r.run);
-				for (const row_ of rows) {
-					if (!row_.run) {
-						lines.push(row(fg("dim", `── ${row_.label} ──`)));
-						continue;
-					}
-					const index = selectableRuns.findIndex((c) => c.run?.runId === row_.run?.runId);
-					const rowSnap = snapshotFor(row_.run, this.options.snapshotCache);
-					const rowRun = rowSnap?.manifest ?? row_.run;
-					const rowAgents = rowSnap?.agents ?? agentsFor(row_.run, this.options.snapshotCache);
-					const rowStatus: RunStatus = isLikelyOrphanedActiveRun(rowRun, rowAgents) ? "stale" : (rowRun.status as RunStatus);
-					const label = runLabel(rowRun, index === this.selected, this.options.snapshotCache);
-					lines.push(row(applyStatusColor(this.theme, rowStatus, label)));
+				for (const r of rows) {
+					if (!r.run) { lines.push(row(fg("dim", `── ${r.label} ──`))); continue; }
+					const idx = selectableRuns.findIndex((c) => c.run?.runId === r.run?.runId);
+					const snap = snapshotFor(r.run, this.options.snapshotCache);
+					const run = snap?.manifest ?? r.run;
+					const agents = snap?.agents ?? agentsFor(r.run, this.options.snapshotCache);
+					const status: RunStatus = isLikelyOrphanedActiveRun(run, agents) ? "stale" : (run.status as RunStatus);
+					const label = runLabel(run, idx === this.selected, this.options.snapshotCache);
+					lines.push(row(applyStatusColor(this.theme, status, label)));
 				}
 
-				// Selected run detail
+				// Selected run detail — compact
 				const selectedRun = selectedRunFromGrouped(this.runs, this.selected, this.options.snapshotCache);
 				if (selectedRun) {
 					const snap = snapshotFor(selectedRun, this.options.snapshotCache);
 					const r = snap?.manifest ?? selectedRun;
 					const agents = snap?.agents ?? agentsFor(selectedRun, this.options.snapshotCache);
-					lines.push(sep());
-					
-					// Compact run header
 					const statusStr = isLikelyOrphanedActiveRun(r, agents) ? "stale" : r.status;
-					const teamStr = `${r.team}/${r.workflow ?? "default"}`;
-					lines.push(row(`${fg("accent", "▸")} ${r.runId.slice(-12)} · ${statusStr} · ${teamStr}`));
-					lines.push(row(fg("dim", `  ${r.goal.slice(0, innerWidth - 10)}`)));
+					lines.push(sep());
+					lines.push(row(`${fg("accent", "▸")} ${truncate(r.goal, innerWidth - 6)}`));
+					lines.push(row(fg("dim", `  ${r.team}/${r.workflow ?? "default"} · ${statusStr} · ${r.runId.slice(-10)}`)));
 
-					// Pane header
-					const paneNames: Record<string, string> = { agents: "Agents", progress: "Progress", mailbox: "Mailbox", output: "Output", health: "Health", metrics: "Metrics" };
-					lines.push(row(fg("dim", `── ${paneNames[this.activePane] ?? this.activePane} ──`)));
-
-					// Pane content
+					// Pane content (max 8 lines)
 					const paneLines = snap
-						? this.activePane === "agents"
-							? renderAgentsPane(snap, this.options)
-							: this.activePane === "progress"
-								? renderProgressPane(snap)
-								: this.activePane === "mailbox"
-									? renderMailboxPane(snap)
-									: this.activePane === "health"
-										? renderHealthPane(snap, { isForeground: !r.async })
-										: this.activePane === "metrics"
-											? renderMetricsPane(snap, { registry: this.options.registry })
-											: renderTranscriptPane(snap)
+						? this.activePane === "agents" ? renderAgentsPane(snap, this.options)
+						: this.activePane === "progress" ? renderProgressPane(snap)
+						: this.activePane === "mailbox" ? renderMailboxPane(snap)
+						: this.activePane === "health" ? renderHealthPane(snap, { isForeground: !r.async })
+						: this.activePane === "metrics" ? renderMetricsPane(snap, { registry: this.options.registry })
+						: renderTranscriptPane(snap)
 						: [
-						...readAgentPreview(r, this.showFullProgress ? 20 : 6, this.options),
-						...readProgressPreview(r, this.showFullProgress ? 20 : 3),
-					];
-					for (const line of paneLines.slice(0, 20)) {
-						lines.push(row(truncate(line, innerWidth - 2)));
+							...readAgentPreview(r, 4, this.options),
+							...readProgressPreview(r, 2),
+						];
+					const filteredPane = paneLines.filter(l => l && !l.includes("(none)") && l.trim() !== "");
+					if (filteredPane.length > 0) {
+						lines.push(row(fg("dim", `── ${this.activePane} ──`)));
+						for (const line of filteredPane.slice(0, 8)) {
+							lines.push(row(truncate(line, innerWidth - 2)));
+						}
 					}
 
-					// Footer
+					// One-line footer
 					const selectedTasks = snap?.tasks ?? readRunTasks(r, this.options.snapshotCache);
-					let contextPercent: number | undefined;
+					const usage = aggregateUsage(selectedTasks);
+					const u = usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+					const tok = (u.input ?? 0) + (u.output ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
+					const tokStr = tok > 0 ? (tok >= 1000 ? `${(tok/1000).toFixed(1)}k tok` : `${tok} tok`) : "";
+					let ctxPct: number | undefined;
 					for (const agent of agents) {
 						if (agent.status === "running" && agent.runtime === "live-session") {
 							const pct = getLiveAgentContextPercent(agent.taskId);
-							if (pct != null) { contextPercent = pct; break; }
+							if (pct != null) { ctxPct = pct; break; }
 						}
 					}
-					const footer = new CrewFooter({
-						pwd: r.cwd,
-						runId: r.runId,
-						status: isLikelyOrphanedActiveRun(r, agents) ? "stale" : r.status,
-						usage: aggregateUsage(selectedTasks),
-						contextPercent,
-						badges: [`team ${r.team}`, `${r.artifacts.length} artifacts`, r.workspaceMode].filter(Boolean),
-					}, this.theme);
-					lines.push(sep());
-					for (const footerLine of footer.render(innerWidth - 1)) {
-						lines.push(row(truncate(footerLine, innerWidth - 1)));
-					}
+					const ctxStr = ctxPct != null ? ` · ${Math.round(ctxPct)}% ctx` : "";
+					if (tokStr || ctxStr) lines.push(row(fg("dim", `${tokStr}${ctxStr}`)));
 				}
 			}
 			lines.push(border("╰", "╯"));
