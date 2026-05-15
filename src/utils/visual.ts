@@ -120,6 +120,42 @@ export function truncateToWidth(value: string, width: number, ellipsis = "…"):
 
 export const truncate = truncateToWidth;
 
+/**
+ * Strip newlines and other terminal-confusing control characters from a
+ * single-line label. Without this, embedded `\n`/`\r` in user-provided
+ * text (run.goal, run.team, mailbox preview, agent activity, ...) breaks
+ * box-drawing rows because the terminal advances to the next line in the
+ * middle of a row, leaving the overlay's `│` border misaligned and the
+ * dashboard appearing to "duplicate" itself below the original render.
+ *
+ * Preserves ANSI color/style escape sequences (\u001b[...m) which the
+ * caller has already wrapped around the text via the theme adapter.
+ */
+export function sanitizeLine(value: string): string {
+	if (!value) return "";
+	let result = "";
+	let i = 0;
+	while (i < value.length) {
+		const ansi = readAnsiCode(value, i);
+		if (ansi) {
+			result += ansi;
+			i += ansi.length;
+			continue;
+		}
+		const code = value.charCodeAt(i);
+		// Replace any C0/C1 control char (incl. \n \r \t \v \f and 0x7F-0x9F)
+		// with a single space; everything else is passed through verbatim.
+		if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+			result += " ";
+			i += 1;
+			continue;
+		}
+		result += value[i];
+		i += 1;
+	}
+	return result;
+}
+
 export function pad(value: string, width: number): string {
 	const current = visibleWidth(value);
 	if (current >= width) return value;

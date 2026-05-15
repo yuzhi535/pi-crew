@@ -13,3 +13,4 @@ PI_MEMORY.md
 test/bench/results.json
 *.cpuprofile
 dist/
+.crew/state/

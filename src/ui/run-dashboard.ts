@@ -8,7 +8,7 @@ import { readJsonFileCoalesced } from "../utils/file-coalescer.ts";
 import type { CrewTheme } from "./theme-adapter.ts";
 import { asCrewTheme, subscribeThemeChange } from "./theme-adapter.ts";
 import { applyStatusColor, iconForStatus, type RunStatus } from "./status-colors.ts";
-import { pad, truncate } from "../utils/visual.ts";
+import { pad, truncate, sanitizeLine } from "../utils/visual.ts";
 import { Box, Text } from "./layout-primitives.ts";
 import { DynamicCrewBorder } from "./dynamic-border.ts";
 import { CrewFooter } from "./crew-footer.ts";
@@ -41,7 +41,23 @@ export interface RunDashboardOptions {
 	snapshotCache?: RunSnapshotCache;
 	runProvider?: () => TeamRunManifest[];
 	registry?: MetricRegistry;
+	/**
+	 * Poke the host TUI to repaint after a state change. Must be wired from
+	 * `commands.ts` (`() => requestRenderTarget(tui)`) so keypresses and event-bus
+	 * updates immediately refresh the overlay instead of waiting on the next
+	 * host tick. Without this the overlay can desync and base content (chat,
+	 * status line) can paint through stale cells.
+	 */
+	requestRender?: () => void;
 }
+
+/**
+ * Persisted per-process so that pressing `r` (reload) or closing+reopening the
+ * dashboard within the same Pi session keeps the user on the pane they were
+ * looking at. Resetting to "agents" on every `new RunDashboard(...)` was a
+ * UX regression.
+ */
+let lastActivePane: "agents" | "progress" | "mailbox" | "output" | "health" | "metrics" = "agents";
 
 export type RunDashboardAction = "status" | "summary" | "artifacts" | "api" | "events" | "agents" | "agent-events" | "agent-output" | "agent-transcript" | "agent-live" | "mailbox" | "reload" | "mailbox-detail" | "health-recovery" | "health-kill-stale" | "health-diagnostic-export" | "notifications-dismiss";
 export interface RunDashboardSelection {
@@ -151,7 +167,7 @@ function agentPreviewLine(agent: CrewAgentRecord, task: TeamTaskState | undefine
 	].filter((part): part is string => Boolean(part));
 	const recent = agent.progress?.recentOutput?.at(-1);
 	const icon = iconForStatus(agent.status, { runningGlyph: spinnerFrame(agent.taskId) });
-	return `Agent: ${icon} ${agent.taskId} ${agent.role}->${agent.agent}${stats.length ? ` · ${stats.join(" · ")}` : ""}${recent ? ` ⎿ ${recent}` : ""}`;
+	return sanitizeLine(`Agent: ${icon} ${agent.taskId} ${agent.role}->${agent.agent}${stats.length ? ` · ${stats.join(" · ")}` : ""}${recent ? ` ⎿ ${recent}` : ""}`);
 }
 
 function readAgentPreview(run: TeamRunManifest, maxLines = 5, options: RunDashboardOptions = {}): string[] {
@@ -197,10 +213,10 @@ function runLabel(run: TeamRunManifest, selected: boolean, snapshotCache?: RunSn
 	const stale = isLikelyOrphanedActiveRun(run, agents);
 	const running = agents.find((agent) => agent.status === "running");
 	const queued = agents.find((agent) => agent.status === "queued");
-	const step = stale ? "orphaned queued run" : running ? `step ${running.taskId.replace(/[\x00-\x1f\x7f-\x9f]/g, "")}` : queued ? `queued ${queued.taskId.replace(/[\x00-\x1f\x7f-\x9f]/g, "")}` : `agents ${agents.length}`;
+	const step = stale ? "orphaned queued run" : running ? `step ${running.taskId}` : queued ? `queued ${queued.taskId}` : `agents ${agents.length}`;
 	const status: RunStatus = stale ? "stale" : (run.status as RunStatus);
 	const marker = selected ? "›" : " ";
-	return `${marker} ${iconForStatus(status, { runningGlyph: spinnerFrame(run.runId) })} ${run.runId.slice(-8)} ${status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`;
+	return sanitizeLine(`${marker} ${iconForStatus(status, { runningGlyph: spinnerFrame(run.runId) })} ${run.runId.slice(-8)} ${status} | ${run.team}/${run.workflow ?? "none"} | ${step} | ${run.goal}`);
 }
 
 interface ResolvedRun {
@@ -246,7 +262,7 @@ function countByStatus(runs: TeamRunManifest[], snapshotCache?: RunSnapshotCache
 export class RunDashboard implements DashboardComponent {
 	private selected = 0;
 	private showFullProgress = false;
-	private activePane: "agents" | "progress" | "mailbox" | "output" | "health" | "metrics" = "agents";
+	private activePane: "agents" | "progress" | "mailbox" | "output" | "health" | "metrics" = lastActivePane;
 	private runs: TeamRunManifest[];
 	private readonly done: (selection: RunDashboardSelection | undefined) => void;
 	private readonly theme: CrewTheme;
@@ -267,8 +283,36 @@ export class RunDashboard implements DashboardComponent {
 		this.done = done;
 		this.theme = asCrewTheme(theme);
 		this.options = options;
-		this.unsubscribeTheme = subscribeThemeChange(theme, () => this.invalidate());
-		this.unsubscribeEventBus = runEventBus.onAny(() => this.invalidate());
+		this.unsubscribeTheme = subscribeThemeChange(theme, () => this.invalidateAndRender());
+		this.unsubscribeEventBus = runEventBus.onAny(() => this.invalidateAndRender());
+	}
+
+	/**
+	 * Invalidate the layout cache AND poke the host TUI to repaint. Without
+	 * the explicit `requestRender` call the host only repaints on its own
+	 * tick / on keypress, so async events (subagent completed, mailbox
+	 * updates, theme change) would leave the overlay showing stale data
+	 * until the user pressed a key — which is exactly when the "cascading
+	 * dashboard" symptom surfaces because the diff renderer was comparing
+	 * against a stale `previousLines` snapshot.
+	 */
+	private invalidateAndRender(): void {
+		this.invalidate();
+		try { this.options.requestRender?.(); } catch { /* host may not expose requestRender */ }
+	}
+
+	/**
+	 * Stable overlay height. The host pi-tui positions overlays based on the
+	 * number of lines `render()` returns; if that number fluctuates between
+	 * frames (empty state → full pane → fewer agents) the anchor row shifts
+	 * up/down and the differential renderer cannot reliably erase the
+	 * previous footprint, producing the "ghost dashboard below" bug.
+	 *
+	 * Locking the output to a single height per render eliminates that.
+	 */
+	private targetHeight(): number {
+		const rows = Number.isFinite(process.stdout?.rows) ? Number(process.stdout?.rows) : 30;
+		return Math.max(12, Math.min(36, rows - 2));
 	}
 
 	private refreshRuns(): void {
@@ -364,8 +408,8 @@ export class RunDashboard implements DashboardComponent {
 					const agents = snap?.agents ?? agentsFor(selectedRun, this.options.snapshotCache);
 					const statusStr = isLikelyOrphanedActiveRun(r, agents) ? "stale" : r.status;
 					lines.push(sep());
-					lines.push(row(`${fg("accent", "▸")} ${truncate(r.goal, innerWidth - 6)}`));
-					lines.push(row(fg("dim", `  ${r.team}/${r.workflow ?? "default"} · ${statusStr} · ${r.runId.slice(-10)}`)));
+					lines.push(row(`${fg("accent", "▸")} ${truncate(sanitizeLine(r.goal), innerWidth - 6)}`));
+					lines.push(row(fg("dim", sanitizeLine(`  ${r.team}/${r.workflow ?? "default"} · ${statusStr} · ${r.runId.slice(-10)}`))));
 
 					// Pane content (max 8 lines)
 					const paneLines = snap
@@ -383,7 +427,7 @@ export class RunDashboard implements DashboardComponent {
 					if (filteredPane.length > 0) {
 						lines.push(row(fg("dim", `── ${this.activePane} ──`)));
 						for (const line of filteredPane.slice(0, 8)) {
-							lines.push(row(truncate(line, innerWidth - 2)));
+							lines.push(row(truncate(sanitizeLine(line), innerWidth - 2)));
 						}
 					}
 
@@ -405,6 +449,21 @@ export class RunDashboard implements DashboardComponent {
 				}
 			}
 			lines.push(border("╰", "╯"));
+
+			const target = this.targetHeight();
+			if (lines.length < target) {
+				const innerWidth = Math.max(20, width - 4);
+				const fg = (color: Parameters<CrewTheme["fg"]>[0], text: string) => this.theme.fg(color, text);
+				const blankRow = `│ ${pad("", innerWidth - 1)}│`;
+				const bottom = lines.pop();
+				while (lines.length < target - 1) lines.push(fg("border", blankRow));
+				if (bottom) lines.push(bottom);
+			} else if (lines.length > target) {
+				const bottom = lines[lines.length - 1];
+				lines.length = target - 1;
+				lines.push(bottom);
+			}
+
 			this.cachedLines = renderLines(lines.map((line) => truncate(line, width)), width);
 			this.cachedVersion = signature;
 			this.cachedWidth = width;
@@ -459,6 +518,9 @@ export class RunDashboard implements DashboardComponent {
 			const selectableCount = groupedRuns(this.runs, this.options.snapshotCache).filter((row) => row.run).length;
 			this.selected = Math.min(Math.max(0, selectableCount - 1), this.selected + 1);
 		}
-		if (action) this.invalidate();
+		if (action) {
+			lastActivePane = this.activePane;
+			this.invalidateAndRender();
+		}
 	}
 }
