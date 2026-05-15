@@ -150,17 +150,19 @@ const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "blocked"
  */
 function filterAliveEntries(entries: ActiveRunRegistryEntry[]): ActiveRunRegistryEntry[] {
 	return entries.filter((entry) => {
-		// Quick checks first — skip heavy manifest read if CWD or state dir is gone
 		try {
 			if (!fs.existsSync(entry.cwd)) return false;
 			if (!fs.existsSync(entry.manifestPath)) return false;
 		} catch {
 			return false;
 		}
-		// Only read manifest if quick checks pass
 		try {
-			const raw = JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8")) as { status?: string };
+			const raw = JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8")) as { status?: string; async?: { pid?: number } };
 			if (TERMINAL_STATUSES.has(raw.status ?? "")) return false;
+			// Dead PID = stale async run
+			if (raw.async?.pid) {
+				try { process.kill(raw.async.pid, 0); } catch { return false; }
+			}
 		} catch {
 			return false;
 		}
@@ -201,8 +203,12 @@ export function activeRunEntries(): ActiveRunRegistryEntry[] {
 			if (!fs.existsSync(entry.stateRoot) || !fs.existsSync(entry.manifestPath)) continue;
 			if (fs.lstatSync(entry.stateRoot).isSymbolicLink()) continue;
 			const cached = sharedScanCache.readAndCache("active-manifests", entry.runId, entry.manifestPath);
-			const manifest = (cached?.raw ?? JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8"))) as { status?: unknown };
+			const manifest = (cached?.raw ?? JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8"))) as { status?: unknown; async?: { pid?: number } };
 			if (manifest.status !== "queued" && manifest.status !== "planning" && manifest.status !== "running" && manifest.status !== "blocked") continue;
+			// PID liveness check: async runs with dead PID are stale — don't surface them
+			if (manifest.async?.pid) {
+				try { process.kill(manifest.async.pid, 0); } catch { continue; }
+			}
 			entries.push(entry);
 		} catch {
 			// Ignore stale entries; callers filter active status from manifests.
