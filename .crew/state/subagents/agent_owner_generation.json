@@ -1,0 +1,11 @@
+{
+  "id": "agent_owner_generation",
+  "type": "explorer",
+  "description": "Explore",
+  "prompt": "Explore",
+  "status": "running",
+  "startedAt": 1778817001441,
+  "background": true,
+  "ownerSessionGeneration": 42,
+  "terminated": true
+}

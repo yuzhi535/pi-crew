@@ -1,0 +1,12 @@
+{
+  "id": "agent_mp6dpoxa_1",
+  "type": "writer",
+  "description": "fg",
+  "prompt": "do",
+  "status": "completed",
+  "startedAt": 1778816999280,
+  "background": false,
+  "completedAt": 1778816999283,
+  "result": "done",
+  "durationMs": 3
+}

@@ -34,7 +34,7 @@ import { SubagentManager } from "../subagents/manager.ts";
 import { __test__subagentSpawnParams, sendAgentWakeUp, sendFollowUp } from "./registration/subagent-helpers.ts";
 import { DEFAULT_NOTIFICATIONS, DEFAULT_UI } from "../config/defaults.ts";
 import { logInternalError } from "../utils/internal-error.ts";
-import { createManifestCache, ManifestCache, ManifestCache } from "../runtime/manifest-cache.ts";
+import { createManifestCache } from "../runtime/manifest-cache.ts";
 import { resetTimings, time } from "../utils/timings.ts";
 import { registerTeamCommands } from "./registration/commands.ts";
 import { registerSubagentTools } from "./registration/subagent-tools.ts";
@@ -72,6 +72,7 @@ import { appendDeadletter } from "../runtime/deadletter.ts";
 // 2.7: Lazy-load crash-recovery helpers — only invoked from session_start
 // deferred cleanup and cleanupRuntime. Each function is awaited inside an
 // async context that already runs after registration completes.
+import { cancelOrphanedRuns, detectInterruptedRuns, purgeStaleActiveRunIndex, reconcileAllStaleRuns } from "../runtime/crash-recovery.ts";
 import type { cancelOrphanedRuns as CancelOrphanedRunsFn, detectInterruptedRuns as DetectInterruptedRunsFn, purgeStaleActiveRunIndex as PurgeStaleActiveRunIndexFn } from "../runtime/crash-recovery.ts";
 let _cachedCrashRecovery: { cancelOrphanedRuns: typeof CancelOrphanedRunsFn; detectInterruptedRuns: typeof DetectInterruptedRunsFn; purgeStaleActiveRunIndex: typeof PurgeStaleActiveRunIndexFn } | undefined;
 async function importCrashRecovery(): Promise<NonNullable<typeof _cachedCrashRecovery>> {
@@ -307,6 +308,11 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	const renderSchedulerUnsubscribers: Array<() => void> = [];
 	let crewScheduler: CrewScheduler | undefined;
 	let preloadTimer: ReturnType<typeof setTimeout> | undefined;
+	const disposeRenderSchedulerSubscriptions = (): void => {
+		for (const unsub of renderSchedulerUnsubscribers.splice(0)) {
+			try { unsub(); } catch (error) { logInternalError("register.renderScheduler.unsubscribe", error); }
+		}
+	};
 	// 1.3: optional native FS watcher on `<crewRoot>/state` — when running on
 	// a filesystem that supports recursive fs.watch (Windows NTFS, macOS, modern
 	// Linux), file changes (manifest/tasks/events/agents) trigger an
@@ -549,7 +555,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			// Reconcile stale runs found on disk (not in active-run-index)
 			// These are ghost runs from crashed processes that were never cleaned up.
 			try {
-				const staleResults = reconcileAllStaleRuns(ctx.cwd, getManifestCache(ctx.cwd));
+				const staleResults = reconcileAllStaleRuns(ctx.cwd, getManifestCache(ctx.cwd)) ?? [];
 				if (staleResults.length > 0) {
 					notifyOperator({ id: "stale_reconcile", severity: "info", source: "crash-recovery", title: "Reconciled " + staleResults.length + " stale run(s)", body: "Found and repaired ghost runs from previous sessions: " + staleResults.map((r) => r.runId).join(", ") });
 				}
@@ -849,16 +855,5 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			updatePiCrewPowerbar(pi.events, currentCtx.cwd, uiConfig, getManifestCache(currentCtx.cwd), getRunSnapshotCache(currentCtx.cwd), currentCtx, 0);
 		}
 	} });
-}
-function disposeRenderSchedulerSubscriptions() {
-	throw new Error("Function not implemented.");
-}
-
-function reconcileAllStaleRuns(cwd: string, arg1: ManifestCache) {
-	throw new Error("Function not implemented.");
-}
-
-function reconcileAllStaleRuns(cwd: string, arg1: ManifestCache) {
-	throw new Error("Function not implemented.");
 }
 

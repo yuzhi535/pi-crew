@@ -1,0 +1,12 @@
+{
+  "id": "agent_mp6dd5gd_1",
+  "type": "explorer",
+  "description": "test",
+  "prompt": "do work",
+  "status": "completed",
+  "startedAt": 1778816414180,
+  "background": true,
+  "completedAt": 1778816414212,
+  "result": "done 1",
+  "durationMs": 32
+}

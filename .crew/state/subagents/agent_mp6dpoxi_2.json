@@ -1,0 +1,12 @@
+{
+  "id": "agent_mp6dpoxi_2",
+  "type": "writer",
+  "description": "bg",
+  "prompt": "do",
+  "status": "completed",
+  "startedAt": 1778816999287,
+  "background": true,
+  "completedAt": 1778816999290,
+  "result": "done",
+  "durationMs": 3
+}

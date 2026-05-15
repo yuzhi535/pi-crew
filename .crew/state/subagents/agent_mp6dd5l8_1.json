@@ -1,0 +1,12 @@
+{
+  "id": "agent_mp6dd5l8_1",
+  "type": "writer",
+  "description": "fg",
+  "prompt": "do",
+  "status": "completed",
+  "startedAt": 1778816414350,
+  "background": false,
+  "completedAt": 1778816414353,
+  "result": "done",
+  "durationMs": 3
+}

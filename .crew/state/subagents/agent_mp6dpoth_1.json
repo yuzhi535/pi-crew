@@ -1,0 +1,12 @@
+{
+  "id": "agent_mp6dpoth_1",
+  "type": "explorer",
+  "description": "test",
+  "prompt": "do work",
+  "status": "completed",
+  "startedAt": 1778816999147,
+  "background": true,
+  "completedAt": 1778816999196,
+  "result": "done 1",
+  "durationMs": 49
+}
