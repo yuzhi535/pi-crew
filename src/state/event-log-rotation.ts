@@ -78,24 +78,40 @@ export function compactEventLog(eventsPath: string, config?: Partial<RotationCon
 		// Concurrent write conflict — skip compaction this cycle
 		return undefined;
 	}
-	// C2: Re-read to recover any events appended between readEvents and atomicWriteFile
+	// C2: Re-read to recover any events appended during the compaction window.
+	// If events were appended and then overwritten by atomicWriteFile, they are LOST.
+	// Detect this and re-append any missing events.
 	try {
 		const afterWrite = readEvents(eventsPath);
-		if (afterWrite.length > kept.length) {
-			// Events were appended during the window — they're already in the file,
-			// no data loss occurred since atomicWriteFile preserves appends after its write point
-		}
 		const appendedDuringWindow = afterWrite.length - kept.length;
-		const eventsKept = kept.length + Math.max(0, appendedDuringWindow);
-		const compactedSize = fs.statSync(eventsPath).size;
-		return {
+		if (appendedDuringWindow >= 0) {
+			// No data loss — either events were appended and kept, or nothing happened.
+			return {
 				originalSize,
-				compactedSize,
-				eventsRemoved: originalCount + Math.max(0, appendedDuringWindow) - eventsKept,
-				eventsKept,
+				compactedSize: fs.statSync(eventsPath).size,
+				eventsRemoved: originalCount - kept.length,
+				eventsKept: kept.length + Math.max(0, appendedDuringWindow),
 			};
+		}
+		// afterWrite.length < kept.length — events were lost during compaction window.
+		// Find missing events and re-append them.
+		const afterSet = new Set(afterWrite.map((e) => JSON.stringify(e)));
+		const missingEvents = kept.filter((e) => !afterSet.has(JSON.stringify(e)));
+		for (const event of missingEvents) {
+			try {
+				fs.appendFileSync(eventsPath, JSON.stringify(event) + "\n", "utf-8");
+			} catch {
+				// Append failed — log but don't throw.
+			}
+		}
+		return {
+			originalSize,
+			compactedSize: fs.statSync(eventsPath).size,
+			eventsRemoved: originalCount - kept.length,
+			eventsKept: kept.length,
+		};
 	} catch {
-		// Post-write verification failed; compaction likely succeeded
+		// Post-write verification failed — compaction likely succeeded.
 		const compactedSize = fs.statSync(eventsPath).size;
 		return {
 			originalSize,
@@ -147,29 +163,69 @@ export function getEventLogStats(eventsPath: string): EventLogStats | undefined 
 			return { fileSizeBytes: 0, eventCount: 0 };
 		}
 
-		// Count lines efficiently using readline-like scan
-		const content = fs.readFileSync(eventsPath, "utf-8");
-		const eventCount = content.split("\n").filter(Boolean).length;
-
-		// Read first line for oldest timestamp
-		let oldestTimestamp: string | undefined;
-		try {
-			const firstNewline = content.indexOf("\n");
-			const firstLine = firstNewline === -1 ? content : content.slice(0, firstNewline);
-			if (firstLine.trim()) {
-				oldestTimestamp = (JSON.parse(firstLine) as { time: string }).time;
-			}
-		} catch { /* corrupt head */ }
-
-		// Read last line for newest timestamp
+		// NEW-9 fix: stream-scan for line count (no full-file load).
+		// Read last up-to-1KB for newest timestamp.
 		let newestTimestamp: string | undefined;
-		try {
-			const lastNewline = content.lastIndexOf("\n", content.length - 2);
-			const lastLine = content.slice(lastNewline + 1).trim();
-			if (lastLine) {
-				newestTimestamp = (JSON.parse(lastLine) as { time: string }).time;
+		let lastLine = "";
+		const tailSize = Math.min(fileSizeBytes, 1024);
+		{
+			const tailBuf = Buffer.alloc(tailSize);
+			const fd = fs.openSync(eventsPath, "r");
+			try {
+				fs.readSync(fd, tailBuf, 0, tailSize, fileSizeBytes - tailSize);
+			} finally {
+				fs.closeSync(fd);
 			}
-		} catch { /* corrupt tail */ }
+			const tailStr = tailBuf.toString("utf-8");
+			const lastNewline = tailStr.lastIndexOf("\n");
+			lastLine = lastNewline >= 0 ? tailStr.slice(lastNewline + 1).trim() : tailStr.trim();
+			try {
+				if (lastLine) {
+					newestTimestamp = (JSON.parse(lastLine) as { time: string }).time;
+				}
+			} catch { /* corrupt tail */ }
+		}
+
+		// Stream-scan to count newlines and find first line boundary.
+		let eventCount = 0;
+		let firstLineBytes = 0;
+		const buf = Buffer.alloc(8192);
+		let offset = 0;
+		let newlineCount = 0;
+		const scanFd = fs.openSync(eventsPath, "r");
+		try {
+			let bytesRead: number;
+			while ((bytesRead = fs.readSync(scanFd, buf, 0, buf.length, offset)) > 0) {
+				for (let i = 0; i < bytesRead; i++) {
+					if (buf[i] === 10) {
+						if (newlineCount === 0) firstLineBytes = offset + i + 1;
+						newlineCount++;
+					}
+					}
+					offset += bytesRead;
+				}
+			} finally {
+				fs.closeSync(scanFd);
+			}
+		eventCount = newlineCount;
+
+		// Read first line for oldest timestamp.
+		let oldestTimestamp: string | undefined;
+		if (firstLineBytes > 0) {
+			try {
+				const firstBuf = Buffer.alloc(firstLineBytes);
+				const fd = fs.openSync(eventsPath, "r");
+				try {
+					fs.readSync(fd, firstBuf, 0, firstLineBytes, 0);
+				} finally {
+					fs.closeSync(fd);
+				}
+				const firstLine = firstBuf.toString("utf-8").trim();
+				if (firstLine) {
+					oldestTimestamp = (JSON.parse(firstLine) as { time: string }).time;
+				}
+			} catch { /* corrupt head */ }
+		}
 
 		return {
 			fileSizeBytes,
@@ -181,3 +237,4 @@ export function getEventLogStats(eventsPath: string): EventLogStats | undefined 
 		return undefined;
 	}
 }
+
