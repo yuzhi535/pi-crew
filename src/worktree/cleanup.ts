@@ -13,7 +13,7 @@ export interface WorktreeCleanupResult {
 }
 
 function git(cwd: string, args: string[]): string {
-	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LANG: "C", LC_ALL: "C" } }).trim();
+	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LANG: "C", LC_ALL: "C" }, windowsHide: true }).trim();
 }
 
 function isDirty(worktreePath: string): boolean {

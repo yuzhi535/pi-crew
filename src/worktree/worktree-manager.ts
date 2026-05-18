@@ -25,7 +25,7 @@ export interface WorktreeDiffStat {
 }
 
 function git(cwd: string, args: string[]): string {
-	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LANG: "C", LC_ALL: "C" } }).trim();
+	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LANG: "C", LC_ALL: "C" }, windowsHide: true }).trim();
 }
 
 function sanitizeBranchPart(value: string): string {
@@ -105,7 +105,7 @@ function branchExists(repoRoot: string, branch: string): { local: boolean; remot
 	// Check remote-tracking branch
 	try {
 		const out = execFileSync("git", ["for-each-ref", "--format=%(refname)", `refs/remotes/*/${branch}`],
-			{ cwd: repoRoot, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+			{ cwd: repoRoot, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true }).trim();
 		return { local: false, remoteOnly: out.length > 0 };
 	} catch { return { local: false, remoteOnly: false }; }
 }
