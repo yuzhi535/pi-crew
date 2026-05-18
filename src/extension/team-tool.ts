@@ -28,9 +28,10 @@ import type { PiTeamsToolResult } from "./tool-result.ts";
 import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState } from "../state/types.ts";
 // Heavy runtime — lazy-loaded to avoid 1.4s import cost at extension registration.
 // executeTeamRun is only called when a team run actually executes.
-import type { executeTeamRun as ExecuteTeamRunFn } from "../runtime/team-runner.ts";
-let _cachedExecuteTeamRun: typeof ExecuteTeamRunFn | undefined;
-async function executeTeamRun(...args: Parameters<typeof ExecuteTeamRunFn>): Promise<Awaited<ReturnType<typeof ExecuteTeamRunFn>>> {
+import { executeTeamRun as _executeTeamRunFn } from "../runtime/team-runner.ts";
+type ExecuteTeamRunFn = typeof _executeTeamRunFn;
+let _cachedExecuteTeamRun: ExecuteTeamRunFn | undefined;
+async function executeTeamRun(...args: Parameters<ExecuteTeamRunFn>): Promise<Awaited<ReturnType<ExecuteTeamRunFn>>> {
 	if (!_cachedExecuteTeamRun) {
 		// LAZY: heavy runtime — defer 1.4s import cost until team run actually executes.
 		const mod = await import("../runtime/team-runner.ts");
@@ -51,9 +52,10 @@ import { autonomousPatchFromConfig, configPatchFromConfig, effectiveRunConfig, f
 import { handleApi } from "./team-tool/api.ts";
 // Lazy-loaded: run.ts pulls in spawnBackgroundTeamRun, resolveCrewRuntime, etc.
 // Static import fails silently in some jiti contexts (child-process), leaving handleRun undefined.
-import type { handleRun as HandleRunFn } from "./team-tool/run.ts";
-let _cachedHandleRun: typeof HandleRunFn | undefined;
-async function handleRun(...args: Parameters<typeof HandleRunFn>): Promise<Awaited<ReturnType<typeof HandleRunFn>>> {
+import { handleRun as _handleRunFn } from "./team-tool/run.ts";
+type HandleRunFn = typeof _handleRunFn;
+let _cachedHandleRun: HandleRunFn | undefined;
+async function handleRun(...args: Parameters<HandleRunFn>): Promise<Awaited<ReturnType<HandleRunFn>>> {
 	if (!_cachedHandleRun) {
 		// LAZY: run.ts pulls in spawnBackgroundTeamRun + resolveCrewRuntime; also avoids jiti import race in child-process contexts.
 		const mod = await import("./team-tool/run.ts");
