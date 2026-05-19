@@ -33,6 +33,8 @@ export interface AgentConfig {
 	contextMode?: "fresh" | "fork";
 	/** Maximum turns for this agent. Overrides runtime config if set. */
 	maxTurns?: number;
+	/** Tools to explicitly forbid for this agent. Takes precedence over allowedTools. */
+	disallowedTools?: string[];
 	disabled?: boolean;
 	override?: { source: "config"; path: string };
 }

@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import type { NotificationDescriptor } from "../extension/notification-router.ts";
 import type { MetricRegistry } from "../observability/metric-registry.ts";
 import { appendEvent } from "../state/event-log.ts";
@@ -84,6 +85,9 @@ export class HeartbeatWatcher {
 
 		for (const run of this.opts.manifestCache.list(50)) {
 			if (run.status !== "running") continue;
+			// Bug #5 fix: if stateRoot doesn't exist, the run was pruned — skip it silently.
+			// This prevents stale "heartbeat dead" notifications for runs that no longer exist.
+			if (!fs.existsSync(run.stateRoot)) continue;
 			const loaded = loadRunManifestById(this.opts.cwd, run.runId);
 			if (!loaded) continue;
 			for (const task of loaded.tasks) {

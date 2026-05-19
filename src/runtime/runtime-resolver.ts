@@ -86,7 +86,7 @@ function scaffoldCaps(requestedMode: CrewRuntimeMode, reason?: string, safety: C
 }
 
 function childCaps(requestedMode: CrewRuntimeMode, reason?: string): CrewRuntimeCapabilities {
-	return { kind: "child-process", requestedMode, available: true, steer: false, resume: false, liveToolActivity: false, transcript: true, safety: "trusted", ...(reason ? { reason } : {}) };
+	return { kind: "child-process", requestedMode, available: true, steer: true, resume: false, liveToolActivity: false, transcript: true, safety: "trusted", ...(reason ? { reason } : {}) };
 }
 
 function liveCaps(requestedMode: CrewRuntimeMode): CrewRuntimeCapabilities {

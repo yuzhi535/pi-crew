@@ -276,10 +276,50 @@ export interface TeamTaskState {
 
 	/** Parsed metric key-values from worker output (CREW_METRIC lines). */
 	metrics?: Record<string, number>;
+
+	/** Lifetime token usage accumulated via message_end events. Survives compaction
+	 *  (session.stats reset on compaction, but this is an independent accumulator). */
+	lifetimeUsage?: { input: number; output: number; cacheWrite: number };
+
+	/** Steering messages queued before the task's session was ready.
+	 *  Delivered when the session initializes (mirrors pi-subagents3 pendingSteers pattern). */
+	pendingSteers?: string[];
 }
 
 export interface ControlReservation {
 	reservedAt: string;
 	controllerId: string;
 	acceptsControlEvents: boolean;
+}
+
+/**
+ * A task scheduled to fire on a cron expression, interval, or one-shot.
+ * Persisted at `<cwd>/.crew/state/schedules/<sessionId>.json`.
+ * Session-scoped: survives /resume, resets on /new.
+ */
+export interface ScheduledTask {
+	id: string;
+	name: string;
+	description: string;
+	/** Raw schedule: cron expr | "+10m" | "5m" | ISO timestamp */
+	schedule: string;
+	scheduleType: "cron" | "interval" | "once";
+	intervalMs?: number;
+	/** Workflow/step to execute when the schedule fires */
+	workflowName: string;
+	stepId?: string;
+	/** Resolved at create time from workflow/step config */
+	agentName: string;
+	model?: string;
+	enabled: boolean;
+	createdAt: string;
+	lastRun?: string;
+	lastStatus?: "success" | "error" | "running";
+	nextRun?: string;
+	runCount: number;
+}
+
+export interface ScheduleStoreData {
+	version: 1;
+	jobs: ScheduledTask[];
 }

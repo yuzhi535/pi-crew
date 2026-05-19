@@ -161,9 +161,10 @@ export function resolveModelCandidate(
 }
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [
-	/rate\s*limit/i,
+	/rate.?limit/i,
 	/too many requests/i,
 	/\b429\b/,
+	/rate_limit_error/i,
 	/quota/i,
 	/provider.*unavailable/i,
 	/model.*unavailable/i,

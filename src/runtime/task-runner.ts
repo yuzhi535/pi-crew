@@ -8,6 +8,7 @@ import type {
 	TeamTaskState,
 	UsageState,
 } from "../state/types.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { appendEvent, appendEventFireAndForget } from "../state/event-log.ts";
 import { saveRunManifest } from "../state/state-store.ts";
@@ -187,6 +188,8 @@ export async function runTeamTask(
 			claim: createTaskClaim(`task-runner:${input.task.id}`),
 			heartbeat: createWorkerHeartbeat(input.task.id),
 			agentProgress: input.task.agentProgress ?? emptyCrewAgentProgress(),
+			// Lifetime usage accumulator — survives compaction unlike session.stats
+			lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
 			...(dependencyContextText ? { dependencyContextText } : {}),
 			// Reserve control channel before spawn so cancel/steer can target this task immediately
 			controlReservation: reserveControlChannel(
@@ -411,14 +414,30 @@ export async function runTeamTask(
 					transcriptPath,
 					maxDepth: input.limits?.maxTaskDepth,
 					skillPaths,
+					maxTurns: input.runtimeConfig?.maxTurns,
+					graceTurns: input.runtimeConfig?.graceTurns,
 					onSpawn: (pid) => {
-						({ task, tasks } = checkpointTask(
-							manifest,
-							tasks,
-							task,
-							"child-spawned",
-							pid,
-						));
+						try {
+							({ task, tasks } = checkpointTask(
+								manifest,
+								tasks,
+								task,
+								"child-spawned",
+								pid,
+							));
+							if (task.pendingSteers?.length) {
+								const steeringDir = `${manifest.artifactsRoot}/steering`;
+								fs.mkdirSync(steeringDir, { recursive: true });
+								const steeringPath = `${steeringDir}/${task.id}.jsonl`;
+								for (const msg of task.pendingSteers) {
+									fs.appendFileSync(steeringPath, JSON.stringify({ type: "steer", message: msg, ts: new Date().toISOString() }) + "\n");
+								}
+								task.pendingSteers = [];
+								tasks = persistSingleTaskUpdate(manifest, tasks, task);
+							}
+						} catch (err) {
+							logInternalError("task-runner.on-spawn", err as Error, `pid=${pid}, taskId=${task.id}`);
+						}
 					},
 					onLifecycleEvent: (event: ChildPiLifecycleEvent) => {
 						appendEvent(manifest.eventsPath, {
@@ -442,7 +461,13 @@ export async function runTeamTask(
 						}
 					},
 					onJsonEvent: (event) => {
-						appendCrewAgentEvent(manifest, task.id, event);
+						// Top-level error boundary: prevent any single event from crashing the task.
+						// Errors are logged but processing continues so subsequent events still update state.
+						try {
+							appendCrewAgentEvent(manifest, task.id, event);
+						} catch (err) {
+							logInternalError("task-runner.append-crew-agent-event", err, `taskId=${task.id}`);
+						}
 						if (
 							event &&
 							typeof event === "object" &&
@@ -451,7 +476,30 @@ export async function runTeamTask(
 							collectedJsonEvents.push(
 								event as Record<string, unknown>,
 							);
+						// Accumulate lifetime usage via message_end events (survives compaction)
+						if (event && typeof event === "object" && (event as Record<string, unknown>).type === "message_end") {
+							const msg = (event as Record<string, unknown>).message as Record<string, unknown> | undefined;
+							if (msg?.role === "assistant") {
+								const usage = msg.usage as Record<string, number> | undefined;
+								if (usage) {
+									task.lifetimeUsage = {
+										input: (task.lifetimeUsage?.input ?? 0) + (usage.input ?? 0),
+										output: (task.lifetimeUsage?.output ?? 0) + (usage.output ?? 0),
+										cacheWrite: (task.lifetimeUsage?.cacheWrite ?? 0) + (usage.cacheWrite ?? 0),
+									};
+								}
+							}
+						}
 						persistHeartbeat();
+						// Bug #3 fix: Write worker JSON events to background.log for debugging when running in background mode.
+						// This supplements the event log so developers can see what the child Pi worker produced.
+						if (process.env.PI_CREW_BACKGROUND_MODE === "1" && event) {
+							try {
+								const bgLogPath = `${manifest.stateRoot}/background.log`;
+								const eventLine = typeof event === "object" && !Array.isArray(event) ? JSON.stringify(event) : String(event);
+								fs.appendFileSync(bgLogPath, `${eventLine}\n`);
+							} catch { /* background log write failures should not affect task */ }
+						}
 						task = {
 							...task,
 							agentProgress: applyAgentProgressEvent(

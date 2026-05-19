@@ -441,6 +441,39 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		return undefined;
 	}
 	rpcHandle = registerPiCrewRpc(getPiEvents(), () => currentCtx);
+	time("register.globalRegistry");
+	// Register global RPC registry for cross-extension access (mirrors pi-subagents3's Symbol.for pattern)
+	// Uses lazy import to avoid pulling team-tool.ts into module load.
+	// Other extensions access via: const reg = globalThis[Symbol.for("pi-crew:registry")];
+	void import("./team-tool.ts").then(({ registerCrewGlobalRegistry }) => {
+		const manifestCacheForRegistry = getManifestCache(currentCtx?.cwd ?? process.cwd());
+		registerCrewGlobalRegistry({
+			version: 1,
+			getRecord: (runId) => manifestCacheForRegistry.get(runId),
+			listRuns: () => manifestCacheForRegistry.list(100).map((m) => ({ runId: m.runId, status: m.status, goal: m.goal })),
+			appendEvent: (runId, event) => {
+				const manifest = manifestCacheForRegistry.get(runId);
+				if (manifest) void import("../state/event-log.ts").then(({ appendEventFireAndForget }) => appendEventFireAndForget(manifest.eventsPath, event as Parameters<typeof appendEventFireAndForget>[1]));
+			},
+			waitForAll: async (runId) => {
+				const { loadRunManifestById } = await import("../state/state-store.ts");
+				const check = (): boolean => {
+					const loaded = loadRunManifestById(currentCtx?.cwd ?? process.cwd(), runId);
+					if (!loaded) return true;
+					return !loaded.tasks.some((t: { status: string }) => t.status === "running" || t.status === "queued");
+				};
+				while (!check()) await new Promise((resolve) => setTimeout(resolve, 500));
+			},
+			hasRunning: (runId) => {
+				const manifest = manifestCacheForRegistry.get(runId);
+				if (!manifest) return false;
+				const { loadRunManifestById } = require("../state/state-store.ts");
+				const loaded = loadRunManifestById(currentCtx?.cwd ?? process.cwd(), runId);
+				if (!loaded) return false;
+				return loaded.tasks.some((t: { status: string }) => t.status === "running" || t.status === "queued");
+			},
+		});
+	});
 
 	const cleanupRuntime = (): void => {
 		if (cleanedUp) return;

@@ -267,8 +267,9 @@ function liveSystemPrompt(input: LiveSessionSpawnInput): string {
 function filterActiveTools(session: LiveSessionLike, agent: AgentConfig): void {
 	if (typeof session.getActiveToolNames !== "function" || typeof session.setActiveToolsByName !== "function") return;
 	const recursiveTools = new Set(["team", "Team", "Agent", "get_subagent_result", "steer_subagent"]);
+	const disallowed = agent.disallowedTools?.length ? new Set(agent.disallowedTools) : undefined;
 	const allowed = agent.tools?.length ? new Set(agent.tools) : undefined;
-	const active = session.getActiveToolNames().filter((name) => !recursiveTools.has(name) && (!allowed || allowed.has(name)));
+	const active = session.getActiveToolNames().filter((name) => !recursiveTools.has(name) && (!disallowed || !disallowed.has(name)) && (!allowed || allowed.has(name)));
 	session.setActiveToolsByName(active);
 }
 

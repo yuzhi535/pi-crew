@@ -1,5 +1,5 @@
 export type WorkerLifecycleState = "spawning" | "trust_required" | "ready_for_prompt" | "running" | "finished" | "failed";
-export type StartupFailureClassification = "trust_required" | "prompt_misdelivery" | "prompt_acceptance_timeout" | "transport_dead" | "worker_crashed" | "unknown";
+export type StartupFailureClassification = "trust_required" | "prompt_misdelivery" | "prompt_acceptance_timeout" | "transport_dead" | "worker_crashed" | "rate_limited" | "provider_error" | "unknown";
 
 export interface WorkerStartupEvidence {
 	lastLifecycleState: WorkerLifecycleState;
@@ -20,6 +20,8 @@ export function detectTrustPrompt(text: string): boolean {
 }
 
 export function classifyStartupFailure(evidence: Omit<WorkerStartupEvidence, "classification">): StartupFailureClassification {
+	if (evidence.stderrPreview && /429|rate.?limit/i.test(evidence.stderrPreview)) return "rate_limited";
+	if (evidence.stderrPreview && /5\d{2}|server.?error|internal.?error|provider.?error/i.test(evidence.stderrPreview)) return "provider_error";
 	if (!evidence.transportHealthy) return "transport_dead";
 	if (evidence.trustPromptDetected || evidence.lastLifecycleState === "trust_required") return "trust_required";
 	if (evidence.promptSentAt && !evidence.promptAccepted && evidence.childProcessAlive) return "prompt_acceptance_timeout";

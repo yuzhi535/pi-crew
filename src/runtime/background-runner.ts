@@ -132,6 +132,8 @@ async function main(): Promise<void> {
 		const executeWorkers = runtime.kind !== "scaffold";
 		// Use ownerSessionId for workspaceId to ensure agents are only visible to the session that spawned them.
 		// manifest.cwd would cause cross-session visibility since all sessions share the same project directory.
+		// Mark this as background mode so task-runner writes events to background.log for debugging.
+		process.env.PI_CREW_BACKGROUND_MODE = "1";
 		const result = await executeTeamRun({ manifest, tasks, team, workflow, agents, executeWorkers, limits: runConfig.limits, runtime, runtimeConfig: runConfig.runtime, skillOverride: manifest.skillOverride, reliability: runConfig.reliability, workspaceId: manifest.ownerSessionId ?? manifest.cwd });
 		manifest = result.manifest;
 		tasks = result.tasks;

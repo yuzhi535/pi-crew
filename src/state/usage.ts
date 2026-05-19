@@ -1,5 +1,25 @@
 import type { TeamTaskState, UsageState } from "./types.ts";
 
+/**
+ * Lifetime usage — accumulated via message_end events, survives compaction.
+ * cacheRead is excluded because each turn's cacheRead is the cumulative cached
+ * prefix re-read on that one call — summing across turns would count it N times.
+ * See: https://github.com/nichekate/pi-subagents3/issues/38
+ */
+export type LifetimeUsage = { input: number; output: number; cacheWrite: number };
+
+/** Sum of lifetime usage components, or 0 if undefined. */
+export function getLifetimeTotal(u?: LifetimeUsage): number {
+	return u ? u.input + u.output + u.cacheWrite : 0;
+}
+
+/** Add a usage delta into a target accumulator (mutates target). */
+export function addUsage(into: LifetimeUsage, delta: LifetimeUsage): void {
+	into.input += delta.input;
+	into.output += delta.output;
+	into.cacheWrite += delta.cacheWrite;
+}
+
 export function aggregateUsage(tasks: TeamTaskState[]): UsageState | undefined {
 	const total: UsageState = {};
 	let found = false;

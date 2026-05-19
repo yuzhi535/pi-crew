@@ -165,8 +165,22 @@ function recoverCheckpointedTasks(manifest: TeamRunManifest, tasks: TeamTaskStat
 			return { ...task, status: "completed" as const, finishedAt: task.finishedAt ?? task.checkpoint.updatedAt, error: undefined, claim: undefined };
 		}
 		if (task.checkpoint.phase === "child-stdout-final") {
-			const transcriptPath = path.join(manifest.artifactsRoot, "transcripts", `${task.id}.jsonl`);
-			if (!fs.existsSync(transcriptPath)) return task;
+			// transcripts are written with .attempt-${i}.jsonl suffix; find the most recent one
+			const transcriptsDir = path.join(manifest.artifactsRoot, "transcripts");
+			let transcriptPath: string | undefined;
+			if (fs.existsSync(transcriptsDir)) {
+				const files = fs.readdirSync(transcriptsDir).filter((f) => f.startsWith(`${task.id}.attempt-`) && f.endsWith(".jsonl"));
+				if (files.length > 0) {
+					// Sort by attempt index descending to get the most recent
+					files.sort((a, b) => {
+						const idxA = parseInt(a.match(/\.attempt-(\d+)\./)?.[1] ?? "0");
+						const idxB = parseInt(b.match(/\.attempt-(\d+)\./)?.[1] ?? "0");
+						return idxB - idxA;
+					});
+					transcriptPath = path.join(transcriptsDir, files[0]);
+				}
+			}
+			if (!transcriptPath) return task;
 			const transcript = fs.readFileSync(transcriptPath, "utf-8");
 			const parsed = parsePiJsonOutput(transcript);
 			if (!parsed.finalText && !parsed.usage) return task;
@@ -242,6 +256,22 @@ export async function handleResume(params: TeamToolParamsValue, ctx: TeamContext
 		const executed = await executeTeamRun({ manifest: runtimeManifest, tasks: resetTasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride: resumeSkillOverride, signal: ctx.signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, workspaceId: ctx.sessionId ?? ctx.cwd });
 		return result([`Resumed run ${executed.manifest.runId}.`, `Status: ${executed.manifest.status}`, `Tasks: ${executed.tasks.length}`, `Artifacts: ${executed.manifest.artifactsRoot}`].join("\n"), { action: "resume", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot }, executed.manifest.status === "failed");
 	});
+}
+
+export function handleSteer(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
+	const { runId, taskId, message } = params;
+	if (!runId || !taskId || !message) {
+		return result("steer requires runId, taskId, and message", { action: "steer", status: "error" }, true);
+	}
+	const loaded = loadRunManifestById(ctx.cwd, runId);
+	if (!loaded) return result(`Run '${runId}' not found`, { action: "steer", status: "error" }, true);
+	const task = loaded.tasks.find(t => t.id === taskId);
+	if (!task) return result(`Task '${taskId}' not found`, { action: "steer", status: "error" }, true);
+	if (!task.pendingSteers) task.pendingSteers = [];
+	task.pendingSteers.push(message);
+	saveRunTasks(loaded.manifest, loaded.tasks);
+	appendEvent(loaded.manifest.eventsPath, { type: "task.steer_queued", runId, taskId, data: { message } });
+	return result(`Steer queued for task '${taskId}'. It will be delivered when the task's session is ready.`, { action: "steer", status: "ok" });
 }
 
 export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
@@ -341,6 +371,30 @@ export async function handleTeamTool(params: TeamToolParamsValue, ctx: TeamConte
 		case "create": return handleCreate(params, ctx);
 		case "update": return handleUpdate(params, ctx);
 		case "delete": return handleDelete(params, ctx);
+		case "steer": return handleSteer(params, ctx);
 		default: return result(`Unknown action: ${action}`, { action: "unknown", status: "error" }, true);
 	}
+}
+
+/**
+ * Global RPC registry for cross-extension access to pi-crew's team orchestrator.
+ * Uses Symbol.for() for cross-package singleton pattern (same as OpenTelemetry).
+ * Extensions can access via: const reg = globalThis[Symbol.for("pi-crew:registry")];
+ */
+const CREW_REGISTRY_KEY = Symbol.for("pi-crew:registry");
+interface CrewRegistry {
+	version: 1;
+	getRecord: (runId: string) => TeamRunManifest | undefined;
+	listRuns: () => Array<{ runId: string; status: string; goal: string }>;
+	appendEvent: (runId: string, event: Record<string, unknown>) => void;
+	waitForAll: (runId: string) => Promise<void>;
+	hasRunning: (runId: string) => boolean;
+}
+
+export function registerCrewGlobalRegistry(registry: CrewRegistry): void {
+	(globalThis as Record<symbol | string, unknown>)[CREW_REGISTRY_KEY] = registry;
+}
+
+export function getCrewGlobalRegistry(): CrewRegistry | undefined {
+	return (globalThis as Record<symbol | string, unknown>)[CREW_REGISTRY_KEY] as CrewRegistry | undefined;
 }

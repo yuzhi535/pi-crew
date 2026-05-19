@@ -136,6 +136,10 @@ export interface ChildPiRunInput {
 	finalDrainMs?: number;
 	hardKillMs?: number;
 	responseTimeoutMs?: number;
+	/** Soft limit on assistant turns — inject steer at this count. */
+	maxTurns?: number;
+	/** Extra turns after soft limit before hard abort. Default: 5. */
+	graceTurns?: number;
 }
 
 export interface ChildPiRunResult {
@@ -144,6 +148,10 @@ export interface ChildPiRunResult {
 	stderr: string;
 	error?: string;
 	exitStatus?: WorkerExitStatus;
+	/** True if the agent was hard-aborted (max_turns + grace exceeded). */
+	aborted?: boolean;
+	/** True if the agent was steered to wrap up (hit soft turn limit) but finished in time. */
+	steered?: boolean;
 }
 
 export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): SpawnOptions {
@@ -152,7 +160,7 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 	return {
 		cwd,
 		env: { ...filteredEnv, PI_CREW_PARENT_PID: String(process.pid) },
-		stdio: ["ignore", "pipe", "pipe"],
+		stdio: ["pipe", "pipe", "pipe"],
 		detached: process.platform !== "win32",
 		windowsHide: true,
 	};
@@ -355,6 +363,12 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			let abortRequested = input.signal?.aborted === true;
 			let hardKilled = false;
 			const cleanupErrors: string[] = [];
+			let turnCount = 0;
+			let softLimitReached = false;
+			const maxTurns = input.maxTurns;
+			const graceTurns = input.graceTurns;
+			let abortDueToParentSignal = false;
+			input.signal?.addEventListener("abort", () => { abortDueToParentSignal = true; }, { once: true });
 			const restartNoResponseTimer = (): void => {
 				if (responseTimeoutMs <= 0) return;
 				if (noResponseTimer) clearTimeout(noResponseTimer);
@@ -384,6 +398,21 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				},
 				onJsonEvent: (event) => {
 					restartNoResponseTimer();
+					// Turn-count-based steering: soft limit steer + hard abort after graceTurns
+					if (event && typeof event === "object" && !Array.isArray(event)) {
+						const obj = event as Record<string, unknown>;
+						if (obj.type === "turn_end") {
+							turnCount += 1;
+							if (maxTurns !== undefined && !softLimitReached && turnCount >= maxTurns) {
+								softLimitReached = true;
+								// Inject steer via stdin to tell child to wrap up
+								child.stdin?.write(JSON.stringify({ type: "steer", message: "You have reached your turn limit. Wrap up immediately — provide your final answer now." }) + "\n");
+							} else if (maxTurns !== undefined && softLimitReached && turnCount >= maxTurns + (graceTurns ?? 5)) {
+								// Hard abort — terminate after grace turns
+								try { child.kill(process.platform === "win32" ? undefined : "SIGTERM"); } catch { /* best-effort */ }
+							}
+						}
+					}
 					input.onJsonEvent?.(event);
 					if (!isFinalAssistantEvent(event) || childExited || settled || finalDrainTimer) return;
 					finalDrainTimer = setTimeout(() => {
@@ -440,7 +469,12 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				} catch (error) {
 					cleanupErrors.push(error instanceof Error ? error.message : String(error));
 				}
-				resolve({ ...result, exitStatus: result.exitStatus ?? { exitCode: result.exitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
+				// Catch all errors from settle to prevent unhandled rejection from propagating
+				try {
+					resolve({ ...result, exitStatus: result.exitStatus ?? { exitCode: result.exitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
+				} catch (resolveError) {
+					logInternalError("child-pi.settle-resolve", resolveError, `result=${JSON.stringify({ exitCode: result.exitCode })}`);
+				}
 			};
 
 			const abort = (): void => {
@@ -485,7 +519,11 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				restartNoResponseTimer();
 				const text = chunk.toString("utf-8");
 				backpressureBytes += text.length;
-				lineObserver.observe(text);
+				try {
+					lineObserver.observe(text);
+				} catch (err) {
+					logInternalError("child-pi.line-observer-observe", err, `text=${text.slice(0, 100)}`);
+				}
 				if (backpressureBytes > BACKPRESSURE_HIGH && child.stdout && !child.stdout.isPaused()) {
 					try { child.stdout.pause(); } catch { /* ignore */ }
 					const timer = setTimeout(releaseBackpressure, 50);
@@ -497,7 +535,11 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				stderr = appendBoundedTail(stderr, chunk.toString("utf-8"));
 			});
 			child.on("error", (error) => {
-				input.onLifecycleEvent?.({ type: "spawn_error", pid: child.pid, error: error.message, ts: new Date().toISOString() });
+				try {
+					input.onLifecycleEvent?.({ type: "spawn_error", pid: child.pid, error: error.message, ts: new Date().toISOString() });
+				} catch (err) {
+					logInternalError("child-pi.on-lifecycle-event", err, `event=error, pid=${child.pid}`);
+				}
 				settle({ exitCode: null, stdout, stderr, error: error.message });
 			});
 			child.on("exit", (code) => {
@@ -505,7 +547,11 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 					activeChildProcesses.delete(child.pid);
 					clearHardKillTimer(child.pid);
 				}
-				input.onLifecycleEvent?.({ type: "exit", pid: child.pid, exitCode: code, ts: new Date().toISOString() });
+				try {
+					input.onLifecycleEvent?.({ type: "exit", pid: child.pid, exitCode: code, ts: new Date().toISOString() });
+				} catch (err) {
+					logInternalError("child-pi.on-lifecycle-event", err, `event=exit, pid=${child.pid}`);
+				}
 				childExited = true;
 				clearNoResponseTimer();
 				clearFinalDrainTimers();
@@ -521,7 +567,11 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 					activeChildProcesses.delete(child.pid);
 					clearHardKillTimer(child.pid);
 				}
-				input.onLifecycleEvent?.({ type: "close", pid: child.pid, exitCode, ts: new Date().toISOString() });
+				try {
+					input.onLifecycleEvent?.({ type: "close", pid: child.pid, exitCode, ts: new Date().toISOString() });
+				} catch (err) {
+					logInternalError("child-pi.on-lifecycle-event", err, `event=close, pid=${child.pid}`);
+				}
 				const timeoutError = responseTimeoutHit && !stderr.trim() ? { error: `Child Pi produced no new output for ${responseTimeoutMs}ms; process was terminated as unresponsive.` } : undefined;
 				// M6 fix: log when forced final drain converts non-zero exit to 0.
 			// This is expected in normal operation (child finished cleanly but linger was killed),
@@ -530,11 +580,9 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				logInternalError("child-pi.final-drain-zero-exit", new Error(`Child exit code overridden to 0 after forced final drain (original=${exitCode})`), `pid=${child.pid}, finalDrainMs=${finalDrainMs}`);
 			}
 			const finalExitCode = forcedFinalDrain && !timeoutError ? 0 : exitCode;
-				// A final assistant event is the child Pi contract for "the worker produced its answer".
-				// Some Pi processes can linger during post-final cleanup/stdio shutdown; finalDrain terminates
-				// that lingering process so the parent can continue, but it must not turn a completed
-				// subagent answer into a failed task. Real pre-final response timeouts still report errors.
-				settle({ exitCode: finalExitCode, stdout, stderr, ...(timeoutError ? { error: timeoutError.error } : {}), exitStatus: { exitCode: finalExitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
+				const wasGraceAborted = softLimitReached && turnCount >= (maxTurns ?? 0) + (graceTurns ?? 5);
+				const wasParentAborted = abortDueToParentSignal && !wasGraceAborted;
+				settle({ exitCode: finalExitCode, stdout, stderr, ...(timeoutError ? { error: timeoutError.error } : {}), aborted: wasGraceAborted || wasParentAborted, steered: softLimitReached && !wasGraceAborted, exitStatus: { exitCode: finalExitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
 			});
 		});
 	} finally {

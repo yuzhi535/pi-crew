@@ -45,6 +45,8 @@ export interface SubagentRecord {
 	turnCount?: number;
 	terminated?: boolean;
 	durationMs?: number;
+	/** Lifetime token usage accumulated via message_end events. Survives compaction. */
+	lifetimeUsage?: { input: number; output: number; cacheWrite: number };
 }
 
 type SpawnRunner = (options: SubagentSpawnOptions, signal?: AbortSignal) => Promise<PiTeamsToolResult>;
