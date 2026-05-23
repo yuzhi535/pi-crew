@@ -39,11 +39,14 @@ test("worktree mode supports setup hook metadata and diff stat artifacts", async
 		fs.mkdirSync(path.join(cwd, "node_modules"));
 		git(cwd, ["add", "README.md", ".gitignore"]);
 		git(cwd, ["commit", "-m", "initial"]);
-		const hook = path.join(cwd, "hook.cjs");
-		fs.writeFileSync(hook, "const fs=require('fs'); fs.writeFileSync('generated.txt','x'); console.log(JSON.stringify({syntheticPaths:['generated.txt']}));\n", "utf-8");
+		// Use .hooks/ relative path (required by isAllowedSetupHook security fix)
+		fs.mkdirSync(path.join(cwd, ".hooks"));
+		const hook = path.join(cwd, ".hooks", "setup.cjs");
+		fs.writeFileSync(hook, "const fs=require('fs'); fs.writeFileSync('generated.txt','x'); console.log(JSON.stringify({syntheticPaths:['generated.txt']}))\n");
+		fs.chmodSync(hook, 0o755);
 		const userConfigDir = path.join(home, ".pi", "agent", "extensions", "pi-crew");
 		fs.mkdirSync(userConfigDir, { recursive: true });
-		fs.writeFileSync(path.join(userConfigDir, "config.json"), JSON.stringify({ requireCleanWorktreeLeader: false, worktree: { setupHook: hook, linkNodeModules: true } }), "utf-8");
+		fs.writeFileSync(path.join(userConfigDir, "config.json"), JSON.stringify({ requireCleanWorktreeLeader: false, worktree: { setupHook: ".hooks/setup.cjs", linkNodeModules: true } }), "utf-8");
 		const run = await handleTeamTool({ action: "run", config: { runtime: { mode: "scaffold" } }, team: "fast-fix", goal: "Worktree hook smoke", workspaceMode: "worktree" }, { cwd });
 		assert.equal(run.isError, false);
 		const loaded = loadRunManifestById(cwd, run.details.runId!);
