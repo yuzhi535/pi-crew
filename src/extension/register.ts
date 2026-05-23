@@ -459,6 +459,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			if (manifest) void import("../state/event-log.ts").then(({ appendEventFireAndForget }) => appendEventFireAndForget(manifest.eventsPath, event as Parameters<typeof appendEventFireAndForget>[1]));
 		};
 		registry.waitForAll = async (runId: string) => {
+		// LAZY: state-store only needed for post-completion polling (waitForAll) and sync hasRunning check; avoid at startup.
 			const { loadRunManifestById } = await import("../state/state-store.ts");
 			const check = (): boolean => {
 				const loaded = loadRunManifestById(currentCtx?.cwd ?? process.cwd(), runId);
@@ -470,6 +471,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		registry.hasRunning = (runId: string) => {
 			const manifest = manifestCacheForRegistry.get(runId);
 			if (!manifest) return false;
+		// LAZY: state-store only needed in hasRunning; avoid at startup.
 			const { loadRunManifestById } = require("../state/state-store.ts");
 			const loaded = loadRunManifestById(currentCtx?.cwd ?? process.cwd(), runId);
 			if (!loaded) return false;

@@ -18,7 +18,7 @@ import {
 	getEventsForTool,
 	hasError,
 } from "../../src/runtime/tool-progress.ts";
-import type { CrewAgentProgress } from "../../src/state/types.ts";
+import type { CrewAgentProgress } from "../../src/runtime/crew-agent-runtime.ts";
 
 const mockProgress = (overrides: Partial<CrewAgentProgress> = {}): CrewAgentProgress => ({
 	currentTool: "bash",
@@ -37,9 +37,9 @@ const mockProgress = (overrides: Partial<CrewAgentProgress> = {}): CrewAgentProg
 } as CrewAgentProgress);
 
 test("getToolName extracts tool name from events", () => {
-	const startEvent = { type: "tool_execution_start", toolName: "bash", toolCallId: "123", timestamp: Date.now() };
-	const endEvent = { type: "tool_execution_end", toolName: "read", toolCallId: "456", timestamp: Date.now() };
-	const messageEvent = { type: "message_end", message: { role: "assistant", usage: { input: 100, output: 50 } }, timestamp: Date.now() };
+	const startEvent = { type: "tool_execution_start" as const, toolName: "bash", toolCallId: "123", timestamp: Date.now() };
+	const endEvent = { type: "tool_execution_end" as const, toolName: "read", toolCallId: "456", timestamp: Date.now() };
+	const messageEvent = { type: "message_end" as const, message: { role: "assistant", usage: { input: 100, output: 50 } }, timestamp: Date.now() };
 
 	assert.equal(getToolName(startEvent), "bash");
 	assert.equal(getToolName(endEvent), "read");
@@ -47,25 +47,25 @@ test("getToolName extracts tool name from events", () => {
 });
 
 test("isToolRunning detects start events", () => {
-	assert.ok(isToolRunning({ type: "tool_execution_start", toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
-	assert.ok(!isToolRunning({ type: "tool_execution_end", toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
-	assert.ok(!isToolRunning({ type: "message_end", message: { role: "assistant" }, timestamp: Date.now() }));
+	assert.ok(isToolRunning({ type: "tool_execution_start" as const, toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
+	assert.ok(!isToolRunning({ type: "tool_execution_end" as const, toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
+	assert.ok(!isToolRunning({ type: "message_end" as const, message: { role: "assistant" }, timestamp: Date.now() }));
 });
 
 test("isToolComplete detects end events", () => {
-	assert.ok(isToolComplete({ type: "tool_execution_end", toolName: "read", toolCallId: "456", timestamp: Date.now() }));
-	assert.ok(!isToolComplete({ type: "tool_execution_start", toolName: "read", toolCallId: "456", timestamp: Date.now() }));
+	assert.ok(isToolComplete({ type: "tool_execution_end" as const, toolName: "read", toolCallId: "456", timestamp: Date.now() }));
+	assert.ok(!isToolComplete({ type: "tool_execution_start" as const, toolName: "read", toolCallId: "456", timestamp: Date.now() }));
 });
 
 test("isToolError detects error events", () => {
-	assert.ok(isToolError({ type: "tool_execution_error", toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
-	assert.ok(isToolError({ type: "tool_execution_failed", toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
-	assert.ok(!isToolError({ type: "tool_execution_end", toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
+	assert.ok(isToolError({ type: "tool_execution_error" as const, toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
+	assert.ok(isToolError({ type: "tool_execution_failed" as const, toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
+	assert.ok(!isToolError({ type: "tool_execution_end" as const, toolName: "bash", toolCallId: "123", timestamp: Date.now() }));
 });
 
 test("getUsage extracts usage from message_end", () => {
 	const event = {
-		type: "message_end" as const,
+		type: "message_end" as const as const,
 		message: {
 			role: "assistant" as const,
 			usage: { input: 1000, output: 500, cacheRead: 200, cacheWrite: 50 },
@@ -131,9 +131,9 @@ test("renderProgressBar creates visual bar", () => {
 
 test("filterToolEvents returns only tool events", () => {
 	const events = [
-		{ type: "tool_execution_start", toolName: "bash", toolCallId: "1", timestamp: Date.now() },
-		{ type: "message_end", message: { role: "assistant" }, timestamp: Date.now() },
-		{ type: "tool_execution_end", toolName: "bash", toolCallId: "1", timestamp: Date.now() },
+		{ type: "tool_execution_start" as const, toolName: "bash", toolCallId: "1", timestamp: Date.now() },
+		{ type: "message_end" as const, message: { role: "assistant" }, timestamp: Date.now() },
+		{ type: "tool_execution_end" as const, toolName: "bash", toolCallId: "1", timestamp: Date.now() },
 	] as const;
 
 	const toolEvents = filterToolEvents(events);
@@ -143,9 +143,9 @@ test("filterToolEvents returns only tool events", () => {
 
 test("getEventsForTool filters by tool name", () => {
 	const events = [
-		{ type: "tool_execution_start", toolName: "bash", toolCallId: "1", timestamp: Date.now() },
-		{ type: "tool_execution_start", toolName: "read", toolCallId: "2", timestamp: Date.now() },
-		{ type: "tool_execution_end", toolName: "bash", toolCallId: "1", timestamp: Date.now() },
+		{ type: "tool_execution_start" as const, toolName: "bash", toolCallId: "1", timestamp: Date.now() },
+		{ type: "tool_execution_start" as const, toolName: "read", toolCallId: "2", timestamp: Date.now() },
+		{ type: "tool_execution_end" as const, toolName: "bash", toolCallId: "1", timestamp: Date.now() },
 	] as const;
 
 	const bashEvents = getEventsForTool(events, "bash");
@@ -154,13 +154,13 @@ test("getEventsForTool filters by tool name", () => {
 
 test("hasError detects error events", () => {
 	const withError = [
-		{ type: "tool_execution_start", toolName: "bash", toolCallId: "1", timestamp: Date.now() },
-		{ type: "tool_execution_error", toolName: "bash", toolCallId: "1", error: "timeout", timestamp: Date.now() },
+		{ type: "tool_execution_start" as const, toolName: "bash", toolCallId: "1", timestamp: Date.now() },
+		{ type: "tool_execution_error" as const, toolName: "bash", toolCallId: "1", error: "timeout", timestamp: Date.now() },
 	] as const;
 
 	const withoutError = [
-		{ type: "tool_execution_start", toolName: "bash", toolCallId: "1", timestamp: Date.now() },
-		{ type: "tool_execution_end", toolName: "bash", toolCallId: "1", timestamp: Date.now() },
+		{ type: "tool_execution_start" as const, toolName: "bash", toolCallId: "1", timestamp: Date.now() },
+		{ type: "tool_execution_end" as const, toolName: "bash", toolCallId: "1", timestamp: Date.now() },
 	] as const;
 
 	assert.ok(hasError(withError));
