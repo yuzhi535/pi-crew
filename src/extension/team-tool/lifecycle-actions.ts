@@ -45,10 +45,17 @@ export function handleImport(params: TeamToolParamsValue, ctx: TeamContext): PiT
 }
 
 export async function handleExport(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
-	// Note: no ownership check — export is intentionally cross-session (read-only, for sharing)
 	if (!params.runId) return result("Export requires runId.", { action: "export", status: "error" }, true);
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "export", status: "error" }, true);
+
+	// SECURITY: Ownership check — only the owner session may export a run.
+	// Foreign-run export requires confirm: true (explicit user intent).
+	// Risk: exported bundles may contain sensitive data from another session's run.
+	const foreignRun = typeof loaded.manifest.ownerSessionId === "string" && loaded.manifest.ownerSessionId !== ctx.sessionId;
+	if (foreignRun && !params.confirm) {
+		return result(`Run ${loaded.manifest.runId} belongs to another session. Use confirm: true to export anyway.`, { action: "export", status: "error", runId: loaded.manifest.runId }, true);
+	}
 
 	const hookReport = await executeHook("before_publish", { runId: loaded.manifest.runId, cwd: ctx.cwd });
 	appendHookEvent(loaded.manifest, hookReport);
@@ -91,9 +98,9 @@ export async function handleForget(params: TeamToolParamsValue, ctx: TeamContext
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "forget", status: "error" }, true);
 
-	// Ownership check — prevent cross-session deletion
+	// Ownership check — prevent cross-session deletion unless force is set
 	const foreignRun = typeof loaded.manifest.ownerSessionId === "string" && loaded.manifest.ownerSessionId !== ctx.sessionId;
-	if (foreignRun) return result(`Run ${params.runId} belongs to another session; not forgotten.`, { action: "forget", status: "error", runId: loaded.manifest.runId }, true);
+	if (foreignRun && !params.force) return result(`Run ${params.runId} belongs to another session. Use force: true to override.`, { action: "forget", status: "error", runId: loaded.manifest.runId }, true);
 
 	const hookReport = await executeHook("before_forget", { runId: loaded.manifest.runId, cwd: ctx.cwd });
 	appendHookEvent(loaded.manifest, hookReport);
@@ -121,9 +128,9 @@ export async function handleCleanup(params: TeamToolParamsValue, ctx: TeamContex
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "cleanup", status: "error" }, true);
 
-	// Ownership check — prevent cross-session worktree cleanup
+	// Ownership check — prevent cross-session worktree cleanup unless force is set
 	const foreignRun = typeof loaded.manifest.ownerSessionId === "string" && loaded.manifest.ownerSessionId !== ctx.sessionId;
-	if (foreignRun) return result(`Run ${params.runId} belongs to another session; not cleaned up.`, { action: "cleanup", status: "error", runId: loaded.manifest.runId }, true);
+	if (foreignRun && !params.force) return result(`Run ${params.runId} belongs to another session. Use force: true to override.`, { action: "cleanup", status: "error", runId: loaded.manifest.runId }, true);
 
 	const hookReport = await executeHook("before_cleanup", { runId: loaded.manifest.runId, cwd: ctx.cwd });
 	appendHookEvent(loaded.manifest, hookReport);

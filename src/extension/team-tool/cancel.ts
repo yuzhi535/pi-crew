@@ -35,6 +35,7 @@ export function abortOwned(
 	runId: string,
 	taskIds: string[] | undefined,
 	ctx: TeamContext,
+	force?: boolean,
 ): AbortOwnedResult {
 	const loaded = loadRunManifestById(ctx.cwd, runId);
 	if (!loaded) return { abortedIds: [], missingIds: taskIds ?? [], foreignIds: [] };
@@ -51,7 +52,7 @@ export function abortOwned(
 			continue;
 		}
 		if (task.status !== "queued" && task.status !== "running" && task.status !== "waiting") continue;
-		if (foreignRun) {
+		if (foreignRun && !force) {
 			result.foreignIds.push(id);
 			continue;
 		}
@@ -77,10 +78,10 @@ export async function handleRetry(params: TeamToolParamsValue, ctx: TeamContext)
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "retry", status: "error" }, true);
 
-	// Pre-lock ownership check: reject foreign-owned runs
+	// Pre-lock ownership check: reject foreign-owned runs unless force is set
 	const foreignRun = typeof loaded.manifest.ownerSessionId === "string" && loaded.manifest.ownerSessionId !== ctx.sessionId;
-	if (foreignRun) {
-		return result(`Run ${loaded.manifest.runId} belongs to another session; not retried.`, { action: "retry", status: "error", runId: loaded.manifest.runId }, true);
+	if (foreignRun && !params.force) {
+		return result(`Run ${loaded.manifest.runId} belongs to another session. Use force: true to override.`, { action: "retry", status: "error", runId: loaded.manifest.runId }, true);
 	}
 
 	// Execute before_retry hook after ownership confirmed, before mutation lock
@@ -139,10 +140,10 @@ export async function handleCancel(params: TeamToolParamsValue, ctx: TeamContext
 	const loaded = loadRunManifestById(ctx.cwd, params.runId);
 	if (!loaded) return result(`Run '${params.runId}' not found.`, { action: "cancel", status: "error" }, true);
 
-	// Pre-lock ownership check: reject foreign-owned runs before executing hooks
-	const preCheck = abortOwned(loaded.manifest.runId, undefined, ctx);
-	if (preCheck.abortedIds.length === 0 && preCheck.foreignIds.length > 0) {
-		return result(`Run ${loaded.manifest.runId} belongs to another session; not cancelled.`, { action: "cancel", status: "error", runId: loaded.manifest.runId, foreignIds: preCheck.foreignIds }, true);
+	// Pre-lock ownership check: reject foreign-owned runs unless force is set
+	const preCheck = abortOwned(loaded.manifest.runId, undefined, ctx, params.force);
+	if (preCheck.abortedIds.length === 0 && preCheck.foreignIds.length > 0 && !params.force) {
+		return result(`Run ${loaded.manifest.runId} belongs to another session. Use force: true to override.`, { action: "cancel", status: "error", runId: loaded.manifest.runId, foreignIds: preCheck.foreignIds }, true);
 	}
 
 	// Execute before_cancel hook after ownership confirmed, before mutation lock
@@ -169,9 +170,9 @@ export async function handleCancel(params: TeamToolParamsValue, ctx: TeamContext
 		if ((loaded.manifest.status === "completed" || loaded.manifest.status === "cancelled") && !params.force) return result(`Run ${loaded.manifest.runId} is already ${loaded.manifest.status}; nothing to cancel. Use force: true to mark it cancelled anyway.`, { action: "cancel", status: "ok", runId: loaded.manifest.runId, artifactsRoot: loaded.manifest.artifactsRoot });
 
 		// Classify tasks for foreign-aware cancellation
-		const abortResult = abortOwned(loaded.manifest.runId, undefined, ctx);
-		if (abortResult.abortedIds.length === 0 && abortResult.foreignIds.length > 0) {
-			return result(`Run ${loaded.manifest.runId} belongs to another session; not cancelled.`, { action: "cancel", status: "error", runId: loaded.manifest.runId, foreignIds: abortResult.foreignIds }, true);
+		const abortResult = abortOwned(loaded.manifest.runId, undefined, ctx, params.force);
+		if (abortResult.abortedIds.length === 0 && abortResult.foreignIds.length > 0 && !params.force) {
+			return result(`Run ${loaded.manifest.runId} belongs to another session. Use force: true to override.`, { action: "cancel", status: "error", runId: loaded.manifest.runId, foreignIds: abortResult.foreignIds }, true);
 		}
 		const cancellableIds = new Set(abortResult.abortedIds);
 		const cancelReason = cancelReasonFromParams(params);

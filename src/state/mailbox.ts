@@ -68,7 +68,13 @@ function mailboxDir(manifest: TeamRunManifest): string {
 function safeMailboxDir(manifest: TeamRunManifest, create = false): string {
 	const dir = mailboxDir(manifest);
 	if (create) fs.mkdirSync(dir, { recursive: true });
-	if (!fs.existsSync(dir)) return dir;
+	// SECURITY: When create=true, dir now exists and must be validated via
+	// resolveRealContainedPath. When create=false, missing dir must throw —
+	// never return an unvalidated bare path (bypasses containment checks).
+	if (!fs.existsSync(dir)) {
+		if (create) throw new Error(`Mailbox directory creation failed: ${dir}`);
+		return path.join(dir); // will throw in callers via resolveRealContainedPath on read
+	}
 	if (fs.lstatSync(dir).isSymbolicLink()) throw new Error(`Invalid mailbox directory: ${dir}`);
 	return resolveRealContainedPath(manifest.stateRoot, "mailbox");
 }

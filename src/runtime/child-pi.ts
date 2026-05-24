@@ -142,6 +142,10 @@ export interface ChildPiRunInput {
 	maxTurns?: number;
 	/** Extra turns after soft limit before hard abort. Default: 5. */
 	graceTurns?: number;
+	/** Parent conversation context to inherit when inheritContext is true. */
+	parentContext?: string;
+	/** When true, prepend parentContext to the task prompt. */
+	inheritContext?: boolean;
 }
 
 export interface ChildPiRunResult {
@@ -354,6 +358,12 @@ function isFinalAssistantEvent(event: unknown): boolean {
 }
 
 export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResult> {
+	// Phase 1 (live-session parity): prepend parent context when inheritContext is true.
+	// This mirrors the effectivePrompt logic in live-session-runtime.ts so that
+	// child-process workers receive the same inherited-context treatment.
+	const effectiveTask = input.inheritContext === true && input.parentContext
+		? `${input.parentContext}\n\n---\n# Child Worker Task\n${input.task}`
+		: input.task;
 	const depth = checkCrewDepth(input.maxDepth);
 	if (depth.blocked) return { exitCode: 1, stdout: "", stderr: `pi-crew depth guard blocked child worker: depth ${depth.depth} >= max ${depth.maxDepth}` };
 	const mock = process.env.PI_TEAMS_MOCK_CHILD_PI;
@@ -364,7 +374,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			return { exitCode: 0, stdout, stderr: "" };
 		}
 		if (mock === "json-success" || mock === "adaptive-plan") {
-			const text = mock === "adaptive-plan" && input.task.includes("ADAPTIVE_PLAN_JSON_START")
+			const text = mock === "adaptive-plan" && effectiveTask.includes("ADAPTIVE_PLAN_JSON_START")
 				? `Adaptive mock plan\nADAPTIVE_PLAN_JSON_START\n${JSON.stringify({ phases: [{ name: "research", tasks: [{ role: "explorer", task: "Explore adaptive target" }, { role: "analyst", task: "Analyze adaptive target" }, { role: "planner", task: "Plan adaptive target" }] }, { name: "build", tasks: [{ role: "executor", task: "Implement adaptive target" }] }, { name: "check", tasks: [{ role: "reviewer", task: "Review adaptive target" }, { role: "test-engineer", task: "Test adaptive target" }, { role: "writer", task: "Summarize adaptive target" }] }] })}\nADAPTIVE_PLAN_JSON_END`
 				: `Mock JSON success for ${input.agent.name}`;
 			const stdout = `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text }] } })}\n${JSON.stringify({ type: "message_end", usage: { input: 10, output: 5, cost: 0.001, turns: 1 } })}\n`;
@@ -374,7 +384,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 		if (mock === "retryable-failure") return { exitCode: 1, stdout: "", stderr: "rate limit: mock failure" };
 		return { exitCode: 1, stdout: "", stderr: `mock failure: ${mock}` };
 	}
-	const built = buildPiWorkerArgs({ task: input.task, agent: input.agent, model: input.model, sessionEnabled: true, maxDepth: input.maxDepth, skillPaths: input.skillPaths });
+	const built = buildPiWorkerArgs({ task: effectiveTask, agent: input.agent, model: input.model, sessionEnabled: true, maxDepth: input.maxDepth, skillPaths: input.skillPaths });
 	const spawnSpec = getPiSpawnCommand(built.args);
 	try {
 		return await new Promise<ChildPiRunResult>((resolve) => {

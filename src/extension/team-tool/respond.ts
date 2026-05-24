@@ -24,7 +24,7 @@ export function handleRespond(params: TeamToolParamsValue, ctx: TeamContext): Pi
 		const fresh = loadRunManifestById(ctx.cwd, params.runId!);
 		if (!fresh) return result(`Run '${params.runId}' not found.`, { action: "respond", status: "error" }, true);
 		const foreignRun = typeof fresh.manifest.ownerSessionId === "string" && fresh.manifest.ownerSessionId !== ctx.sessionId;
-		if (foreignRun) return result(`Run ${fresh.manifest.runId} belongs to another session; not responding.`, { action: "respond", status: "error", runId: fresh.manifest.runId }, true);
+		if (foreignRun && !params.force) return result(`Run ${fresh.manifest.runId} belongs to another session. Use force: true to override.`, { action: "respond", status: "error", runId: fresh.manifest.runId }, true);
 
 		const taskId = params.taskId;
 		const message = params.message ?? "";

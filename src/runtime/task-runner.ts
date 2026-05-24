@@ -416,6 +416,8 @@ export async function runTeamTask(
 					skillPaths,
 					maxTurns: input.runtimeConfig?.maxTurns,
 					graceTurns: input.runtimeConfig?.graceTurns,
+					inheritContext: input.runtimeConfig?.inheritContext,
+					parentContext: input.parentContext,
 					onSpawn: (pid) => {
 						try {
 							({ task, tasks } = checkpointTask(
