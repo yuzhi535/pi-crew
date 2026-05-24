@@ -79,6 +79,10 @@ export function savePersistedSubagentRecord(cwd: string, record: SubagentRecord)
 		const filePath = persistedSubagentPath(cwd, record.id);
 		fs.mkdirSync(path.dirname(filePath), { recursive: true });
 		fs.writeFileSync(filePath, `${JSON.stringify(redactSecrets(serializableRecord(record)), null, 2)}\n`, "utf-8");
+		// SECURITY: Restrict permissions to owner-only (rw-------).
+		// On multi-user systems, other users must not read task prompts,
+		// agent descriptions, and run IDs from subagent record files.
+		fs.chmodSync(filePath, 0o600);
 	} catch (error) {
 		logInternalError("subagent-manager.save", error, `id=${record.id}`);
 	}

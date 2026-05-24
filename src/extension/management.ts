@@ -107,10 +107,17 @@ function parseSteps(value: unknown): { steps?: WorkflowStep[]; error?: string } 
 		if (id.error) return { error: id.error };
 		const role = requireString(obj.role, `config.steps[${i}].role`);
 		if (role.error) return { error: role.error };
+		// SECURITY: Sanitize task field to prevent markdown injection in workflow markdown.
+		// Strip characters that could create headings, code blocks, or links.
+		// Defense-in-depth — the task field is stored in YAML frontmatter, not executed.
+		const rawTask = obj.task;
+		const task = typeof rawTask === "string"
+			? rawTask.replace(/^#{1,6}\s+/gm, "").replace(/```/g, "\`\`").replace(/\n{3,}/g, "\n\n").slice(0, 4000)
+			: "{goal}";
 		steps.push({
 			id: sanitizeName(id.value!),
 			role: sanitizeName(role.value!),
-			task: typeof obj.task === "string" ? obj.task : "{goal}",
+			task,
 			dependsOn: parseStringArray(obj.dependsOn),
 			parallelGroup: typeof obj.parallelGroup === "string" ? obj.parallelGroup.trim() : undefined,
 			output: obj.output === false ? false : typeof obj.output === "string" ? obj.output.trim() : undefined,

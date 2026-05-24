@@ -30,6 +30,9 @@ export interface HookDefinition {
 	name: HookName;
 	mode: HookMode;
 	handler: (ctx: HookContext) => HookResult | Promise<HookResult>;
+	// SECURITY: Optional workspace scoping. When set, the hook only executes for
+	// runs in the specified workspace. When absent, the hook applies to all runs.
+	workspaceId?: string;
 }
 
 export interface HookExecutionReport {

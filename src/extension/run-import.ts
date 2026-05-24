@@ -16,6 +16,10 @@ export interface ImportedRunBundleInfo {
 
 function importRoot(cwd: string, scope: "project" | "user"): string {
 	const base = scope === "project" ? projectCrewRoot(cwd) : userCrewRoot();
+	// SECURITY NOTE: `DEFAULT_PATHS.state.importsSubdir` is a constant (not user-controlled).
+	// If this constant ever becomes user-influenced, this function could become a path
+	// traversal risk. Always keep `importsSubdir` as a hardcoded constant. Do NOT accept
+	// `importsSubdir` as a parameter or from config.
 	return path.join(base, DEFAULT_PATHS.state.importsSubdir);
 }
 

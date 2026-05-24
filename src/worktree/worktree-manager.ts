@@ -77,18 +77,36 @@ function normalizeSyntheticPath(worktreePath: string, rawPath: string): string {
  * @param hookPath - The hook script path to validate
  * @returns true if the path is allowed, false otherwise
  */
-	function isAllowedSetupHook(hookPath: string): boolean {
-		if (!hookPath || hookPath.trim().length === 0) return false;
-		if (!path.isAbsolute(hookPath)) {
-			// Use path.posix.normalize for consistent forward-slash handling on all platforms.
-			const normalized = path.posix.normalize(hookPath);
-			return normalized === ".hooks" || normalized.startsWith(".hooks/");
-		}
-		// Normalize to forward slashes for consistent cross-platform comparison.
-		const normalizedHookPath = hookPath.replace(/\\/g, "/");
-		const homeHooksNormalized = (process.env.HOME ?? "").replace(/\\/g, "/") + "/.pi/hooks";
-		return normalizedHookPath === homeHooksNormalized || normalizedHookPath.startsWith(homeHooksNormalized + "/");
+function isAllowedSetupHook(hookPath: string): boolean {
+	if (!hookPath || hookPath.trim().length === 0) return false;
+	if (!path.isAbsolute(hookPath)) {
+		// Use path.posix.normalize for consistent forward-slash handling on all platforms.
+		const normalized = path.posix.normalize(hookPath);
+		return normalized === ".hooks" || normalized.startsWith(".hooks/");
 	}
+	// Normalize to forward slashes for consistent cross-platform comparison.
+	const normalizedHookPath = hookPath.replace(/\\/g, "/");
+	const homeHooksNormalized = (process.env.HOME ?? "").replace(/\\/g, "/") + "/.pi/hooks";
+	return normalizedHookPath === homeHooksNormalized || normalizedHookPath.startsWith(homeHooksNormalized + "/");
+}
+
+/**
+ * SECURITY: Verify a hook script path remains within the allowed directory after
+ * real-path resolution. This prevents symlink-based escape where repoRoot is a
+ * symlink and the hook path would resolve outside the repository.
+ * @param repoRoot - The repository root (resolved to real path)
+ * @param hookPath - The resolved absolute hook path
+ * @returns true if the hook is safely contained within repoRoot
+ */
+function isHookPathContainedInRepoRoot(repoRoot: string, hookPath: string): boolean {
+	try {
+		const realRepoRoot = fs.realpathSync(repoRoot);
+		const realHookPath = fs.realpathSync(path.dirname(hookPath));
+		return realHookPath.startsWith(realRepoRoot + path.sep) || realHookPath === realRepoRoot;
+	} catch {
+		return false;
+	}
+}
 
 function runSetupHook(manifest: TeamRunManifest, task: TeamTaskState, repoRoot: string, worktreePath: string, branch: string): string[] {
 	const cfg = loadConfig(manifest.cwd).config.worktree;
@@ -99,6 +117,12 @@ function runSetupHook(manifest: TeamRunManifest, task: TeamTaskState, repoRoot: 
 		return [];
 	}
 	const hookPath = path.isAbsolute(rawHookPath) ? rawHookPath : path.resolve(repoRoot, rawHookPath);
+	// SECURITY: Verify the resolved hook path is contained within the real repoRoot.
+	// This prevents symlink-based escape where repoRoot is a symlink.
+	if (!path.isAbsolute(rawHookPath) && !isHookPathContainedInRepoRoot(repoRoot, hookPath)) {
+		logInternalError("worktree.setupHook.contained", new Error("hook path escapes repoRoot after realpath resolution: " + hookPath), `repoRoot=${repoRoot}`);
+		return [];
+	}
 	if (!fs.existsSync(hookPath) || fs.statSync(hookPath).isDirectory()) {
 		logInternalError("worktree.setupHook.missing", new Error("hook not found or is directory: " + hookPath), `cwd=${manifest.cwd}`);
 		return [];

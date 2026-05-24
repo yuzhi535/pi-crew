@@ -38,6 +38,46 @@ function textOf(result: Awaited<ReturnType<typeof handleTeamTool>>): string {
 	return result.content?.map((item) => item.type === "text" ? item.text : "").join("\n") ?? "";
 }
 
+// SECURITY: Strictly enumerate allowed operations per RPC channel.
+// Only read-only operations are permitted via RPC to prevent malicious extensions
+// from mutating run state without user consent.
+const RPC_ALLOWED_OPERATIONS = new Set([
+	// Read-only manifest/plan ops
+	"metrics-snapshot", "inventory", "read-manifest",
+	"list-tasks", "read-task", "read-events",
+	// Read-only agent ops
+	"list-agents", "read-agent-status", "read-agent-events",
+	"read-agent-transcript", "read-agent-output", "agent-dashboard",
+	// Mailbox read ops
+	"read-mailbox", "read-delivery", "read-heartbeat",
+	// No mutating ops (approve-plan, cancel-plan, steer-agent, stop-agent, etc.)
+	// — these require explicit intent confirmation and are NOT allowed via RPC.
+]);
+
+function isAllowedRpcOperation(operation: string): boolean {
+	return RPC_ALLOWED_OPERATIONS.has(operation);
+}
+
+function isAllowedRpcRunParams(params: TeamToolParamsValue): { ok: boolean; error?: string } {
+	// SECURITY: Require explicit intent for any RPC-initiated run creation.
+	// This prevents malicious extensions from spawning child Pi processes silently.
+	const cfg = params.config as Record<string, unknown> | undefined;
+	const intent = cfg?.intent as string | undefined;
+	if (!intent || typeof intent !== "string" || intent.trim().length === 0) {
+		return { ok: false, error: "RPC run requires config.intent (a non-empty intent string)" };
+	}
+	// SECURITY: Validate cwd is within the project directory if provided.
+	if (params.cwd && typeof params.cwd === "string") {
+		try {
+			const { resolveContainedPath } = require("../utils/safe-paths.ts");
+			resolveContainedPath(params.cwd, ".");
+		} catch {
+			return { ok: false, error: "RPC run config.cwd must be within the project directory" };
+		}
+	}
+	return { ok: true };
+}
+
 function on(events: EventBusLike, channel: string, handler: (raw: unknown) => void): () => void {
 	const unsub = events.on(channel, handler);
 	return typeof unsub === "function" ? unsub : () => {};
@@ -65,6 +105,11 @@ export function registerPiCrewRpc(events: EventBusLike | undefined, getCtx: () =
 				} else {
 					params = { action: "run" };
 				}
+				const permission = isAllowedRpcRunParams(params);
+				if (!permission.ok) {
+					reply(events, "pi-crew:rpc:run", id, { success: false, error: permission.error ?? "permission denied" });
+					return;
+				}
 				const result = await handleTeamTool(params, ctx);
 				reply(events, "pi-crew:rpc:run", id, result.isError ? { success: false, error: textOf(result) } : { success: true, data: result.details });
 			} catch (error) {
@@ -87,18 +132,29 @@ export function registerPiCrewRpc(events: EventBusLike | undefined, getCtx: () =
 			const request = parseLiveControlRealtimeMessage(raw);
 			if (request) publishLiveControlRealtime(request);
 		}),
-		on(events, "pi-crew:rpc:live-control", async (raw) => {
-			const id = requestId(raw);
-			try {
-				const ctx = getCtx();
-				if (!ctx) throw new Error("No active pi-crew session context.");
-				const obj = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
-				const result = await handleTeamTool({ action: "api", runId: typeof obj.runId === "string" ? obj.runId : undefined, config: { operation: typeof obj.operation === "string" ? obj.operation : "steer-agent", agentId: obj.agentId, message: obj.message, prompt: obj.prompt } }, ctx);
-				reply(events, "pi-crew:rpc:live-control", id, result.isError ? { success: false, error: textOf(result) } : { success: true, data: { text: textOf(result), details: result.details } });
-			} catch (error) {
-				reply(events, "pi-crew:rpc:live-control", id, { success: false, error: error instanceof Error ? error.message : String(error) });
-			}
-		}),
+			on(events, "pi-crew:rpc:live-control", async (raw) => {
+				const id = requestId(raw);
+				try {
+					const ctx = getCtx();
+					if (!ctx) throw new Error("No active pi-crew session context.");
+					const obj = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+					const rawOp = typeof obj.operation === "string" ? obj.operation : "steer-agent";
+					// SECURITY: Reject any operation not in the explicit allowlist.
+					// Mutating ops (approve-plan, cancel-plan, steer-agent, stop-agent, etc.)
+					// require user consent and are blocked here.
+					if (!isAllowedRpcOperation(rawOp)) {
+						reply(events, "pi-crew:rpc:live-control", id, {
+							success: false,
+							error: `RPC operation '${rawOp}' is not allowed. Allowed: ${[...RPC_ALLOWED_OPERATIONS].join(", ")}`,
+						});
+						return;
+					}
+					const result = await handleTeamTool({ action: "api", runId: typeof obj.runId === "string" ? obj.runId : undefined, config: { operation: rawOp, agentId: obj.agentId, message: obj.message, prompt: obj.prompt } }, ctx);
+					reply(events, "pi-crew:rpc:live-control", id, result.isError ? { success: false, error: textOf(result) } : { success: true, data: { text: textOf(result), details: result.details } });
+				} catch (error) {
+					reply(events, "pi-crew:rpc:live-control", id, { success: false, error: error instanceof Error ? error.message : String(error) });
+				}
+			}),
 	];
 	return { unsubscribe: () => unsubs.forEach((unsub) => unsub()) };
 }

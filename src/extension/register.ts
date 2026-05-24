@@ -468,12 +468,13 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			};
 			while (!check()) await new Promise((resolve) => setTimeout(resolve, 500));
 		};
-		registry.hasRunning = (runId: string) => {
+		registry.hasRunning = async (runId: string) => {
 			const manifest = manifestCacheForRegistry.get(runId);
 			if (!manifest) return false;
-		// LAZY: state-store only needed in hasRunning; avoid at startup.
-			const { loadRunManifestById } = require("../state/state-store.ts");
-			const loaded = loadRunManifestById(currentCtx?.cwd ?? process.cwd(), runId);
+			// LAZY: state-store only needed in hasRunning; avoid at startup.
+			// Use dynamic import to avoid CJS/ESM mixed module issues.
+			const { loadRunManifestById: loadRunForHasRunning } = await import("../state/state-store.ts");
+			const loaded = loadRunForHasRunning(currentCtx?.cwd ?? process.cwd(), runId);
 			if (!loaded) return false;
 			return loaded.tasks.some((t: { status: string }) => t.status === "running" || t.status === "queued");
 		};

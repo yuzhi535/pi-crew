@@ -5,6 +5,11 @@ import { runEventBus } from "../ui/run-event-bus.ts";
 
 const registry = new Map<HookName, HookDefinition[]>();
 
+// SECURITY: Hooks are currently global (registered once, applied to all workspaces).
+// For multi-workspace environments, consider filtering hooks by workspace scope:
+//   const workspaceHooks = getHooks(name).filter(h => !h.workspaceId || h.workspaceId === ctx.workspaceId);
+// This prevents globally-registered hooks from operating on runs they weren't designed for.
+
 export function registerHook(definition: HookDefinition): void {
 	const hooks = registry.get(definition.name) ?? [];
 	hooks.push(definition);
@@ -22,15 +27,22 @@ export function getHooks(name: HookName): HookDefinition[] {
 export async function executeHook(name: HookName, ctx: HookContext): Promise<HookExecutionReport> {
 	const hooks = getHooks(name);
 	if (hooks.length === 0) return { hookName: name, outcome: "allow", durationMs: 0 };
+	// SECURITY: If ctx contains a workspaceId, filter hooks to only those scoped to
+	// this workspace. This prevents globally-registered hooks from operating on runs
+	// they weren't designed for.
+	const scopedHooks = ctx.workspaceId
+		? hooks.filter((h) => !h.workspaceId || h.workspaceId === ctx.workspaceId)
+		: hooks;
+	if (scopedHooks.length === 0) return { hookName: name, outcome: "allow", durationMs: 0 };
 	const start = Date.now();
 	const diagnostics: string[] = [];
 	let capturedModifications: Record<string, unknown> | undefined;
-	for (const hook of hooks) {
-		try {
-			const result: HookResult = await hook.handler(ctx);
-			if (hook.mode === "blocking" && result.outcome === "block") {
-				return { hookName: name, outcome: "block", durationMs: Date.now() - start, reason: result.reason };
-			}
+	for (const hook of scopedHooks) {
+			try {
+				const result: HookResult = await hook.handler(ctx);
+				if (hook.mode === "blocking" && result.outcome === "block") {
+					return { hookName: name, outcome: "block", durationMs: Date.now() - start, reason: result.reason };
+				}
 			if (result.outcome === "modify" && result.data) {
 				Object.assign(ctx, result.data);
 				capturedModifications = { ...result.data };
