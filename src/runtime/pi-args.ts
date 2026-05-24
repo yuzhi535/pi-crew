@@ -47,8 +47,9 @@ export function currentCrewDepth(env: NodeJS.ProcessEnv = process.env): number {
 export function resolveCrewMaxDepth(inputMaxDepth?: number, env: NodeJS.ProcessEnv = process.env): number {
 	const raw = env.PI_CREW_MAX_DEPTH ?? env.PI_TEAMS_MAX_DEPTH;
 	const envDepth = raw !== undefined ? Number(raw) : NaN;
-	if (Number.isInteger(envDepth) && envDepth >= 0) return envDepth;
-	return Number.isInteger(inputMaxDepth) && inputMaxDepth !== undefined && inputMaxDepth >= 0 ? inputMaxDepth : DEFAULT_MAX_CREW_DEPTH;
+	if (Number.isInteger(envDepth) && envDepth >= 1 && envDepth <= 10) return envDepth;
+	if (Number.isInteger(inputMaxDepth) && inputMaxDepth !== undefined && inputMaxDepth >= 1 && inputMaxDepth <= 10) return inputMaxDepth;
+	return DEFAULT_MAX_CREW_DEPTH;
 }
 
 export function checkCrewDepth(inputMaxDepth?: number, env: NodeJS.ProcessEnv = process.env): { blocked: boolean; depth: number; maxDepth: number } {

@@ -93,8 +93,6 @@ function taskMailboxDir(manifest: TeamRunManifest, taskId: string, create = fals
 	const relative = path.relative(tasksRoot, resolved);
 	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Invalid mailbox task id: ${taskId}`);
 	if (create) fs.mkdirSync(resolved, { recursive: true });
-	if (!fs.existsSync(resolved)) return resolved;
-	if (fs.lstatSync(resolved).isSymbolicLink()) throw new Error(`Invalid mailbox task directory: ${resolved}`);
 	return resolveRealContainedPath(tasksRoot, normalizedTaskId);
 }
 

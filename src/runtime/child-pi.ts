@@ -193,6 +193,9 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 			"PI_TEAMS_*",
 		],
 	});
+	// Block execution control vars from leaking to child processes
+	delete filteredEnv.PI_CREW_EXECUTE_WORKERS;
+	delete filteredEnv.PI_TEAMS_EXECUTE_WORKERS;
 	return {
 		cwd,
 		env: { ...filteredEnv, PI_CREW_PARENT_PID: String(process.pid) },
