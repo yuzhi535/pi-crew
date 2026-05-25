@@ -9,12 +9,25 @@ import { currentCrewDepth } from "./pi-args.ts";
  * - If the role appears in `isolationPolicy.isolatedRoles`, use child-process (crash isolation).
  * - Otherwise, use `isolationPolicy.defaultRuntime` when configured, then fall back to globalKind.
  */
-export function resolveTaskRuntimeKind(globalKind: CrewRuntimeKind, role: string, isolationPolicy: CrewRuntimeConfig["isolationPolicy"], env: NodeJS.ProcessEnv = process.env): CrewRuntimeKind {
+export function resolveTaskRuntimeKind(
+	globalKind: CrewRuntimeKind,
+	role: string,
+	isolationPolicy: CrewRuntimeConfig["isolationPolicy"],
+	env: NodeJS.ProcessEnv = process.env,
+): CrewRuntimeKind {
 	if (globalKind === "scaffold") return "scaffold";
 	// Safety: when already inside a pi-crew worker (depth > 0), never nest live-session.
 	// Live-session creates in-process Pi agent sessions, which would recursively
 	// try to use pi-crew, leading to "Cannot read properties of undefined" errors.
-	if (globalKind === "live-session" && currentCrewDepth(env) > 0) return "child-process";
+	// Exception: when PI_CREW_MOCK_LIVE_SESSION is set, we're in a test harness
+	// that mocks the live-session path — forcing child-process would spawn a real
+	// pi process and hang the test.
+	if (
+		globalKind === "live-session" &&
+		currentCrewDepth(env) > 0 &&
+		env.PI_CREW_MOCK_LIVE_SESSION !== "success"
+	)
+		return "child-process";
 	const isolatedRoles = isolationPolicy?.isolatedRoles ?? [];
 	if (isolatedRoles.includes(role)) return "child-process";
 	return isolationPolicy?.defaultRuntime ?? globalKind;
