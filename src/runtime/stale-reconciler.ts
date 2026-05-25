@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
-import { checkProcessLiveness } from "./process-status.ts";
 import { recordFromTask, upsertCrewAgent } from "./crew-agent-records.ts";
+import { checkProcessLiveness } from "./process-status.ts";
 
 /**
  * Result of reconciling a single stale run.
@@ -10,7 +10,12 @@ import { recordFromTask, upsertCrewAgent } from "./crew-agent-records.ts";
 export interface ReconcileResult {
 	runId: string;
 	/** What was found and what action was taken */
-	verdict: "healthy" | "result_exists" | "pid_dead" | "pid_alive_stale" | "no_status";
+	verdict:
+		| "healthy"
+		| "result_exists"
+		| "pid_dead"
+		| "pid_alive_stale"
+		| "no_status";
 	/** Whether repair was applied */
 	repaired: boolean;
 	/** Human-readable detail */
@@ -21,6 +26,8 @@ export interface ReconcileResult {
 
 const STALE_ALIVE_PID_MS = 24 * 60 * 60 * 1000; // 24 hours
 const ACTIVE_EVIDENCE_TTL_MS = 5 * 60 * 1000;
+/** For no-PID runs, repair when ALL running tasks have heartbeat stale beyond this threshold. */
+const NO_PID_HEARTBEAT_STALE_MS = 5 * 60 * 1000; // 5 minutes — same as heartbeat-gradient deadMs
 
 /**
  * Phase 1: Check if a result file already exists for the run.
@@ -31,14 +38,28 @@ function checkResultFile(
 	tasks: TeamTaskState[],
 ): { found: boolean; repaired: boolean } {
 	// Check if all tasks already have terminal status (result was written but manifest wasn't updated)
-	const allTerminal = tasks.length > 0 && tasks.every(
-		(t) => t.status === "completed" || t.status === "failed" || t.status === "cancelled" || t.status === "skipped" || t.status === "needs_attention",
-	);
+	const allTerminal =
+		tasks.length > 0 &&
+		tasks.every(
+			(t) =>
+				t.status === "completed" ||
+				t.status === "failed" ||
+				t.status === "cancelled" ||
+				t.status === "skipped" ||
+				t.status === "needs_attention",
+		);
 	if (allTerminal) {
 		// Sync agent records even when tasks are already terminal
 		// (e.g., a previous reconcile fixed tasks but crashed before updating agents)
 		for (const task of tasks) {
-			try { upsertCrewAgent(manifest, recordFromTask(manifest, task, "scaffold")); } catch { /* non-critical */ }
+			try {
+				upsertCrewAgent(
+					manifest,
+					recordFromTask(manifest, task, "scaffold"),
+				);
+			} catch {
+				/* non-critical */
+			}
 		}
 		return { found: true, repaired: false };
 	}
@@ -52,7 +73,10 @@ function checkResultFile(
  * written, treat the PID as alive even if process.kill returns false
  * (handles SIGKILL race where PID hasn't been recycled yet).
  */
-function checkPidLiveness(pid: number | undefined, stateRoot?: string): {
+function checkPidLiveness(
+	pid: number | undefined,
+	stateRoot?: string,
+): {
 	alive: boolean;
 	detail: string;
 } {
@@ -67,13 +91,18 @@ function checkPidLiveness(pid: number | undefined, stateRoot?: string): {
 		const heartbeatPath = path.join(stateRoot, "heartbeat.json");
 		try {
 			if (fs.existsSync(heartbeatPath)) {
-				const hb = JSON.parse(fs.readFileSync(heartbeatPath, "utf-8")) as { pid?: number; at?: number };
+				const hb = JSON.parse(
+					fs.readFileSync(heartbeatPath, "utf-8"),
+				) as { pid?: number; at?: number };
 				if (hb?.pid === pid && hb?.at) {
 					const ageMs = Date.now() - hb.at;
 					// Heartbeat written < 5 min ago → process was alive recently.
 					// Don't repair yet; let the next reconciliation cycle catch it.
 					if (ageMs < 5 * 60_000) {
-						return { alive: true, detail: `process dead but heartbeat ${Math.round(ageMs / 1000)}s old` };
+						return {
+							alive: true,
+							detail: `process dead but heartbeat ${Math.round(ageMs / 1000)}s old`,
+						};
 					}
 				}
 			}
@@ -101,18 +130,76 @@ function evaluateStaleness(
 		return { stale: false, reason: "updated_at_invalid" };
 	}
 	if (now - updatedAt > STALE_ALIVE_PID_MS) {
-		return { stale: true, reason: `alive_but_stale_${Math.round((now - updatedAt) / 3600_000)}h` };
+		return {
+			stale: true,
+			reason: `alive_but_stale_${Math.round((now - updatedAt) / 3600_000)}h`,
+		};
 	}
 	return { stale: false, reason: "alive_and_recent" };
 }
 
 function hasRecentActiveEvidence(tasks: TeamTaskState[], now: number): boolean {
 	return tasks.some((task) => {
-		if (task.status !== "running" && task.status !== "waiting") return false;
-		const heartbeatAt = task.heartbeat?.lastSeenAt ? new Date(task.heartbeat.lastSeenAt).getTime() : Number.NaN;
-		if (task.heartbeat?.alive !== false && Number.isFinite(heartbeatAt) && now - heartbeatAt <= ACTIVE_EVIDENCE_TTL_MS) return true;
-		const activityAt = task.agentProgress?.lastActivityAt ? new Date(task.agentProgress.lastActivityAt).getTime() : Number.NaN;
-		return Number.isFinite(activityAt) && now - activityAt <= ACTIVE_EVIDENCE_TTL_MS;
+		if (task.status !== "running" && task.status !== "waiting")
+			return false;
+		const heartbeatAt = task.heartbeat?.lastSeenAt
+			? new Date(task.heartbeat.lastSeenAt).getTime()
+			: Number.NaN;
+		if (
+			task.heartbeat?.alive !== false &&
+			Number.isFinite(heartbeatAt) &&
+			now - heartbeatAt <= ACTIVE_EVIDENCE_TTL_MS
+		)
+			return true;
+		const activityAt = task.agentProgress?.lastActivityAt
+			? new Date(task.agentProgress.lastActivityAt).getTime()
+			: Number.NaN;
+		return (
+			Number.isFinite(activityAt) &&
+			now - activityAt <= ACTIVE_EVIDENCE_TTL_MS
+		);
+	});
+}
+
+/**
+ * For no-PID runs: check if ALL running tasks have heartbeats stale beyond
+ * the no-PID heartbeat threshold. This detects zombie tasks where the worker
+ * process died but no PID was recorded (e.g. live-session /tmp/ workspaces).
+ * Tasks with no heartbeat AND no agent progress are considered NOT stale
+ * (they may be newly spawned and haven't reported yet).
+ */
+function allRunningTasksHeartbeatStale(
+	tasks: TeamTaskState[],
+	now: number,
+): boolean {
+	const runningTasks = tasks.filter(
+		(t) => t.status === "running" || t.status === "waiting",
+	);
+	if (runningTasks.length === 0) return false;
+	return runningTasks.every((task) => {
+		const heartbeatAt = task.heartbeat?.lastSeenAt
+			? new Date(task.heartbeat.lastSeenAt).getTime()
+			: Number.NaN;
+		const activityAt = task.agentProgress?.lastActivityAt
+			? new Date(task.agentProgress.lastActivityAt).getTime()
+			: Number.NaN;
+		// If no heartbeat AND no activity, we can't determine staleness — assume not stale
+		if (!Number.isFinite(heartbeatAt) && !Number.isFinite(activityAt))
+			return false;
+		// If heartbeat is recent enough, not stale
+		if (
+			Number.isFinite(heartbeatAt) &&
+			now - heartbeatAt <= NO_PID_HEARTBEAT_STALE_MS
+		)
+			return false;
+		// If agent progress is recent enough, not stale
+		if (
+			Number.isFinite(activityAt) &&
+			now - activityAt <= NO_PID_HEARTBEAT_STALE_MS
+		)
+			return false;
+		// Both present and both stale → this task is stale
+		return true;
 	});
 }
 
@@ -126,7 +213,11 @@ function repairStaleRun(
 ): TeamTaskState[] {
 	const now = new Date().toISOString();
 	const repairedTasks = tasks.map((task) => {
-		if (task.status === "running" || task.status === "queued" || task.status === "waiting") {
+		if (
+			task.status === "running" ||
+			task.status === "queued" ||
+			task.status === "waiting"
+		) {
 			return {
 				...task,
 				status: "cancelled" as const,
@@ -138,7 +229,14 @@ function repairStaleRun(
 	});
 	// Update agent records so widget sees cancelled status immediately
 	for (const task of repairedTasks) {
-		try { upsertCrewAgent(manifest, recordFromTask(manifest, task, "scaffold")); } catch { /* non-critical */ }
+		try {
+			upsertCrewAgent(
+				manifest,
+				recordFromTask(manifest, task, "scaffold"),
+			);
+		} catch {
+			/* non-critical */
+		}
 	}
 	return repairedTasks;
 }
@@ -183,8 +281,31 @@ export function reconcileStaleRun(
 				detail: "No PID recorded, but recent task heartbeat/progress exists; not repairing",
 			};
 		}
+		// No PID and no recent activity. If ALL running tasks have stale heartbeats
+		// (beyond NO_PID_HEARTBEAT_STALE_MS = 5min), repair immediately — the worker
+		// process is dead but we have no PID to check. This handles /tmp/ live-session
+		// workspaces where agents exit without calling submit_result.
+		if (allRunningTasksHeartbeatStale(tasks, now)) {
+			const repaired = repairStaleRun(
+				manifest,
+				tasks,
+				"no_pid_heartbeat_stale",
+			);
+			return {
+				runId,
+				verdict: "no_status",
+				repaired: true,
+				detail: `No PID; all running task heartbeats stale >${Math.round(NO_PID_HEARTBEAT_STALE_MS / 60_000)}min; repaired ${repaired.filter((t) => t.status === "cancelled").length} tasks`,
+				repairedTasks: repaired,
+			};
+		}
+		// Fall through: no recent activity but not all tasks stale enough yet.
+		// Check the longer STALE_ALIVE_PID_MS threshold for very old runs.
 		const updatedAt = new Date(manifest.updatedAt).getTime();
-		if (Number.isFinite(updatedAt) && now - updatedAt > STALE_ALIVE_PID_MS) {
+		if (
+			Number.isFinite(updatedAt) &&
+			now - updatedAt > STALE_ALIVE_PID_MS
+		) {
 			const repaired = repairStaleRun(manifest, tasks, "no_pid_stale");
 			return {
 				runId,
