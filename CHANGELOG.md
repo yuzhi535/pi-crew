@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.5.0] — Understand-Anything Patterns & New Features (2026-05-26)
+
+### New Features: P0-P6 from Understand-Anything Research
+
+#### P0: Auto-Setup .crew Directory
+- `ensureCrewDirectory()` creates full directory structure on first run
+- `gitignore-manager.ts` auto-updates `.gitignore` with `.crew/` entries
+- Creates: `state/runs`, `state/subagents`, `artifacts`, `cache`, `graphs`, `audit`
+- README.md explains `.crew` directory purpose
+
+#### P1: BM25 Agent/Team Search
+- `BM25Search` class with configurable k1/b parameters
+- `searchAgents(query)` — ranked agent search by name/description/skills
+- `searchTeams(query)` — ranked team search by name/description/roles
+
+#### P2: Team Onboarding Generator
+- `buildTeamOnboarding()` generates markdown from run history
+- Shows: past runs, stats, usage examples, available teams
+- `loadRunSummaries()` helper for run history loading
+
+#### P3: Task Explain Context
+- `handleExplain(runId, taskId)` — full run or individual task explanation
+- `buildTaskExplainContext()` — causal chain, layers, files produced
+- `formatTaskExplain()` — markdown output with why/what/connections
+
+#### P4: Unified Run Graph
+- `buildRunGraph()` — consolidates manifest + tasks into single graph
+- `saveRunGraph()` / `loadRunGraph()` — persist to `.crew/graphs/`
+- `listRunGraphs()` — enumerate archived graphs
+
+#### P5: Run Result Caching
+- `computeRunCacheKey()` — SHA-256 hash of goal+team+workflow
+- `getCachedRun()` / `saveRunToCache()` — TTL-based cache (default 1h)
+- `clearCache()` / `getCacheStats()` — cache management
+
+#### P6: Agent Checkpointing
+- `FileCheckpointStore` — checkpoints in `.crew/state/runs/<runId>/checkpoints/`
+- `saveCheckpoint()` / `loadCheckpoint()` / `clearCheckpoint()`
+- `hasCheckpoint()` / `listCheckpoints()` for recovery
+
+### Tests
+- 56 new unit tests (all passing)
+- Total: 1796 unit tests + 45 integration tests passing
+
+### Bug Fixes
+- Worktree test teardown: clean `.crew/` before git checks for clean repository
+
+---
+
 ## [0.4.0] — 9arm-skills Enforcement Patterns & Integration Tests (2026-05-26)
 
 ### Features
