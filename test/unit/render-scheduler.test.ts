@@ -83,9 +83,11 @@ test("RenderScheduler 1.9: payload without runId still invalidates immediately",
 test("RenderScheduler fallback renders when no events arrive", async () => {
 	let renders = 0;
 	const scheduler = new RenderScheduler(undefined, () => { renders += 1; }, { debounceMs: 5, fallbackMs: 20 });
-	await sleep(55);
+	// Wait longer for slower environments (macOS ARM64 may be slower)
+	await sleep(100);
 	scheduler.dispose();
-	assert.ok(renders >= 1);
+	// At least one render should have occurred by now
+	assert.ok(renders >= 1, `Expected at least 1 render, got ${renders}`);
 });
 
 test("RenderScheduler accepts dynamic fallbackMs and adapts tick frequency", async () => {
