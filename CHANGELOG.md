@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.4.0] — 9arm-skills Enforcement Patterns & Integration Tests (2026-05-26)
+
+### Features
+- **systematic-debugging: Refuse Gate** — Hard constraints before proposing fixes. Must verify repro exists, root cause known, and hypothesis falsified before any fix.
+- **systematic-debugging: Recite Ritual** — Psychological anchor at session start. Recite 4-step mantra before beginning any debug session.
+- **systematic-debugging: Falsify-First** — Phase 3 now requires disproof before proof. Run disproof experiments first to save time on wrong hypotheses.
+- **systematic-debugging: Breadcrumb Ledger** — Structured experiment tracking within debug sessions.
+- **multi-perspective-review: Simpler Alternative Pass** — Mandatory pre-review step to question if the change should exist at all.
+- **New skill: scrutinize** — Outsider-perspective review questioning intent before tracing code.
+- **New skill: post-mortem** — Engineering RCA documentation with 4 required inputs gate.
+- **skills/REFERENCE.md** — New documentation of skill chains, inventory, and anti-patterns.
+- **Trigger conditions** added to all major skill descriptions for better skill invocation matching.
+
+### Bug Fixes
+- **CI reliability** — Fixed flaky tests on macOS: crew-widget and render-scheduler timing issues resolved.
+- **Team-context import detection** — Fixed regex to correctly match only direct `/team-tool.ts` imports, not `/team-tool/context.ts`.
+
+### Tests
+- **New test-integration-check.ts** — Integration tests for core pi-crew functionality (agent/team/workflow discovery, fast-fix team run).
+- **1740 tests passing** across all platforms (Ubuntu, macOS, Windows).
+
+---
+
 ## [0.3.8] — Zombie Run Auto-Repair & Test Stability (2026-05-25)
 
 ### Features
