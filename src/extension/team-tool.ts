@@ -132,6 +132,7 @@ import { logInternalError } from "../utils/internal-error.ts";
 import {
 	BM25Search,
 } from "../utils/bm25-search.ts";
+import { projectCrewRoot } from "../utils/paths.ts";
 import {
 	type CacheControlDeps,
 	invalidateSnapshot,
@@ -1155,7 +1156,8 @@ export async function handleTeamTool(
 			if (!params.runId || !params.taskId) {
 				return result("Checkpoint requires runId and taskId.", { action: "checkpoint", status: "error" }, true);
 			}
-			const store = new FileCheckpointStore(params.runId);
+			const stateRoot = path.join(projectCrewRoot(ctx.cwd), "state", "runs", params.runId);
+			const store = new FileCheckpointStore(stateRoot);
 			const checkpoint = store.load(params.runId, params.taskId);
 			if (!checkpoint) {
 				return result("No checkpoint found.", { action: "checkpoint", status: "error" }, true);
