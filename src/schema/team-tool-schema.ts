@@ -59,6 +59,12 @@ export const TeamToolParams = Type.Object({
 				Type.Literal("settings"),
 				Type.Literal("steer"),
 				Type.Literal("health"),
+				Type.Literal("graph"),
+				Type.Literal("onboard"),
+				Type.Literal("explain"),
+				Type.Literal("cache"),
+				Type.Literal("checkpoint"),
+				Type.Literal("search"),
 			],
 			{ description: "Team action. Defaults to 'list' when omitted." },
 		),
@@ -222,7 +228,13 @@ export interface TeamToolParamsValue {
 		| "settings"
 		| "steer"
 		| "invalidate"
-		| "health";
+		| "health"
+		| "graph"
+		| "onboard"
+		| "explain"
+		| "cache"
+		| "checkpoint"
+		| "search";
 	resource?: "agent" | "team" | "workflow";
 	team?: string;
 	workflow?: string;

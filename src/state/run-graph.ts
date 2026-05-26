@@ -57,7 +57,6 @@ export function buildRunGraph(
       workflow: manifest.workflow,
       status: manifest.status,
       createdAt: manifest.createdAt,
-      completedAt: (manifest as Record<string, unknown>).completedAt,
     },
   });
   nodeIds.add(`run:${runId}`);
@@ -73,10 +72,7 @@ export function buildRunGraph(
       type: "task",
       name: task.role,
       metadata: {
-        phase: (task as Record<string, unknown>).phase,
         status: task.status,
-        agentModel: (task as Record<string, unknown>).agentModel,
-        usage: (task as Record<string, unknown>).usage,
         startedAt: task.startedAt,
         finishedAt: task.finishedAt,
       },
@@ -99,29 +95,14 @@ export function buildRunGraph(
       });
     }
 
-    // Edge from task to agent (if we have agent model info)
-    const agentModel = (task as Record<string, unknown>).agentModel as string | undefined;
-    if (agentModel) {
-      const agentId = `agent:${agentModel.replace(/[^a-zA-Z0-9-_]/g, "_")}`;
-      if (!nodeIds.has(agentId)) {
-        nodeIds.add(agentId);
-        nodes.push({ id: agentId, type: "agent", name: agentModel });
-      }
-      edges.push({
-        source: agentId,
-        target: taskId,
-        type: "runs",
-        weight: 0.9,
-      });
-    }
   }
 
-  // Group by layer (based on phase)
+  // Group by layer (based on phase or role)
   const layerMap = new Map<string, string[]>();
   for (const task of tasks) {
-    const phase = ((task as Record<string, unknown>).phase as string) ?? "unknown";
-    if (!layerMap.has(phase)) layerMap.set(phase, []);
-    layerMap.get(phase)!.push(`task:${task.id}`);
+    const layerName = task.adaptive?.phase ?? task.role;
+    if (!layerMap.has(layerName)) layerMap.set(layerName, []);
+    layerMap.get(layerName)!.push(`task:${task.id}`);
   }
 
   const layers: RunGraphLayer[] = [...layerMap.entries()].map(([name, nodeIdList]) => ({
@@ -135,7 +116,7 @@ export function buildRunGraph(
     team: manifest.team ?? "unknown",
     workflow: manifest.workflow ?? "unknown",
     createdAt: manifest.createdAt,
-    completedAt: (manifest as Record<string, unknown>).completedAt as string | undefined,
+    completedAt: manifest.updatedAt,
     status: manifest.status,
     nodes,
     edges,

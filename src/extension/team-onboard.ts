@@ -64,9 +64,7 @@ function loadRunSummaries(cwd: string, options: OnboardingOptions = {}): RunSumm
         team: raw.team,
         createdAt: raw.createdAt,
         completedAt: raw.completedAt ?? raw.updatedAt,
-        taskCount: (raw as Record<string, unknown>).tasks != null
-          ? ((raw as Record<string, unknown>).tasks as unknown[]).length
-          : 0,
+        taskCount: 0, // tasks stored separately, not in manifest
       });
     } catch {
       continue;

@@ -130,11 +130,15 @@ import { waitForRun } from "../runtime/run-tracker.ts";
 import { normalizeSkillOverride } from "../runtime/skill-instructions.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import {
+	BM25Search,
+} from "../utils/bm25-search.ts";
+import {
 	type CacheControlDeps,
 	invalidateSnapshot,
 } from "./team-tool/cache-control.ts";
 import { handleCancel, handleRetry } from "./team-tool/cancel.ts";
 import { handleDoctor } from "./team-tool/doctor.ts";
+import { handleExplain } from "./team-tool/explain.ts";
 import { handleHealthMonitor } from "./team-tool/health-monitor.ts";
 import {
 	handleArtifacts,
@@ -150,6 +154,17 @@ import {
 	handlePrune,
 	handleWorktrees,
 } from "./team-tool/lifecycle-actions.ts";
+import {
+	getCachedRun,
+	computeRunCacheKey,
+	getCacheStats,
+} from "../state/run-cache.ts";
+import {
+	loadRunGraph,
+	listRunGraphs,
+} from "../state/run-graph.ts";
+import { FileCheckpointStore } from "../runtime/checkpoint.ts";
+import { buildTeamOnboarding } from "./team-onboard.ts";
 import { handleParallel } from "./team-tool/parallel-dispatch.ts";
 import { handlePlan } from "./team-tool/plan.ts";
 import { handleRespond } from "./team-tool/respond.ts";
@@ -1089,6 +1104,67 @@ export async function handleTeamTool(
 			return handleHealthMonitor(ctx, params);
 		case "wait":
 			return handleWait(params, ctx);
+		case "graph": {
+			if (params.runId) {
+				const graph = loadRunGraph(ctx.cwd, params.runId);
+				return result(
+					graph ? JSON.stringify(graph, null, 2) : "No graph found for this run.",
+					{ action: "graph", status: graph ? "ok" : "error" },
+					!graph,
+				);
+			}
+			const graphs = listRunGraphs(ctx.cwd);
+			return result(
+				graphs.length ? `Available graphs:\n${graphs.join("\n")}` : "No graphs available.",
+				{ action: "graph", status: "ok" },
+			);
+		}
+		case "onboard": {
+			const team = params.team ?? "default";
+			const onboarding = buildTeamOnboarding(team, ctx.cwd);
+			return result(onboarding, { action: "onboard", status: "ok" });
+		}
+		case "explain": {
+			const explainResult = handleExplain(params, ctx.cwd);
+			return result(explainResult.text, { action: "explain", status: explainResult.isError ? "error" : "ok" }, explainResult.isError);
+		}
+		case "cache": {
+			if (params.goal) {
+				const key = computeRunCacheKey(
+					params.goal,
+					params.team ?? "default",
+					params.workflow ?? "default",
+					ctx.cwd,
+				);
+				const cached = getCachedRun(ctx.cwd, key);
+				if (cached) {
+					return result(
+						`Cached run found (${new Date(cached.cachedAt).toISOString()}): runId=${cached.runId}, status=${cached.status}, ${cached.tasks.length} tasks`,
+						{ action: "cache", status: "ok", data: { cacheKey: key, cacheHit: true, runId: cached.runId, status: cached.status, taskCount: cached.tasks.length } },
+					);
+				}
+				return result(`No cached result for key: ${key}`, { action: "cache", status: "ok", data: { cacheKey: key, cacheHit: false } });
+			}
+			const stats = getCacheStats(ctx.cwd);
+			return result(
+				`Cache stats: ${stats.entries} entries, ${stats.sizeBytes} bytes`,
+				{ action: "cache", status: "ok" },
+			);
+		}
+		case "checkpoint": {
+			if (!params.runId || !params.taskId) {
+				return result("Checkpoint requires runId and taskId.", { action: "checkpoint", status: "error" }, true);
+			}
+			const store = new FileCheckpointStore(params.runId);
+			const checkpoint = store.load(params.runId, params.taskId);
+			if (!checkpoint) {
+				return result("No checkpoint found.", { action: "checkpoint", status: "error" }, true);
+			}
+			return result(
+				`Checkpoint: step=${checkpoint.step}, progress=${checkpoint.progress}, savedAt=${new Date(checkpoint.savedAt).toISOString()}`,
+				{ action: "checkpoint", status: "ok", data: { checkpoint } },
+			);
+		}
 		default:
 			return result(
 				`Unknown action: ${action}`,

@@ -140,7 +140,6 @@ export async function searchAgents(query: string, options?: { limit?: number }):
       name: agent.name,
       description: agent.description ?? "",
       skills: (agent.skills ?? []).join(" "),
-      tags: (agent.tags ?? []).join(" "),
     },
     agent,
   }));
@@ -149,7 +148,6 @@ export async function searchAgents(query: string, options?: { limit?: number }):
     name: 3.0,
     description: 1.5,
     skills: 1.0,
-    tags: 1.0,
   });
 
   const results = engine.search(query, {
