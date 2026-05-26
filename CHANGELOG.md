@@ -1,6 +1,28 @@
 # Changelog
 
-## [0.5.0] — Understand-Anything Patterns & New Features (2026-05-26)
+## [0.5.1] — Integration + End-to-End Tests (2026-05-26)
+
+### Integration
+- **team-tool.ts**: Wire P1-P6 into switch statement
+  - `action='graph'` — load/save/list run graphs
+  - `action='onboard'` — team onboarding generator  
+  - `action='explain'` — task explain context
+  - `action='cache'` — run result caching lookup
+  - `action='checkpoint'` — checkpoint retrieval
+  - `action='search'` — BM25 ranked agent/team search
+- **team-tool-schema.ts**: Add 6 new actions to schema
+- **Type fixes**: run-graph.ts, run-cache.ts, checkpoint.ts, team-onboard.ts
+- **P0 .gitignore**: ensureCrewDirectory auto-updates .gitignore
+
+### Tests
+- 8/8 new action tests pass
+- 10/10 end-to-end feature tests pass
+- All 1796 unit + 45 integration passing
+- CI: Ubuntu/macOS/Windows all passing
+
+---
+
+## [0.5.0]
 
 ### New Features: P0-P6 from Understand-Anything Research
 
