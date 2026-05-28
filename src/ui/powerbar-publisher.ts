@@ -93,9 +93,10 @@ export function updatePiCrewPowerbar(events: EventBus, cwd: string, config?: Cre
 	if (!active.length) {
 		lastActiveKey = undefined;
 		lastProgressKey = undefined;
+		lastStepsKey = undefined;
 		safeEmit(events, "powerbar:update", { id: "pi-crew-active" });
 		safeEmit(events, "powerbar:update", { id: "pi-crew-progress" });
-		if (useStatusFallback) setStatusFallback(ctx, undefined);
+		safeEmit(events, "powerbar:update", { id: "pi-crew-steps" });
 		return;
 	}
 	const agents = active.flatMap((item) => item.agents);
@@ -138,7 +139,6 @@ export function updatePiCrewPowerbar(events: EventBus, cwd: string, config?: Cre
 		id: "pi-crew-active",
 		icon: "⚙",
 		text: `⚙ ${crewStatus}${liveSuffix}${notificationText}${activeSuffix ? ` · ${activeSuffix}` : ""}`,
-		text: unifiedText,
 		suffix: activeSuffix,
 		color: running ? "accent" : "warning",
 	} as const;
@@ -171,8 +171,8 @@ export function updatePiCrewPowerbar(events: EventBus, cwd: string, config?: Cre
 		lastStepsKey = stepsKey;
 		safeEmit(events, "powerbar:update", stepsPayload);
 	}
-	// setStatusFallback provides a unified status when powerbar consumer exists but widget needs fallback
-	if (useStatusFallback) setStatusFallback(ctx, unifiedText);
+	// Never call setStatusFallback - crew-widget manages "pi-crew" status with its own widget format
+	// Powerbar only emits events; it does not set status directly
 }
 
 // --- Dedup state: skip emit if segment data unchanged ---
@@ -296,14 +296,13 @@ export function disposePowerbarCoalescer(): void {
 	powerbarCoalescer.dispose();
 }
 
-export function clearPiCrewPowerbar(events: EventBus, ctx?: StatusContext): void {
+export function clearPiCrewPowerbar(events: EventBus): void {
 	lastActiveKey = undefined;
 	lastProgressKey = undefined;
 	lastStepsKey = undefined;
 	safeEmit(events, "powerbar:update", { id: "pi-crew-active" });
 	safeEmit(events, "powerbar:update", { id: "pi-crew-progress" });
 	safeEmit(events, "powerbar:update", { id: "pi-crew-steps" });
-	setStatusFallback(ctx, undefined);
 }
 
 /** Reset dedup state on session lifecycle events. */

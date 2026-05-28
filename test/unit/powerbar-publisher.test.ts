@@ -95,7 +95,8 @@ test("powerbar mirrors status when no powerbar consumer is registered", () => {
 		saveCrewAgents(created.manifest, [{ id: `${created.manifest.runId}:01`, runId: created.manifest.runId, taskId: "one", agent: "worker", role: "worker", runtime: "child-process", status: "running", startedAt: created.manifest.createdAt, progress: { recentTools: [], recentOutput: [], toolCount: 0, activityState: "active" } }]);
 		updatePiCrewPowerbar(bus, cwd, {}, undefined, undefined, ctx);
 		assert.ok(events.some((item) => item.event === "powerbar:update"));
-		assert.ok(statuses.some((item) => item.key === "pi-crew" && item.text?.includes("1 running")));
+		// setStatusFallback is intentionally NOT called - crew-widget manages "pi-crew" status
+		assert.equal(statuses.length, 0);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 		fs.rmSync(home, { recursive: true, force: true });
@@ -138,6 +139,8 @@ test("powerbar active segment includes notification badge", () => {
 		fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
 		const events: Array<{ event: string; data: unknown }> = [];
 		const bus = { emit: (event: string, data: unknown) => events.push({ event, data }) };
+		// Reset dedup state so this test always emits fresh payload
+		resetPowerbarDedupState();
 		const team = { name: "badge-team", description: "", roles: [{ name: "worker", agent: "worker" }], source: "test", filePath: "builtin" } as never;
 		const workflow = { name: "badge-workflow", description: "", steps: [{ id: "one", role: "worker" }], source: "test", filePath: "builtin" } as never;
 		const created = createRunManifest({ cwd, team, workflow, goal: "powerbar badge" });
