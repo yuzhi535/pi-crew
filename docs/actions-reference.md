@@ -9,15 +9,20 @@ Tool `team` là công cụ chính mà pi-crew đăng ký vào Pi. Mọi thao tá
 | `recommend` | Gợi ý team/workflow phù hợp | Bắt đầu khi chưa chắc chọn gì |
 | `run` | Tạo run và thực thi workflow | Thao tác chính |
 | `plan` | Preview workflow không chạy tasks | Dry-run planning |
+| `orchestrate` | Execute từ plan document | Tự động hóa plan |
+| `schedule` | Lên lịch recurring runs | Tự động định kỳ |
+| `scheduled` | List scheduled jobs | Xem lịch trình |
 | `status` | Đọc trạng thái run | Theo dõi tiến độ |
 | `summary` | Đọc/ghi run summary artifact | Tổng kết |
 | `cancel` | Hủy queued/running work | Dừng run |
 | `resume` | Re-queue failed/cancelled tasks | Tiếp tục run |
 | `list` | List teams, agents, workflows, runs | Khám phá tài nguyên |
 | `get` | Inspect agent/team/workflow | Xem chi tiết |
+| `search` | BM25 ranked agent/team discovery | Tìm kiếm thông minh |
 | `events` | Đọc event log | Debug/audit |
 | `artifacts` | List run artifacts | Xem outputs |
 | `worktrees` | List run worktree metadata | Kiểm tra worktrees |
+| `graph` | Load/save/list run graphs | Trực quan hóa |
 | `cleanup` | Xóa run worktrees | Dọn dẹp |
 | `forget` | Xóa run state/artifacts | Xóa hẳn (cần `confirm`) |
 | `prune` | Xóa nhiều old finished runs | Dọn dẹp hàng loạt |
@@ -179,6 +184,88 @@ Giống `run` nhưng **không spawn workers**. Xem trước task graph sẽ tạ
   "action": "plan",
   "team": "implementation",
   "goal": "Add authentication module"
+}
+```
+
+---
+
+### `orchestrate` — Execute từ plan document
+
+Thực thi workflow từ plan document có tag sections:
+
+```markdown
+# Design Phase
+<!-- tag: design -->
+Design the authentication system...
+
+# Implementation
+<!-- tag: impl -->
+Implement the JWT auth...
+```
+
+```json
+{
+  "action": "orchestrate",
+  "planPath": "./plan.md"
+}
+```
+
+TAG→chain mapping:
+- `design` → planner, architect
+- `impl` → tdd-guide, lang-reviewer
+- `security` → security-reviewer, lang-reviewer
+- `build` → build-error-resolver
+- `test` → test-engineer, verifier
+- `review` → reviewer
+
+---
+
+### `schedule` — Lên lịch recurring runs
+
+Tạo scheduled job với cron, interval, hoặc once:
+
+```json
+{
+  "action": "schedule",
+  "team": "review",
+  "goal": "Weekly security review",
+  "cron": "0 9 * * MON"
+}
+```
+
+Params: `cron`, `interval` (ms), `once` (ISO timestamp)
+
+---
+
+### `scheduled` — List scheduled jobs
+
+```json
+{
+  "action": "scheduled"
+}
+```
+
+---
+
+### `graph` — Load/save/list run graphs
+
+```json
+{
+  "action": "graph",
+  "runId": "team_..."
+}
+```
+
+---
+
+### `search` — BM25 ranked discovery
+
+Tìm kiếm agents/teams/workflows với BM25 ranking:
+
+```json
+{
+  "action": "search",
+  "goal": "security audit"
 }
 ```
 

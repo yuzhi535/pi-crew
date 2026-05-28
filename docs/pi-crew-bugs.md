@@ -1,3 +1,9 @@
+# Historical Bug Reports (v0.2.x)
+
+> **Current version: v0.5.2** — See [CHANGELOG.md](../CHANGELOG.md) for all bug fixes.
+
+---
+
 # pi-crew v0.2.20 — Bug Report & Fixes
 
 **Ngày:** 2026-05-19  

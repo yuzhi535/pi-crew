@@ -8,10 +8,15 @@ Slash commands là thao tác thủ công từ Pi chat. Autonomous tool use qua `
 |---------|-------|
 | `/teams` | Liệt kê teams, agents, workflows, recent runs |
 | `/team-run [options] <goal>` | Chạy team workflow |
+| `/team-orchestrate <planPath>` | Execute từ plan document |
+| `/team-schedule [options]` | Lên lịch recurring run |
+| `/team-scheduled` | List scheduled jobs |
 | `/team-cancel <runId>` | Hủy run |
 | `/team-status <runId>` | Xem trạng thái |
 | `/team-summary <runId>` | Xem/ghi summary |
 | `/team-resume <runId>` | Tiếp tục run đã dừng |
+| `/team-search <query>` | BM25 ranked discovery |
+| `/team-graph <runId>` | Load/save/list run graphs |
 | `/team-events <runId>` | Xem event log |
 | `/team-artifacts <runId>` | Xem artifacts |
 | `/team-worktrees <runId>` | Xem worktree metadata |
