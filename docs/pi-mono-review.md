@@ -1,8 +1,10 @@
-# pi-mono Review: Full May 2026 Analysis (Source-Level)
+# pi-mono Review: Full May 2026 Analysis
 
 **Date:** 2026-05-28  
 **Reviewed:** Direct source reading of `packages/agent/`, `packages/ai/`, `packages/coding-agent/`  
 **Source:** `origin/main` (up to date)
+
+> **Focused coding-agent analysis:** See [`docs/coding-agent-optimization.md`](./coding-agent-optimization.md) for actionable optimization opportunities for pi-crew.
 
 ---
 
