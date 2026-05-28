@@ -150,6 +150,8 @@ export interface ChildPiRunInput {
 	inheritContext?: boolean;
 	/** Pass to pi to mark certain commands as context-excluded. Default: false */
 	excludeContextBash?: boolean;
+	/** pi session ID for session naming (aligns with pi-crew run ID) */
+	sessionId?: string;
 }
 
 export interface ChildPiRunResult {

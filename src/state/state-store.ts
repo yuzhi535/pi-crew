@@ -12,6 +12,7 @@ import { assertSafePathId, resolveContainedRelativePath, resolveRealContainedPat
 import { withRunLock } from "./locks.ts";
 import type { TeamConfig } from "../teams/team-config.ts";
 import type { WorkflowConfig } from "../workflows/workflow-config.ts";
+import { toPiSessionId } from "../utils/session-utils.ts";
 
 export interface RunPaths {
 	runId: string;
@@ -148,6 +149,7 @@ export function createRunManifest(params: {
 	const manifest: TeamRunManifest = {
 		schemaVersion: 1,
 		runId: paths.runId,
+		sessionId: toPiSessionId(paths.runId),
 		team: params.team.name,
 		workflow: params.workflow?.name,
 		goal: params.goal,

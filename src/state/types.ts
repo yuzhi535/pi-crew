@@ -156,6 +156,8 @@ export interface CrewAttentionEventData {
 export interface TeamRunManifest {
 	schemaVersion: 1;
 	runId: string;
+	/** pi session ID aligned with run ID for cross-referencing (e.g., "crew-team20260528") */
+	sessionId?: string;
 	team: string;
 	workflow?: string;
 	goal: string;
