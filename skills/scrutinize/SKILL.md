@@ -1,8 +1,8 @@
 ---
 name: scrutinize
-description: "Outsider-perspective review questioning intent before tracing code. Use when asking: should this even exist?, is there a simpler way?, get a second opinion, before deep code review. Triggers: scrutinize this, question this, is there a better way?, simplify this, overkill?, too complex."
----
+description: "\"Outsider-perspective review questioning intent before tracing code. Use when asking: should this even exist?, is there a simpler way?, get a second opinion, before deep code review. Triggers: scrutinize this, question this, is there a better way?, simplify this, overkill?, too complex.\""
 
+---
 # Scrutinize
 
 Stand outside the change and ask whether it should exist at all, then verify it actually does what it claims end-to-end.
@@ -57,6 +57,18 @@ Severity:
 - low: polish, maintainability
 
 Close with verdict: **ship / fix-then-ship / rework / reject** — with single biggest reason.
+
+## Enforcement — Scrutinize Gate
+
+**Before reporting scrutiny findings, verify:**
+
+- [ ] Simpler-alternative pass completed (delete, use existing, smaller change, different layer)
+- [ ] Intent stated in one sentence in your own words
+- [ ] Code traced end-to-end (not just diff lines)
+- [ ] Verdict given: ship / fix-then-ship / rework / reject
+- [ ] Every claim cited with specific path/file/line evidence
+
+If ANY answer is NO → Stop. Complete scrutiny requirements before reporting.
 
 ## Rules
 

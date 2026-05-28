@@ -1,8 +1,8 @@
 ---
 name: workspace-isolation
-description: "Workspace isolation boundaries. Use when ensuring agents from workspace A cannot access workspace B, or worktree-based parallel execution. Triggers: workspace isolation, cross-workspace access, escape boundary, worktree safety."
----
+description: "\"Workspace isolation boundaries. Use when ensuring agents from workspace A cannot access workspace B, or worktree-based parallel execution. Triggers: workspace isolation, cross-workspace access, escape boundary, worktree safety.\""
 
+---
 # workspace-isolation
 
 pi-crew enforces workspace isolation so that agents, runs, and live sessions from one project folder cannot be accessed from another. The workspace boundary is `manifest.cwd` — the directory where a run was initiated.
@@ -157,6 +157,19 @@ const DEFAULT_PATHS = {
 
 All paths are resolved relative to `manifest.cwd`, ensuring state stays under the project root.
 
+## Enforcement — Workspace Isolation Gate
+
+**Before performing cross-workspace operations, verify:**
+
+- [ ] workspaceId carried from manifest.cwd through all operations
+- [ ] Live agent operations filtered by workspaceId (list, steer, follow-up, stop, resume)
+- [ ] resolveContainedPath used (not startsWith) for path validation
+- [ ] resolveRealContainedPath used for symlink detection
+- [ ] Worktree paths under <repo-root>/.worktrees/ (never outside workspace)
+- [ ] Cross-session cancel/respond rejected (force=true only when explicit)
+
+If ANY answer is NO → Stop. Verify workspace isolation before proceeding.
+
 ## Anti-patterns
 
 - **Passing raw cwd without validation**: Always use `resolveContainedPath` to ensure paths stay under workspace root.
@@ -164,8 +177,6 @@ All paths are resolved relative to `manifest.cwd`, ensuring state stays under th
 - **Symlink traversal**: Use `resolveRealContainedPath` to resolve symlinks and detect escape attempts.
 - **Worktree name collision**: Use deterministic names from run/task IDs. Never accept user-controlled branch names.
 - **Dirty worktree removal**: Never force-remove worktrees with uncommitted changes unless explicitly confirmed.
-
----
 
 ## Source patterns
 
@@ -176,8 +187,6 @@ All paths are resolved relative to `manifest.cwd`, ensuring state stays under th
 - `src/state/state-store.ts` — initRunManifest with cwd, manifest.cwd
 - `src/worktree/worktree-manager.ts` — prepareTaskWorkspace, assertCleanLeader, linkNodeModulesIfPresent
 - `src/config/defaults.ts` — DEFAULT_PATHS (state under project root)
-
----
 
 ## Verification
 

@@ -1,8 +1,8 @@
 ---
 name: orchestration
-description: "Multi-phase orchestration for planners and executors. Use when decomposing complex tasks into parallel phases, dispatching workers, verifying gates, and iterating to closure. Triggers: orchestrate this, coordinate these tasks, run this multi-phase, dispatch workers, coordinate team."
----
+description: "\"Multi-phase orchestration for planners and executors. Use when decomposing complex tasks into parallel phases, dispatching workers, verifying gates, and iterating to closure. Triggers: orchestrate this, coordinate these tasks, run this multi-phase, dispatch workers, coordinate team.\""
 
+---
 # orchestration
 
 Use this skill when orchestrating multi-phase tasks across pi-crew teams and workers.
@@ -95,6 +95,19 @@ Maintain the original scope exactly. Không mở rộng scope vì "thấy thêm 
 - Run the full gate set one more time after all phases complete.
 - This is the final safety net — typecheck, tests, lint, everything.
 - Only report DONE when final verification is green.
+
+## Enforcement — Orchestration Gate
+
+**Before launching a new phase, verify:**
+
+- [ ] Full work surface enumerated (all files, symbols, subsystems known)
+- [ ] Phase tasks are independent (disjoint file scope, no edit conflicts)
+- [ ] Each worker has explicit file ownership (no two workers same file)
+- [ ] Verification gates defined for phase completion
+- [ ] Phase gate passed (typecheck, tests, lint green) before advancing
+- [ ] Respawn workers for broken work (do not absorb/fix yourself)
+
+If ANY answer is NO → Stop. Complete planning before dispatching.
 
 ## Anti-patterns
 

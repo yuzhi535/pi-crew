@@ -1,8 +1,8 @@
 ---
 name: systematic-debugging
-description: "Four-phase debugging discipline with refuse gates. Use when encountering a bug, test failure, blocked run, provider error, stale state, crash, or unexpected behavior. Triggers: debug this, investigate, fix this bug, something is broken, crash, error, test failed, it broke, not working, unexpected."
----
+description: "\"Four-phase debugging discipline with refuse gates. Use when encountering a bug, test failure, blocked run, provider error, stale state, crash, or unexpected behavior. Triggers: debug this, investigate, fix this bug, something is broken, crash, error, test failed, it broke, not working, unexpected.\""
 
+---
 # systematic-debugging
 
 Core principle: no fixes without root-cause investigation first. Symptom patches create new bugs and hide the real failure.
@@ -20,8 +20,6 @@ Before beginning any debug session, recite these four steps:
 
 If the user says "skip the ritual" → skip the recitation but still apply the four phases silently.
 
----
-
 ## Refuse Gate — Do NOT Proceed Without These
 
 Before proposing ANY fix:
@@ -36,8 +34,6 @@ If ANY answer is NO:
 → Do not propose a fix.
 
 Exception: if the user explicitly says "just patch the symptom" — proceed but flag it as a symptom patch, not a root-cause fix.
-
----
 
 ## Four Phases
 

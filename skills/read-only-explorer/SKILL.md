@@ -1,8 +1,8 @@
 ---
 name: read-only-explorer
-description: Read-only exploration and audit workflow. Use for explorer, analyst, reviewer, and source-audit roles that must inspect code without modifying files.
----
+description: "Read-only exploration and audit workflow. Use for explorer, analyst, reviewer, and source-audit roles that must inspect code without modifying files. Triggers: explore code, audit source, review code, analyze codebase, source audit."
 
+---
 # read-only-explorer
 
 Use this skill for explorer, analyst, reviewer, and source-audit roles. These roles must inspect code without modifying it.
@@ -209,6 +209,18 @@ For each step, identify:
 
 Always label uncertainty clearly. Use "may", "might", "could" for inference; "is", "shows", "contains" for evidence.
 
+## Enforcement — Read-Only Explorer Gate
+
+**Before reporting findings, verify:**
+
+- [ ] No files edited, written, or deleted (read-only contract maintained)
+- [ ] Findings include: path, line, evidence, severity, impact, recommendation
+- [ ] Exact files inspected recorded with paths and line numbers
+- [ ] Direct evidence distinguished from inference (cite vs guess)
+- [ ] If implementation needed, recommend (do not modify code)
+
+If ANY answer is NO → Stop. Adhere to read-only contract.
+
 ## Anti-patterns
 
 - **Editing during exploration**: If you need to add logging or print statements, use a separate test script instead of modifying source files.
@@ -218,8 +230,6 @@ Always label uncertainty clearly. Use "may", "might", "could" for inference; "is
 - **Not recording files inspected**: Without exact paths, findings can't be verified.
 - **Inference as fact**: If unsure, mark it as inference.
 
----
-
 ## Source patterns
 
 - `src/runtime/task-runner.ts` — task execution pipeline
@@ -228,8 +238,6 @@ Always label uncertainty clearly. Use "may", "might", "could" for inference; "is
 - `src/state/event-log.ts` — event logging system
 - `src/extension/team-tool/` — API and tool handling
 - `src/ui/` — widget and TUI rendering
-
----
 
 ## Verification
 

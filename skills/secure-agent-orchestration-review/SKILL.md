@@ -1,8 +1,8 @@
 ---
 name: secure-agent-orchestration-review
-description: Use when reviewing delegation, skill loading, tool access, worker prompts, artifacts, runtime config, state, ownership, or subprocess execution.
----
+description: "Use when reviewing delegation, skill loading, tool access, worker prompts, artifacts, runtime config, state, ownership, or subprocess execution. Triggers: review delegation, check skill security, audit prompts, security review, orchestration audit."
 
+---
 # secure-agent-orchestration-review
 
 Core principle: every delegated worker crosses trust boundaries. Safe orchestration requires contained paths, explicit ownership, scoped tools, non-invasive defaults, and prompt-injection resistance.
@@ -40,6 +40,26 @@ Review:
 - Skills should be loaded by safe name and source-labeled without absolute path disclosure.
 - Worker prompts should state instruction precedence and treat artifacts as data.
 
+## Enforcement — Secure Agent Orchestration Review Gate
+
+**Before reporting security findings, verify:**
+
+- [ ] All trust boundaries examined (parent↔child, user↔task packet, project↔package skills, etc.)
+- [ ] Must-check findings covered: unsafe defaults, path containment, prompt injection, secrets, destructive commands, ownership races, supply chain
+- [ ] Finding format complete: severity, path/symbol, scenario, fix, verification
+- [ ] Must-fix security issues separated from hardening suggestions
+- [ ] Verification commands provided for each finding
+
+If ANY answer is NO → Stop. Complete security review before reporting.
+
 ## Finding Format
 
 Include severity, path/symbol, scenario, fix, and verification. Separate must-fix security issues from hardening suggestions.
+
+## Anti-Patterns
+
+- **Don't** skip checking for unsafe defaults in configuration
+- **Don't** trust agent output without verifying path containment
+- **Don't** skip prompt injection checks when processing user input
+- **Don't** skip secrets detection in environment and config files
+- **Don't** skip checking for ownership race conditions in concurrent operations

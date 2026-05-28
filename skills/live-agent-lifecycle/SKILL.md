@@ -1,8 +1,8 @@
 ---
 name: live-agent-lifecycle
-description: Live agent registration, workspace isolation, termination, and eviction workflow. Use when tracking live agents, debugging ghost agents, or understanding workspace boundaries.
----
+description: "Live agent registration, workspace isolation, termination, and eviction workflow. Use when tracking live agents, debugging ghost agents, or understanding workspace boundaries. Triggers: register agent, terminate agent, evict stale, ghost agent, workspace isolation."
 
+---
 # live-agent-lifecycle
 
 Live agents are real-time, in-memory worker sessions managed by `LiveAgentManager` (`src/runtime/live-agent-manager.ts`). They are distinct from `CrewAgentRecord` files on disk — live agents provide real-time activity (tool names, response text, turn count) while agent records are durable snapshots.
@@ -33,8 +33,6 @@ interface LiveAgentHandle {
 
 The in-memory `liveAgents` Map stores all active handles. It is never persisted — on Pi restart, the Map is empty and agents are re-created from agent records.
 
----
-
 ## Registration
 
 `registerLiveAgent(input, eventLogFn?, eventsPath?)` is called when a live session worker starts. It:
@@ -48,8 +46,6 @@ Key caller sites:
 - `live-session-runtime.ts` — when a live session agent starts
 - `live-executor.ts` — when spawning a live task
 - (workspaceId is passed through the entire call chain)
-
----
 
 ## Workspace Isolation
 
@@ -158,6 +154,18 @@ task.completed → upsertCrewAgent → agents.json updated
 ```
 
 ---
+
+## Enforcement — Live Agent Lifecycle Gate
+
+**Before terminating or evicting live agents, verify:**
+
+- [ ] Agent handle status is terminal (not running/queued/waiting) for eviction
+- [ ] Handle age exceeds STALE_HANDLE_MS (10 minutes) for eviction
+- [ ] workspaceId matches current workspace for cross-workspace prevention
+- [ ] Agent record sync completed before handle eviction (upsertCrewAgent called)
+- [ ] Termination called in all exit paths (finally blocks, crash-recovery)
+
+If ANY answer is NO → Stop. Verify lifecycle state before mutation.
 
 ## Anti-patterns
 

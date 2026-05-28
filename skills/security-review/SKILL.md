@@ -1,7 +1,12 @@
+---
+name: security-review
+description: "\"Security review patterns with audit and detection authoring. Use when reviewing code security, running compliance audits, building detection rules, or vulnerability assessments. Triggers: security review, vulnerability scan, audit, pen test, build detection rule, compliance check.\""
+
+---
 # Security Review Skill
 
-**Version:** 1.0.0  
-**Author:** pi-crew team  
+**Version:** 1.0.0
+**Author:** pi-crew team
 **Source:** `source/Anthropic-Cybersecurity-Skills/` distillation
 
 ## Overview
@@ -16,6 +21,147 @@ Trigger this skill when:
 - Keywords: security, vulnerability, auth, owasp, injection, xss, csrf, exploit
 - Actions: `team action='run', team='review'`
 - High-risk tasks routed by autonomous policy
+
+## Audit Finding Prioritization (from benchmark-based auditing)
+
+Use audit frameworks to systematically assess security posture:
+
+### Audit Workflow
+
+```markdown
+## Audit Process
+
+1. **Select Standard** → [CIS, OWASP-Top10, SOC2, NIST, custom]
+2. **Identify Controls** → Which security controls to check
+3. **Run Checks** → Automated (Semgrep, npm audit) or manual inspection
+4. **Document Findings** → [passed, failed, warning, info]
+5. **Calculate Score** → Compliance: [X/Y passed as percentage]
+6. **Prioritize** → By risk: [Critical, High, Medium, Low]
+7. **Remediate** → Fix in priority order
+8. **Verify** → Confirm fixes resolved findings
+```
+
+### Audit Finding Structure
+
+```yaml
+audit_finding:
+  control_id: string          # e.g., "CIS-1.1", "OWASP-A1"
+  control_name: string         # Human-readable name
+  status: [pass|fail|warning|info|not_applicable]
+  severity: [critical|high|medium|low]
+  evidence:
+    - file: string            # File with issue
+      line: number
+      description: string
+  recommendation: string     # How to fix
+  effort: [low|medium|high]  # Implementation effort
+  benefit: [low|medium|high] # Security improvement
+```
+
+### Prioritization Matrix
+
+| Severity \ Effort | Low | Medium | High |
+|-------------------|-----|--------|------|
+| **Critical** | Fix now | Fix now | Priority |
+| **High** | Fix now | Priority | Schedule |
+| **Medium** | Priority | Schedule | Later |
+| **Low** | Schedule | Later | Later |
+
+Sort by: severity DESC, effort ASC, benefit DESC
+
+### Audit Check Examples
+
+```bash
+# OWASP Top 10 check
+semgrep --config=owasp-top-10 .
+
+# Dependency audit
+npm audit --audit-level=high
+
+# Secrets detection
+trufflehog3 filesystem .
+
+# CIS Benchmark (cloud)
+prowler aws --output-format json
+```
+
+## Detection Signature Authoring (from detection rule building)
+
+Build detection rules to identify vulnerabilities and attack patterns:
+
+### Detection Workflow
+
+```markdown
+## Detection Authoring Process
+
+1. **Identify Target** → What to detect: [vulnerability, pattern, anomaly]
+2. **Define Source** → Where to look: [files, logs, events, network]
+3. **Create Pattern** → Match logic: [regex, AST pattern, rule]
+4. **Tune** → Adjust thresholds: [reduce noise, increase sensitivity]
+5. **Test** → Validate: [true positive, false positive rate]
+6. **Deploy** → Activate monitoring: [hook, alert, block]
+7. **Monitor** → Track: [alerts triggered, quality]
+```
+
+### Detection Rule Structure
+
+```yaml
+detection:
+  name: string
+  description: string
+  severity: [critical|high|medium|low]
+  target:
+    type: [vulnerability|pattern|anomaly]
+    techniques: [MITRE ATT&CK IDs]
+  source:
+    - type: [file|log|network|event]
+      locations: [path, glob, endpoint]
+  pattern:
+    type: [regex|AST|signature|heuristic]
+    match: string_or_structure
+    exclude: [false_positive_patterns]
+  threshold:
+    count: int
+    time_window: duration
+  response:
+    alert: [severity, message]
+    block: boolean
+    log: boolean
+  tuning:
+    false_positives: [known_noise]
+    sensitivity: [high|medium|low]
+  validation:
+    test_cases:
+      - input: string
+        expected: [match|no_match]
+    true_positive_rate: float
+    false_positive_rate: float
+```
+
+### Detection Rule Examples
+
+```yaml
+# SQL Injection Detection
+detection:
+  name: sql-injection-pattern
+  severity: critical
+  pattern:
+    type: regex
+    match: '(union|select|insert|update|delete).*from'
+    exclude:
+      - '// comment with select'
+      - 'userProvidedQuery = "safe_value"'
+
+# Log4j Detection (CVE-2021-44228)
+  pattern:
+    type: regex
+    match: '\$\{jndi:ldap://'
+
+# Sensitive Data in Logs
+  pattern:
+    type: regex
+    match: '(password|secret|token|key)\s*[=:]\s*["\']?[\w+/]{20,}'
+```
 
 ## ENFORCE
 
@@ -94,10 +240,10 @@ import { assertSafePathId, resolveContainedPath } from '../utils/safe-paths.ts';
 function safeFileOperation(path: string, cwd: string): SafePathResult {
   // Step 1: Validate path ID format
   assertSafePathId(path);
-  
+
   // Step 2: Resolve to absolute with containment
   const resolved = resolveContainedPath(path, cwd);
-  
+
   // Step 3: Verify resolved path is within cwd
   if (!resolved.startsWith(cwd)) {
     return {
@@ -106,7 +252,7 @@ function safeFileOperation(path: string, cwd: string): SafePathResult {
       resolved: undefined,
     };
   }
-  
+
   return {
     safe: true,
     resolved,
@@ -135,7 +281,7 @@ function validateNpmPackage(manifest: PackageManifest): ValidationResult {
       evidence: `Package name similar to: ${suspiciousNames.join(', ')}`,
     };
   }
-  
+
   // Check for post-install scripts
   if (manifest.scripts?.postinstall && !isTrustedSource(manifest)) {
     return {
@@ -144,7 +290,7 @@ function validateNpmPackage(manifest: PackageManifest): ValidationResult {
       evidence: 'Post-install script detected',
     };
   }
-  
+
   // Check dependencies
   const dangerousDeps = findDangerousDependencies(manifest.dependencies);
   if (dangerousDeps.length > 0) {
@@ -154,7 +300,7 @@ function validateNpmPackage(manifest: PackageManifest): ValidationResult {
       evidence: dangerousDeps,
     };
   }
-  
+
   return { severity: 'pass', category: 'supply-chain', evidence: null };
 }
 ```
@@ -202,7 +348,7 @@ const RACE_CONDITION_PATTERNS = [
 
 function detectRaceConditions(code: string): Finding[] {
   const findings: Finding[] = [];
-  
+
   // Check for file operation races
   for (const { pattern, severity } of RACE_CONDITION_PATTERNS) {
     if (pattern.test(code)) {
@@ -214,7 +360,7 @@ function detectRaceConditions(code: string): Finding[] {
       });
     }
   }
-  
+
   // Check for timing-sensitive operations
   if (code.includes('setTimeout') && code.includes('auth')) {
     findings.push({
@@ -223,7 +369,7 @@ function detectRaceConditions(code: string): Finding[] {
       recommendation: 'Add constant-time comparison for auth checks',
     });
   }
-  
+
   return findings;
 }
 ```
@@ -242,7 +388,7 @@ interface AuthPattern {
 
 function detectAuthAnomalies(sessions: AuthPattern[]): Finding[] {
   const findings: Finding[] = [];
-  
+
   // Brute force detection
   for (const session of sessions) {
     if (session.failures > 5) {
@@ -252,7 +398,7 @@ function detectAuthAnomalies(sessions: AuthPattern[]): Finding[] {
         evidence: `${session.failures} auth failures from ${session.source}`,
       });
     }
-    
+
     // Token reuse detection
     if (session.timestamp < Date.now() - 3600000) {
       findings.push({
@@ -262,9 +408,9 @@ function detectAuthAnomalies(sessions: AuthPattern[]): Finding[] {
       });
     }
   }
-  
+
   // Session fixation
-  const predictableIds = sessions.filter(s => 
+  const predictableIds = sessions.filter(s =>
     /^(session|team|run)_[a-z0-9]{8}$/i.test(s.sessionId)
   );
   if (predictableIds.length > 0) {
@@ -274,7 +420,7 @@ function detectAuthAnomalies(sessions: AuthPattern[]): Finding[] {
       evidence: 'Predictable session ID pattern detected',
     });
   }
-  
+
   return findings;
 }
 ```
@@ -295,7 +441,7 @@ function detectToolAbuse(metrics: ToolMetrics[]): Finding[] {
   const findings: Finding[] = [];
   const RATE_THRESHOLD = 10; // calls per minute
   const BURST_THRESHOLD = 20; // calls in 30 seconds
-  
+
   for (const metric of metrics) {
     // Rate limiting
     const rate = metric.callCount / (metric.timeWindow / 60000);
@@ -307,7 +453,7 @@ function detectToolAbuse(metrics: ToolMetrics[]): Finding[] {
         recommendation: 'Implement rate limiting or throttling',
       });
     }
-    
+
     // Burst detection
     if (metric.callCount > BURST_THRESHOLD && metric.timeWindow < 30000) {
       findings.push({
@@ -318,7 +464,7 @@ function detectToolAbuse(metrics: ToolMetrics[]): Finding[] {
       });
     }
   }
-  
+
   return findings;
 }
 ```
@@ -344,7 +490,7 @@ function validateSkillPath(path: string): ValidationResult {
       category: 'malicious-skill',
     };
   }
-  
+
   for (const pattern of UNSAFE_SKILL_PATTERNS) {
     if (pattern.test(path)) {
       return {
@@ -354,7 +500,7 @@ function validateSkillPath(path: string): ValidationResult {
       };
     }
   }
-  
+
   // Check if skill exists and is readable
   if (!existsSync(path)) {
     return {
@@ -363,7 +509,7 @@ function validateSkillPath(path: string): ValidationResult {
       category: 'missing-skill',
     };
   }
-  
+
   return {
     safe: true,
     reason: 'Skill path validated',
@@ -400,3 +546,10 @@ function validateSkillPath(path: string): ValidationResult {
 ---
 
 *See also: `docs/distillation/cybersecurity-patterns.md`*
+## Anti-Patterns
+
+- **Don't** skip path traversal checks when dealing with user input
+- **Don't** trust agent output without auditing artifacts
+- **Don't** run security review without knowing the data flow boundaries
+- **Don't** skip secrets detection in configuration and environment files
+- **Don't** skip supply chain checks when using external packages

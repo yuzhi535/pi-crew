@@ -1,8 +1,8 @@
 ---
 name: runtime-state-reader
 description: Safe read-only navigation of pi-crew run state. Use for inspecting manifests, tasks, events, agents, artifacts, health, and diagnostics without modifying state.
----
 
+---
 # runtime-state-reader
 
 Use this skill when debugging or auditing a pi-crew run.
@@ -31,6 +31,19 @@ Use this skill when debugging or auditing a pi-crew run.
 4. Read agent records and per-agent output/status if needed.
 5. Inspect artifacts/diagnostics only through contained paths.
 6. Report root cause and smallest safe remediation.
+
+## Enforcement — Runtime State Reader Gate
+
+**Before inspecting or reporting on run state, verify:**
+
+- [ ] Using exported state APIs (not direct file parsing where helpers exist)
+- [ ] State treated as append-mostly (no mutations during review/debugging)
+- [ ] runId validated before use (no untrusted path concatenation)
+- [ ] Corrupt JSONL handled gracefully (skip malformed lines)
+- [ ] Terminal vs active statuses distinguished (critical for conclusions)
+- [ ] Exact paths inspected reported with direct evidence vs inference labeled
+
+If ANY answer is NO → Stop. Verify state access method before proceeding.
 
 ## Verification
 

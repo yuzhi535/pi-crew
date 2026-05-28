@@ -1,8 +1,8 @@
 ---
 name: worktree-isolation
-description: Conflict-safe git worktree workflow. Use when running parallel implementation workers, isolating risky edits, or cleaning up task worktrees.
----
+description: "Conflict-safe git worktree workflow. Use when running parallel implementation workers, isolating risky edits, or cleaning up task worktrees. Triggers: create worktree, parallel workers, isolate edits, cleanup worktree, branch freshness."
 
+---
 # worktree-isolation
 
 Use this skill for worktree-based execution or cleanup. Git worktrees create isolated working directories that allow parallel code-changing tasks without git conflicts.
@@ -177,6 +177,19 @@ If a task crashes mid-worktree:
 3. If run is failed/cancelled and worktree is dirty → report to operator
 4. If run is completed → safe to clean up
 
+## Enforcement — Worktree Isolation Gate
+
+**Before creating or cleaning up worktrees, verify:**
+
+- [ ] Leader repo is clean before creating worktrees (assertCleanLeader passes)
+- [ ] One owner per file/symbol (no two worktrees edit same file)
+- [ ] Worktree naming is deterministic from run/task IDs (no user-controlled fragments)
+- [ ] Branch freshness checked before reuse (base branch hasn't diverged)
+- [ ] Dirty worktrees preserved by default (force=true only for forced removal)
+- [ ] Worktree paths under <repo-root>/.worktrees/ (never outside workspace)
+
+If ANY answer is NO → Stop. Verify worktree safety before proceeding.
+
 ## Anti-patterns
 
 - **Parallel editing same file**: Assign one owner per file. Use the task ID in branch names to track ownership.
@@ -185,8 +198,6 @@ If a task crashes mid-worktree:
 - **Storing worktrees outside workspace root**: All worktrees must be under `<repo-root>/.worktrees/`. Never store outside.
 - **Worktree name collision**: Use deterministic naming from run/task IDs, not user input.
 
----
-
 ## Source patterns
 
 - `src/worktree/worktree-manager.ts` — prepareTaskWorkspace, assertCleanLeader, linkNodeModulesIfPresent, sanitizeBranchPart
@@ -194,8 +205,6 @@ If a task crashes mid-worktree:
 - `src/worktree/branch-freshness.ts` — branch divergence detection
 - `src/runtime/team-runner.ts` — workspaceMode handling, worktree passed to task
 - `src/runtime/task-runner.ts` — worktreePath in task context
-
----
 
 ## Verification
 

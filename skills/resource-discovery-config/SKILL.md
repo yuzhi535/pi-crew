@@ -1,8 +1,8 @@
 ---
 name: resource-discovery-config
-description: pi-crew resource and configuration discovery workflow. Use when changing agents, teams, workflows, skills, resource hooks, config precedence, or project/user overrides.
----
+description: "pi-crew resource and configuration discovery workflow. Use when changing agents, teams, workflows, skills, resource hooks, config precedence, or project/user overrides. Triggers: discover agents, find teams, config override, resource discovery, skill loading."
 
+---
 # resource-discovery-config
 
 Use this skill for pi-crew resource/config work.
@@ -22,6 +22,18 @@ Use this skill for pi-crew resource/config work.
 - Avoid dynamic inline imports; keep discovery synchronous or async according to call-site expectations.
 - Validate config with schema and provide actionable errors.
 - When adding new config fields, update defaults, schema, docs, tests, and examples together.
+
+## Enforcement — Resource Discovery Config Gate
+
+**Before adding config or changing resource discovery, verify:**
+
+- [ ] Discovery precedence respected (project > user > builtin)
+- [ ] Config schema validated with actionable errors on invalid input
+- [ ] Dangerous user-only settings blocked in lower-trust contexts
+- [ ] Resource paths resolved correctly (package-root not src/skills after build)
+- [ ] New config fields have defaults, schema, docs, tests, and examples
+
+If ANY answer is NO → Stop. Fix config/discovery issues before proceeding.
 
 ## Anti-patterns
 

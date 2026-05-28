@@ -1,8 +1,8 @@
 ---
 name: ownership-session-security
-description: Session ownership and authorization workflow. Use when implementing cancel, respond, steer, run ownership, cwd overrides, imported runs, or cross-session actions.
----
+description: "Session ownership and authorization workflow. Use when implementing cancel, respond, steer, run ownership, cwd overrides, imported runs, or cross-session actions. Triggers: cancel run, respond to task, cross-session action, ownership verify, session security."
 
+---
 # ownership-session-security
 
 Use this skill for cross-session safety and trust-boundary work.
@@ -23,6 +23,18 @@ Use this skill for cross-session safety and trust-boundary work.
 - User/LLM-controlled path fields (`cwd`, import paths, artifact paths, task IDs) must be normalized and contained under an allowed base.
 - Use `resolveContainedPath`, `resolveRealContainedPath`, `assertSafePathId`, and symlink checks rather than ad-hoc `startsWith` checks.
 - Destructive management actions must require `confirm: true`; referenced resource deletes must require `force: true` where applicable.
+
+## Enforcement — Ownership Session Security Gate
+
+**Before mutating run state or cross-session operations, verify:**
+
+- [ ] Session ID propagated into TeamContext for production paths
+- [ ] ownerSessionId verified before respond/cancel/mutate operations
+- [ ] Path fields (cwd, import, artifact) normalized and contained under allowed base
+- [ ] Safe path helpers used (resolveContainedPath, assertSafePathId) not startsWith checks
+- [ ] Destructive actions require explicit confirm/force parameters
+
+If ANY answer is NO → Stop. Verify ownership before mutating state.
 
 ## Anti-patterns
 

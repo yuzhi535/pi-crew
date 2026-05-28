@@ -1,8 +1,8 @@
 ---
 name: mailbox-interactive
-description: Interactive waiting-task and mailbox workflow. Use when implementing or operating respond/nudge/ack/replay/supervisor-contact behavior.
----
+description: "Interactive waiting-task and mailbox workflow. Use when implementing or operating respond/nudge/ack/replay/supervisor-contact behavior. Triggers: respond to worker, nudge agent, mailbox message, supervisor contact, waiting task."
 
+---
 # mailbox-interactive
 
 Use this skill for live coordination between leader and workers. Mailbox provides an asynchronous message protocol for steer, follow-up, respond, and nudge operations.
@@ -276,6 +276,18 @@ function verifyRunOwnership(manifest: TeamRunManifest, sessionId: string, force 
 }
 ```
 
+## Enforcement — Mailbox Interactive Gate
+
+**Before responding to or mutating mailbox state, verify:**
+
+- [ ] Target task status is "waiting" (respond only works on waiting tasks)
+- [ ] ownerSessionId matches current session (ownership verified)
+- [ ] Run status is not terminal (do not respond to completed/failed/cancelled)
+- [ ] Corrupt JSONL handled gracefully (skip malformed lines)
+- [ ] Backpressure respected (queue depth below MAX_PENDING limits)
+
+If ANY answer is NO → Stop. Verify mailbox state before mutating.
+
 ## Anti-patterns
 
 - **Resuming non-waiting tasks**: `respond` only works on `waiting` tasks. Resuming `running` tasks corrupts state.
@@ -284,8 +296,6 @@ function verifyRunOwnership(manifest: TeamRunManifest, sessionId: string, force 
 - **Reading large mailbox files in hot paths**: Cache mailbox counts; don't read JSONL on every render tick.
 - **Not handling corrupt JSONL**: Skip malformed lines; don't fail the whole read.
 - **Losing pending messages on session switch**: Pending steers/followups are stored in-memory in the handle. They survive session fork but not session death.
-
----
 
 ## Source patterns
 
@@ -296,8 +306,6 @@ function verifyRunOwnership(manifest: TeamRunManifest, sessionId: string, force 
 - `src/runtime/live-agent-manager.ts` — pendingSteers, pendingFollowUps, steerLiveAgent, followUpLiveAgent
 - `src/runtime/supervisor-contact.ts` — parseSupervisorContactFromLine, recordSupervisorContact
 - `src/ui/overlays/mailbox-detail-overlay.ts` — mailbox UI
-
----
 
 ## Verification
 

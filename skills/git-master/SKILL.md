@@ -1,8 +1,8 @@
 ---
 name: git-master
-description: Commit and release hygiene for safe version-control work. Use when preparing commits, releases, version bumps, publishing, or validating package installation.
----
+description: "Commit and release hygiene for safe version-control work. Use when preparing commits, releases, version bumps, publishing, or validating package installation. Triggers: commit this, tag release, bump version, publish package, prepare release."
 
+---
 # git-master
 
 Use this skill for commit/release hygiene. This skill covers git workflow from local changes to published releases.
@@ -186,6 +186,19 @@ git stash drop          # remove latest stash
 git stash clear         # remove all stashes
 ```
 
+## Enforcement — Git Master Gate
+
+**Before committing or publishing, verify:**
+
+- [ ] `git status` reviewed — only related files staged
+- [ ] `git diff --staged` reviewed — no unintended changes
+- [ ] Tests pass locally (`npm test` or appropriate test command)
+- [ ] No secrets in staged changes (API keys, tokens, passwords)
+- [ ] Commit message follows format: `type(scope): subject` (50 chars or less)
+- [ ] No generated files staged unless intentional
+
+If ANY answer is NO → Stop. Fix issues before committing.
+
 ## Anti-patterns
 
 - **Committing generated files**: Don't commit `dist/`, `build/`, `*.min.js` unless intentional
@@ -195,16 +208,12 @@ git stash clear         # remove all stashes
 - **Committing secrets**: Check for `API_KEY`, `TOKEN`, `PASSWORD`, `SECRET` before staging
 - **Unclear messages**: "fix stuff" is not a valid commit message
 
----
-
 ## Source patterns
 
 - `src/state/atomic-write.ts` — atomic git-safe file writes
 - `src/worktree/worktree-manager.ts` — worktree git operations
 - `src/utils/conflict-detect.ts` — git conflict detection
 - `package.json` — version field, publish scripts
-
----
 
 ## Verification
 

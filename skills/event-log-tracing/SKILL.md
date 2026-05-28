@@ -1,8 +1,8 @@
 ---
 name: event-log-tracing
-description: "Structured event logging for worker lifecycle, live agents, crash recovery. Use when debugging crashes, tracing agent lifecycle, investigating stale runs. Triggers: event log, trace events, worker crashed, agent died, stale run, events.jsonl."
----
+description: "\"Structured event logging for worker lifecycle, live agents, crash recovery. Use when debugging crashes, tracing agent lifecycle, investigating stale runs. Triggers: event log, trace events, worker crashed, agent died, stale run, events.jsonl.\""
 
+---
 # event-log-tracing
 
 Every pi-crew run writes a persistent event log at `.crew/state/runs/<runId>/events.jsonl`. Events are the primary evidence for understanding what happened — especially when workers crash, agents get stuck, or runs become orphaned.
@@ -30,8 +30,6 @@ Every event is a JSON object on one line:
 **Required fields:** `time`, `type`, `runId`
 **Optional fields:** `taskId`, `message`, `data`, `metadata`
 **Metadata auto-populated:** `seq` (line number), `provenance` (who wrote it), `fingerprint` (for terminal events)
-
----
 
 ## Event Taxonomy
 
@@ -111,8 +109,6 @@ These track the full lifecycle from spawn to cleanup.
 |---|---|---|
 | `crew.run.reconciled_stale` | `reconcileStaleRun` repaired a stale run | `{verdict}` |
 | `crew.run.orphan_cancelled` | `cancelOrphanedRuns` cancelled a run | `{ownerSessionId, cancelledTasks}` |
-
----
 
 ## appendEvent Pipeline
 
@@ -256,6 +252,19 @@ crew.run.reconciled_stale verdict=pid_dead
 ```
 
 ---
+
+## Enforcement — Event Log Tracing Gate
+
+**Before interpreting events or debugging crashes, verify:**
+
+- [ ] Event format validated (required fields: time, type, runId present)
+- [ ] runId correlation confirmed (all events have same runId for the trace)
+- [ ] Terminal events have fingerprints (completed/failed/cancelled)
+- [ ] Event sequence matches expected lifecycle pattern
+- [ ] Corrupt JSONL handled (skip malformed lines, don't fail entire read)
+- [ ] Secrets redacted in data fields before logging
+
+If ANY answer is NO → Stop. Re-examine event source and format.
 
 ## Anti-patterns
 

@@ -1,8 +1,8 @@
 ---
 name: multi-perspective-review
-description: "Multi-perspective code review with simpler-alternative pass. Use when reviewing a plan, diff, implementation, worker output, release candidate, or external feedback. Triggers: review this, look at this, LGTM check, sanity check, audit this, get a second opinion, check this PR, examine this code."
----
+description: "\"Multi-perspective code review with simpler-alternative pass. Use when reviewing a plan, diff, implementation, worker output, release candidate, or external feedback. Triggers: review this, look at this, LGTM check, sanity check, audit this, get a second opinion, check this PR, examine this code.\""
 
+---
 # multi-perspective-review
 
 Core principle: review early, review often, and separate concerns. Reviewer output is evidence to evaluate, not an instruction to obey blindly.
@@ -22,8 +22,6 @@ Before running any review passes, ask:
 3. Skip only if the user explicitly says "don't question scope."
 
 This is the most valuable finding you can produce — surfacing unnecessary complexity before reviewing its details.
-
----
 
 ## Review Passes
 
@@ -153,6 +151,18 @@ When receiving feedback:
 4. Implement one item at a time.
 5. Test each fix and verify no regressions.
 6. Push back with evidence if the suggestion is wrong, out of scope, or violates user decisions.
+
+## Enforcement — Multi-Perspective Review Gate
+
+**Before reporting review findings, verify:**
+
+- [ ] Simpler-alternative pass completed first (delete, use existing, smaller change, different layer)
+- [ ] Findings include: severity, path/symbol, evidence, impact, fix, verification
+- [ ] No rubber-stamps (if nothing found, state what was traced)
+- [ ] Critical/high findings have actionable fixes before proceeding
+- [ ] Verdict stated: ship / fix-then-ship / rework / reject
+
+If ANY answer is NO → Stop. Complete review requirements before reporting.
 
 ## Rules
 

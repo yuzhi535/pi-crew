@@ -1,8 +1,8 @@
 ---
 name: pi-extension-lifecycle
 description: Pi extension lifecycle and registration patterns. Use when adding or reviewing extension tools, commands, resources, providers, event handlers, session hooks, or context-sensitive Pi API usage.
----
 
+---
 # pi-extension-lifecycle
 
 Use this skill when working on Pi extension registration or lifecycle behavior.
@@ -22,6 +22,18 @@ Use this skill when working on Pi extension registration or lifecycle behavior.
 - Prefer small registration modules under `src/extension/registration/`; keep `index.ts` minimal.
 - Clean up intervals, event subscriptions, child processes, and watchers on session switch/shutdown.
 - Wrap optional Pi API hooks in compatibility checks/try-catch when supporting older Pi versions.
+
+## Enforcement — Pi Extension Lifecycle Gate
+
+**Before registering tools or handling session lifecycle, verify:**
+
+- [ ] ExtensionContext/ExtensionCommandContext fresh after session replacement
+- [ ] No stale context references retained after session switch/fork/reload
+- [ ] Cleanup registered for intervals, subscriptions, child processes, watchers
+- [ ] Tool/command names unique (no duplicate registrations)
+- [ ] No blocking filesystem/network work in extension render callbacks
+
+If ANY answer is NO → Stop. Fix lifecycle issues before proceeding.
 
 ## Anti-patterns
 

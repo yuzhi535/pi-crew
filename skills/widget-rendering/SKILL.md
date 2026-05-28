@@ -1,8 +1,8 @@
 ---
 name: widget-rendering
-description: Pi TUI crew widget data sources, display priority, and rendering performance. Use when debugging empty agents, ghost runs, or widget timing issues.
----
+description: "Pi TUI crew widget data sources, display priority, and rendering performance. Use when debugging empty agents, ghost runs, or widget timing issues. Triggers: empty agent, ghost run, widget timing, display priority, snapshot cache."
 
+---
 # widget-rendering
 
 The crew widget (`src/ui/crew-widget.ts`) displays active runs and their agents in the Pi TUI. It must render synchronously at TTY refresh rate without blocking. Understanding the data sources and timing rules is essential for debugging display issues.
@@ -44,8 +44,6 @@ In-memory map from `live-agent-manager.ts`. Provides:
 
 **When used:** For completed agents, or when snapshot cache misses.
 
----
-
 ## Display Priority
 
 ```
@@ -65,8 +63,6 @@ for each active run:
     if status is completed/failed/cancelled:
       → apply linger rules (finishedAgents: 1min, errors: 2min)
 ```
-
----
 
 ## Active Runs Filtering
 
@@ -226,6 +222,19 @@ const TOOL_LABELS = {
 **Fix:** Event log tracing skill documents this pattern.
 
 ---
+
+## Enforcement — Widget Rendering Gate
+
+**Before modifying widget rendering or display logic, verify:**
+
+- [ ] Render path is synchronous and non-blocking (no fs/network calls)
+- [ ] Display priority chain correct (liveAgents → snapshot cache → agents.json)
+- [ ] Ghost run filtering works (stale async PID + age > 30min hidden)
+- [ ] Stale handle eviction runs on every refresh (10min terminal handles removed)
+- [ ] Cache invalidation handles empty results (forces refresh on next tick)
+- [ ] Tool name extraction uses TOOL_LABELS for readable activity descriptions
+
+If ANY answer is NO → Stop. Fix widget rendering issues before proceeding.
 
 ## Anti-patterns
 

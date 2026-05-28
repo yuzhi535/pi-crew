@@ -1,8 +1,8 @@
 ---
 name: verification-before-done
-description: "Evidence before claims. Use before claiming work is complete, fixed, passing, reviewed, committed, or ready to hand off. Triggers: done, fixed, complete, ready to merge, can I close, is it working, verify this, check if it passes, all good, LGTM, ready to ship."
----
+description: "\"Evidence before claims. Use before claiming work is complete, fixed, passing, reviewed, committed, or ready to hand off. Triggers: done, fixed, complete, ready to merge, can I close, is it working, verify this, check if it passes, all good, LGTM, ready to ship.\""
 
+---
 # verification-before-done
 
 Core principle: evidence before claims. A worker report, green-looking log, or previous run is not fresh verification.
@@ -64,3 +64,11 @@ Before finalizing any work, report:
 ## Red Flags
 
 Stop before saying done if you are using words like "should", "probably", "looks", "seems", "I think", or if you are trusting an agent report without checking evidence.
+
+## Anti-Patterns
+
+- **Don't** claim "tests pass" without running them in the current session
+- **Don't** trust agent reports without checking evidence yourself
+- **Don't** use fuzzy language like "seems", "probably", "looks like"
+- **Don't** skip providing verification commands for claims
+- **Don't** claim done if you're still using hypotheses instead of evidence

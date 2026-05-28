@@ -1,8 +1,8 @@
 ---
 name: safe-bash
-description: "Safe shell-command workflow. Use when executing shell commands, prefer read-only, avoid destructive actions. Triggers: run this command, execute bash, safe bash, avoid rm, destructive command, shell injection."
----
+description: "\"Safe shell-command workflow. Use when executing shell commands, prefer read-only, avoid destructive actions. Triggers: run this command, execute bash, safe bash, avoid rm, destructive command, shell injection.\""
 
+---
 # safe-bash
 
 Use this skill whenever a task may execute shell commands. This skill covers cross-platform shell safety, destructive action confirmation, and Windows-specific patterns.
@@ -268,6 +268,19 @@ else
 fi
 ```
 
+## Enforcement — Safe Bash Gate
+
+**Before executing shell commands, verify:**
+
+- [ ] Command classified as read-only or mutating (report which)
+- [ ] Mutating/destructive commands have explicit confirmation before execution
+- [ ] Paths use platform-safe construction (path.join, not hardcoded forward slashes)
+- [ ] Timeout set for long-running commands (prevent blocking)
+- [ ] Exit codes checked and errors handled appropriately
+- [ ] Secrets not passed in command-line args (use environment variables)
+
+If ANY answer is NO → Stop. Classify and protect before executing.
+
 ## Anti-patterns
 
 - **`rm -rf` without path validation**: Always double-check the path before rm -rf
@@ -277,16 +290,12 @@ fi
 - **Not handling Windows spaces**: Test on Windows before assuming paths work
 - **Background process zombie**: Always handle process exit or store the pid for cleanup
 
----
-
 ## Source patterns
 
 - `src/utils/resolve-shell.ts` — cross-platform shell detection
 - `src/runtime/child-pi.ts` — spawn, killProcessPid, signal handling
 - `src/worktree/worktree-manager.ts` — git commands via execFileSync
 - `src/config/defaults.ts` — platform detection
-
----
 
 ## Verification
 

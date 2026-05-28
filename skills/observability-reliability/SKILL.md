@@ -1,8 +1,8 @@
 ---
 name: observability-reliability
-description: Metrics, diagnostics, correlation, retry, deadletter, and recovery evidence workflow. Use when adding reliability features or investigating failures.
----
+description: "Metrics, diagnostics, correlation, retry, deadletter, and recovery evidence workflow. Use when adding reliability features or investigating failures. Triggers: add metrics, diagnose failure, retry logic, deadletter, recovery evidence."
 
+---
 # observability-reliability
 
 Use this skill for reliability and observability work.
@@ -23,6 +23,18 @@ Use this skill for reliability and observability work.
 - Diagnostics should be safe to share: include state summary, recent events, metrics snapshot when available, and paths to artifacts.
 - Heartbeat classification should be threshold-based and should ignore terminal tasks/runs.
 - Overflow recovery should track phase progression and terminal states without repeatedly alerting on completed work.
+
+## Enforcement — Observability Reliability Gate
+
+**Before emitting metrics or implementing retry, verify:**
+
+- [ ] Metric labels are low-cardinality (no raw paths, prompts, or secrets)
+- [ ] Secrets redacted before writing logs, events, diagnostics, or bundles
+- [ ] Retry records attempts and deadletters on exhaustion
+- [ ] Diagnostics are safe to share (no secrets, no raw sensitive data)
+- [ ] Heartbeat thresholds ignore terminal tasks/runs
+
+If ANY answer is NO → Stop. Fix observability issues before proceeding.
 
 ## Anti-patterns
 

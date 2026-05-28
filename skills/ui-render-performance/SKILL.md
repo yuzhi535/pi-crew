@@ -1,8 +1,8 @@
 ---
 name: ui-render-performance
-description: Non-blocking Pi TUI render workflow. Use when changing widgets, powerbar/statusbar segments, dashboard panes, overlays, snapshot caches, or live UI refresh behavior.
----
+description: "Non-blocking Pi TUI render workflow. Use when changing widgets, powerbar/statusbar segments, dashboard panes, overlays, snapshot caches, or live UI refresh behavior. Triggers: widget render, dashboard pane, overlay update, snapshot cache, UI refresh."
 
+---
 # ui-render-performance
 
 Use this skill for Pi/pi-crew TUI work.
@@ -22,6 +22,19 @@ Use this skill for Pi/pi-crew TUI work.
 - Keep dashboard panes pure: accept a snapshot/model and format strings; do not call `fs.readFileSync`, `fs.readdirSync`, `fs.statSync`, or network APIs from pane render methods.
 - On session switch, cancel timers and ensure in-flight async preloads cannot update stale session UI.
 - Watch TTL interactions: a preload interval shorter than cache TTL prevents render-time refresh gaps.
+
+## Enforcement — UI Render Performance Gate
+
+**Before modifying widgets or UI rendering, verify:**
+
+- [ ] Render path is non-blocking (no fs calls, no network, no large JSON parsing)
+- [ ] All data preloaded async before first render
+- [ ] Snapshot cache TTL appropriate (500ms or less)
+- [ ] Render scheduler used for coalescing renders
+- [ ] Stale warnings filtered for terminal status (completed/failed/cancelled)
+- [ ] TTL interactions understood (preload interval < cache TTL)
+
+If ANY answer is NO → Stop. Fix render performance issues before proceeding.
 
 ## Anti-patterns
 

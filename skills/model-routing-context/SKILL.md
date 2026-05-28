@@ -1,8 +1,8 @@
 ---
 name: model-routing-context
 description: Model routing, parent context, thinking level, and prompt construction workflow. Use when changing model fallback, child Pi args, inherited context, task prompts, or compact-read behavior.
----
 
+---
 # model-routing-context
 
 Use this skill when working on model/context propagation.
@@ -21,6 +21,18 @@ Use this skill when working on model/context propagation.
 - Avoid inline dynamic imports for model providers or prompt helpers.
 - When changing model precedence, add tests for undefined, empty, whitespace, agent, task, parent, and explicit tool override cases.
 - Redact secrets in context snippets and child prompts where logs/artifacts may persist them.
+
+## Enforcement — Model Routing Context Gate
+
+**Before changing model precedence or building task prompts, verify:**
+
+- [ ] Empty/whitespace model values treated as absent (not as explicit overrides)
+- [ ] Model precedence chain understood: tool override → step model → team role → agent model → parent → registry default
+- [ ] Thinking level suffix applied correctly (or intentionally omitted)
+- [ ] Secrets redacted in context snippets and child prompts
+- [ ] Tests cover: undefined, empty, whitespace, agent, task, parent, and explicit tool override cases
+
+If ANY answer is NO → Stop. Verify model routing before proceeding.
 
 ## Anti-patterns
 

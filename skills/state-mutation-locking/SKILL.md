@@ -1,8 +1,8 @@
 ---
 name: state-mutation-locking
-description: Durable state mutation and locking workflow. Use when changing manifests, tasks, mailbox, claims, events, stale reconciliation, recovery, cancel/respond/resume, or retry logic.
----
+description: "Durable state mutation and locking workflow. Use when changing manifests, tasks, mailbox, claims, events, stale reconciliation, recovery, cancel/respond/resume, or retry logic. Triggers: modify manifest, update tasks, stale reconciliation, cancel run, respond to task."
 
+---
 # state-mutation-locking
 
 Use this skill before modifying pi-crew run state.
@@ -24,6 +24,19 @@ Use this skill before modifying pi-crew run state.
 - Separate analysis from persistence: pure reconcilers should return intended repaired state; locked callers should persist it.
 - In retry/resume paths, reload fresh task status immediately before execution and skip if the task is no longer retryable/runnable.
 - Include event-log entries for externally visible state changes.
+
+## Enforcement — State Mutation Locking Gate
+
+**Before mutating run state, verify:**
+
+- [ ] Run lock acquired before mutation (concurrent actions possible)
+- [ ] Manifest/tasks re-read inside the lock before decision
+- [ ] Atomic write helpers used (atomicWriteJson or state-store helpers)
+- [ ] Status contracts respected (no terminal transitions without force semantics)
+- [ ] Event-log entries emitted for externally visible state changes
+- [ ] Retry paths reload fresh task status before execution
+
+If ANY answer is NO → Stop. Verify locking and atomicity before mutating.
 
 ## Anti-patterns
 

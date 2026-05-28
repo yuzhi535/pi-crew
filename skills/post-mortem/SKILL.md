@@ -1,8 +1,8 @@
 ---
 name: post-mortem
-description: "Write engineering RCA record after bug is fixed. Use when asking: write post-mortem, RCA, root cause analysis, document this fix, close out this bug. Triggers: post-mortem, postmortem, root cause, RCA, document this fix, write up the cause, close out bug."
----
+description: "\"Write engineering RCA record after bug is fixed. Use when asking: write post-mortem, RCA, root cause analysis, document this fix, close out this bug. Triggers: post-mortem, postmortem, root cause, RCA, document this fix, write up the cause, close out bug.\""
 
+---
 # post-mortem
 
 The canonical engineering record of a bug fix. Written after debugging lands a real fix.

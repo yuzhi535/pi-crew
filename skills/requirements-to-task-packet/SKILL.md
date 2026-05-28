@@ -1,8 +1,8 @@
 ---
 name: requirements-to-task-packet
-description: Use when a goal, issue, roadmap item, review finding, or user request must become actionable worker tasks.
----
+description: "Use when a goal, issue, roadmap item, review finding, or user request must become actionable worker tasks. Triggers: convert requirements, create task packet, decompose goal, write task, spec to implementation."
 
+---
 # requirements-to-task-packet
 
 Core principle: workers need explicit task packets, not inherited ambiguity. Ask only when ambiguity changes architecture, safety, public behavior, or data loss risk; otherwise record assumptions.
@@ -55,9 +55,23 @@ Use observable checks:
 - compatibility requirements such as Windows paths or Pi CLI flags;
 - rollback notes.
 
+## Enforcement — Requirements to Task Packet Gate
+
+**Before dispatching workers, verify task packet has:**
+
+- [ ] Objective clearly stated (goal in one sentence)
+- [ ] Scope and paths defined (what is/isn't in scope)
+- [ ] Allowed vs forbidden edits specified
+- [ ] Inputs/dependencies and expected output artifacts listed
+- [ ] Acceptance criteria are observable (command output, state transition, test)
+- [ ] Verification commands provided
+- [ ] Escalation conditions defined
+
+If ANY answer is NO → Stop. Complete task packet before dispatching.
+
 ## Anti-patterns
 
-- Broad “fix everything” prompts.
+- Broad "fix everything" prompts.
 - Buried assumptions.
 - Expanding scope because context remains.
 - Treating tests as proof when the requirement was never asserted.

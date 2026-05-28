@@ -1,8 +1,8 @@
 ---
 name: async-worker-recovery
 description: Background worker, heartbeat, stale-run, crash-recovery, and deadletter workflow. Use when debugging stuck/dead workers or changing async run reliability.
----
 
+---
 # async-worker-recovery
 
 Use this skill when a pi-crew run is stuck, stale, interrupted, or has dead workers.
@@ -31,6 +31,18 @@ Use this skill when a pi-crew run is stuck, stale, interrupted, or has dead work
 3. Check heartbeat `lastSeenAt`, progress `lastActivityAt`, and terminal status.
 4. Inspect deadletter and diagnostic report.
 5. Choose recovery: resume, retry, kill stale, diagnostic, or no-op historical notification.
+
+## Enforcement — Worker Recovery Gate
+
+**Before taking recovery action, verify:**
+
+- [ ] Run status is not terminal (completed/failed/cancelled)
+- [ ] Heartbeat is genuinely stale (not just delayed polling)
+- [ ] PID is dead or stale threshold exceeded
+- [ ] Recovery action matches run state (resume vs retry vs kill)
+- [ ] Session generation matches before state modification
+
+If ANY answer is NO → Stop. Re-check status. Do not apply stale recovery to active runs.
 
 ## Verification
 

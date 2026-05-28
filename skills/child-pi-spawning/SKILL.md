@@ -1,8 +1,8 @@
 ---
 name: child-pi-spawning
-description: Child Pi worker spawning, lifecycle callbacks, and failure modes. Use when debugging worker crashes, scaffold mode behavior, or spawn-time failures.
----
+description: "Child Pi worker spawning, lifecycle callbacks, and failure modes. Use when debugging worker crashes, scaffold mode behavior, or spawn-time failures. Triggers: worker crashed, worker blink, spawn failed, pid not found, child process error."
 
+---
 # child-pi-spawning
 
 Child Pi workers are subprocesses spawned by `task-runner.ts` via `runChildPi()` in `child-pi.ts`. Understanding the spawn flow, lifecycle events, and failure modes is essential for debugging worker crashes and "worker blinks" issues.
@@ -174,6 +174,18 @@ Resolves the `pi` binary path and builds the final command/args. On Windows, use
 - PID used by `killProcessPid()` (child-pi.ts) for termination
 - PID in `childHardKillTimers` Map for timer cleanup on exit
 
+## Enforcement — Child Pi Spawning Gate
+
+**Before debugging worker spawn issues, verify:**
+
+- [ ] Spawn error type identified (binary not found, permission denied, API key missing)
+- [ ] PID tracking status confirmed (recorded in manifest, process alive/dead)
+- [ ] Lifecycle event sequence matches expected pattern (spawned → output → exit)
+- [ ] Timeout source determined (5-min response timeout, hard kill, final drain)
+- [ ] Scaffold mode correctly identified (no worker.spawned event expected)
+
+If ANY answer is NO → Stop. Re-examine events.jsonl and manifest before proceeding.
+
 ## Anti-patterns
 
 - **Blocking on spawn**: `spawn()` is async — never await it synchronously. Use the Promise-based API.
@@ -182,8 +194,6 @@ Resolves the `pi` binary path and builds the final command/args. On Windows, use
 - **Not cleaning up timers**: Hard-kill timers, response-timeout timers, and final-drain timers must be cleared on all exit paths.
 - **Passing secrets in args**: Child args are visible in process list. Use env vars (with redaction) instead.
 - **Not handling `spawn_error`**: Errors on spawn (binary not found, permission denied) must be caught and logged.
-
----
 
 ## Source patterns
 
@@ -194,8 +204,6 @@ Resolves the `pi` binary path and builds the final command/args. On Windows, use
 - `src/runtime/model-resolver.ts` — model fallback chain
 - `src/utils/env-filter.ts` — sanitizeEnvSecrets
 - `src/config/defaults.ts` — responseTimeoutMs, finalDrainMs, hardKillMs
-
----
 
 ## Verification
 
