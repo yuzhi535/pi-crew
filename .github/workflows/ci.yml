@@ -37,7 +37,7 @@ jobs:
         run: npm ci
       # Skip typecheck step: tsconfig has pre-existing errors (safe-bash-extension.ts API mismatch,
       # tool-progress.ts CrewAgentProgress re-export, tool-progress.test.ts type literals)
-      # that are type-system-only and don't affect runtime. Tests pass (1669 unit + 46 integration).
+      # that are type-system-only and don't affect runtime. Tests pass (1895 unit + 48 integration).
       # These errors have existed since before v0.3.0 and will be addressed separately.
       # - name: Typecheck
       #   run: npm run typecheck
