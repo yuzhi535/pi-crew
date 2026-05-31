@@ -300,6 +300,7 @@ function mergeConfig(
 	base: PiTeamsConfig,
 	override: PiTeamsConfig,
 ): PiTeamsConfig {
+	const warnings: string[] = [];
 	const merged: PiTeamsConfig = {
 		...base,
 		...withoutUndefined(override as Record<string, unknown>),
@@ -439,6 +440,15 @@ function mergeConfig(
 		};
 		if (Object.keys(merged.otlp.headers ?? {}).length === 0)
 			delete merged.otlp.headers;
+		// Validate OTLP headers for injection attacks (newlines, CR, null bytes)
+		const invalidHeaders: string[] = [];
+		for (const [k, v] of Object.entries(merged.otlp.headers ?? {})) {
+			if (/[\r\n\x00]/.test(String(v))) { invalidHeaders.push(k); }
+		}
+		if (invalidHeaders.length > 0) {
+			delete merged.otlp.headers;
+			warnings.push(`OTLP headers blocked due to invalid characters: ${invalidHeaders.join(", ")}`);
+		}
 	}
 	if (
 		merged.agents?.overrides &&

@@ -152,9 +152,10 @@ export function createManifestCache(cwd: string, options: ManifestCacheOptions =
 			clearTimeout(listTimer);
 		}
 		listTimer = setTimeout(() => {
+			const timer = listTimer;
 			listTimer = undefined;
 			listCache.clear();
-			listTimer?.unref();
+			timer?.unref();
 		}, ttlMs);
 	}
 

@@ -20,6 +20,8 @@ export class MailboxDetailOverlay {
 	private side: "inbox" | "outbox" = "inbox";
 	private selected = 0;
 	private expanded = false;
+	private lastRefreshedTaskCount = 0;
+	private needsRefresh = true;
 
 	constructor(opts: { runId: string; cwd: string; done: (action: MailboxAction | undefined) => void; theme?: unknown }) {
 		this.runId = opts.runId;
@@ -32,6 +34,12 @@ export class MailboxDetailOverlay {
 	private refresh(): void {
 		const loaded = loadRunManifestById(this.cwd, this.runId);
 		if (!loaded) return;
+		// Track task count changes to trigger re-render
+		const taskCount = loaded.tasks.length;
+		if (taskCount !== this.lastRefreshedTaskCount) {
+			this.lastRefreshedTaskCount = taskCount;
+			this.needsRefresh = true;
+		}
 		const delivery = readDeliveryState(loaded.manifest).messages;
 		const applyDelivery = (message: MailboxMessage): MailboxMessage => ({ ...message, status: delivery[message.id] ?? message.status });
 		const taskIds = loaded.tasks.map((task) => task.id);
@@ -49,11 +57,14 @@ export class MailboxDetailOverlay {
 	}
 
 	invalidate(): void {
-		this.refresh();
+		this.needsRefresh = true;
 	}
 
 	render(width: number): string[] {
-		this.refresh();
+		if (this.needsRefresh) {
+			this.refresh();
+			this.needsRefresh = false;
+		}
 		const inner = Math.max(40, width - 4);
 		const col = Math.max(18, Math.floor((inner - 3) / 2));
 		const lines = [

@@ -3,6 +3,8 @@ import type { IrcMessage } from "./live-irc.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import type { appendEvent } from "../state/event-log.ts";
 
+const MAX_PENDING_MESSAGES = 1000;
+
 type LiveSessionHandle = {
 	steer?: (text: string) => Promise<void>;
 	prompt?: (text: string, options?: Record<string, unknown>) => Promise<void>;
@@ -318,6 +320,9 @@ export function clearLiveAgentsForTest(): void {
 export function sendIrcMessage(targetAgentId: string, message: IrcMessage): void {
 	const handle = getLiveAgent(targetAgentId);
 	if (!handle) return;
+	if (handle.pendingMessages.length >= MAX_PENDING_MESSAGES) {
+		handle.pendingMessages.shift();
+	}
 	handle.pendingMessages.push(message);
 	handle.updatedAt = new Date().toISOString();
 	// G4: Try non-blocking delivery via sendCustomMessage
@@ -349,6 +354,9 @@ export function broadcastIrcMessage(fromAgentId: string, message: IrcMessage): s
 	for (const handle of liveAgents.values()) {
 		if (handle.agentId === fromAgentId) continue;
 		if (handle.status !== "running" && handle.status !== "queued") continue;
+		if (handle.pendingMessages.length >= MAX_PENDING_MESSAGES) {
+			handle.pendingMessages.shift();
+		}
 		handle.pendingMessages.push(message);
 		handle.updatedAt = new Date().toISOString();
 		// G4: Try non-blocking delivery

@@ -294,6 +294,7 @@ export function requestPowerbarUpdate(
 
 /** Dispose the powerbar coalescer. Call during extension cleanup. */
 export function disposePowerbarCoalescer(): void {
+	powerbarCoalescer.flush();
 	powerbarCoalescer.dispose();
 }
 

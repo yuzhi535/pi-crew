@@ -19,6 +19,7 @@ export interface TranscriptReadOptions {
 
 const TRANSCRIPT_CACHE_TTL_MS = 500;
 const DEFAULT_TAIL_BYTES = 256 * 1024;
+const MAX_CACHE_SIZE = 100;
 const transcriptCache = new Map<string, TranscriptCacheEntry>();
 
 function cacheKey(path: string, options: Required<Pick<TranscriptReadOptions, "full">> & { maxTailBytes: number }): string {
@@ -85,6 +86,18 @@ export function readTranscriptLinesCached(path: string, parse: (text: string) =>
 			truncated: read.truncated,
 		};
 		transcriptCache.set(key, entry);
+		// Evict oldest entry if cache exceeds max size
+		if (transcriptCache.size > MAX_CACHE_SIZE) {
+			let oldestKey: string | null = null;
+			let oldestParsedAt = Infinity;
+			for (const [k, v] of transcriptCache.entries()) {
+				if (v.parsedAt < oldestParsedAt) {
+					oldestParsedAt = v.parsedAt;
+					oldestKey = k;
+				}
+			}
+			if (oldestKey) transcriptCache.delete(oldestKey);
+		}
 		return lines;
 	} catch {
 		return previous?.lines ?? [];

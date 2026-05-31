@@ -44,6 +44,19 @@ const IrcParams = Type.Object({
 
 type IrcParams = Static<typeof IrcParams>;
 
+/**
+ * Output schema for the irc tool's `details` field.
+ * All fields are optional — only present when relevant to the operation.
+ *
+ * Schema:
+ *   op         — Always present. "send" | "list"
+ *   from       — Sender agent ID. Present on all responses.
+ *   to         — Recipient agent ID. Present on send responses.
+ *   delivered  — Array of agent IDs that received the message. Present on send.
+ *   notFound   — Array of agent IDs that were unknown or unavailable. Present on send.
+ *   peers      — Array of { id, status } for list operation.
+ *   error      — Human-readable error description. Present when the operation failed.
+ */
 interface IrcDetails {
 	op: "send" | "list";
 	from?: string;

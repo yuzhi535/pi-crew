@@ -6,6 +6,9 @@ import { isSafePathId, resolveContainedPath, resolveRealContainedPath } from "..
 
 const PACKAGE_SKILLS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "skills");
 
+const CACHE_TTL_MS = 30_000; // 30 seconds
+let cache: { skills: SkillDescriptor[]; cachedAt: number; cwd: string } | null = null;
+
 export interface SkillDescriptor {
 	name: string;
 	description: string;
@@ -28,6 +31,7 @@ function frontmatterDescription(content: string): string | undefined {
 }
 
 export function discoverSkills(cwd: string): SkillDescriptor[] {
+	if (cache && cache.cwd === cwd && Date.now() - cache.cachedAt < CACHE_TTL_MS) return cache.skills;
 	const results: SkillDescriptor[] = [];
 	for (const dir of listSkillDirs(cwd)) {
 		if (!fs.existsSync(dir.root)) continue;
@@ -63,5 +67,6 @@ export function discoverSkills(cwd: string): SkillDescriptor[] {
 			logInternalError("discoverSkills.readdir", error, `root=${dir.root}`);
 		}
 	}
+	cache = { skills: results, cachedAt: Date.now(), cwd };
 	return results;
 }

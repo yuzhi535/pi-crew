@@ -83,6 +83,27 @@ export function isDangerous(command: string, options: SafeBashOptions = {}): str
 		}
 	}
 
+	// Additional shell injection checks
+	// Block command substitution $(...)
+	if (/\$\([^)]*\)/.test(command)) {
+		return "Command blocked by safe_bash: command substitution $(...) is not allowed";
+	}
+	// Block backtick substitution
+	const backtickRe = /`[^`]*`/;
+	if (backtickRe.test(command)) {
+		return "Command blocked by safe_bash: backtick substitution is not allowed";
+	}
+	// Block here-docs <<
+	if (/<<\s*['"]?[\w-]+['"]?/.test(command) || /\$<<\s*['"]?[\w-]+['"]?/.test(command)) {
+		return "Command blocked by safe_bash: here-doc is not allowed";
+	}
+	// Block ${...} variable expansion containing shell metacharacters (pipes, redirects, &&/||)
+	const varExpRe = /\$\{([^}]*)\}/;
+	const varMatch = command.match(varExpRe);
+	if (varMatch && /[|&;<>]/.test(varMatch[1])) {
+		return "Command blocked by safe_bash: variable expansion with shell metacharacters is not allowed";
+	}
+
 	return null;
 }
 

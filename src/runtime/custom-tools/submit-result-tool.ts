@@ -12,6 +12,7 @@
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@sinclair/typebox";
 import type { YieldResult } from "../yield-handler.ts";
+import { logInternalError } from "../../utils/internal-error.ts";
 
 const SubmitResultParams = Type.Object({
 	summary: Type.String({ description: "Summary of completed work." }),
@@ -81,8 +82,8 @@ export function createSubmitResultTool(
 			};
 			try {
 				onYield(result);
-			} catch {
-				// Yield handler failure should not prevent tool response
+			} catch (error) {
+				logInternalError("submit-result-tool.yield", error, toolCallId);
 			}
 			return response;
 		},
