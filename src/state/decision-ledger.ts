@@ -342,7 +342,7 @@ export function decayCandidate(runId: string, candidate: string): RolloutEntry {
 	if (!existsSync(dir)) {
 		mkdirSync(dir, { recursive: true });
 	}
-	writeFileSync(ledgerPath, ledger.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+	atomicWriteFile(ledgerPath, ledger.map((e) => JSON.stringify(e)).join("\n") + "\n");
 
 	return entry;
 }

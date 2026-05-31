@@ -262,6 +262,14 @@ export async function resumeLiveAgent(agentIdOrTaskId: string, prompt: string): 
 export function trackLiveAgentToolStart(agentIdOrTaskId: string, toolName: string): void {
 	const handle = getLiveAgent(agentIdOrTaskId);
 	if (!handle) return;
+	// Evict oldest entries if at capacity
+	const MAX_TRACKED_TOOLS = 1000;
+	if (handle.activity.activeTools.size >= MAX_TRACKED_TOOLS) {
+		const firstKey = handle.activity.activeTools.keys().next().value;
+		if (firstKey !== undefined) {
+			handle.activity.activeTools.delete(firstKey);
+		}
+	}
 	handle.activity.activeTools.set(toolName, toolName);
 	handle.activity.toolUses++;
 	handle.updatedAt = new Date().toISOString();

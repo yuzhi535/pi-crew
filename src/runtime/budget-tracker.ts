@@ -220,23 +220,33 @@ export class TeamBudgetTracker extends EventEmitter {
     // The actual abort happens once exhausted() first returns true
     const signal = this.abortController.signal;
 
+    // Track the interval ID for cleanup
+    let checkInterval: NodeJS.Timeout | null = null;
+
     // Set up interval check (cleared on abort)
-    const checkInterval = setInterval(() => {
+    checkInterval = setInterval(() => {
       if (tracker.exhausted() && !signal.aborted) {
         tracker.abortController!.abort(
           new Error(`Budget exhausted: ${tracker.spent()}/${tracker.total}`),
         );
-        clearInterval(checkInterval);
+        if (checkInterval) {
+          clearInterval(checkInterval);
+          checkInterval = null;
+        }
       }
     }, 1000);
 
     // Clear interval when signal is already aborted
-    if (signal.aborted) {
+    if (signal.aborted && checkInterval) {
       clearInterval(checkInterval);
+      checkInterval = null;
     } else {
       // Clean up interval when abort fires
       const cleanup = (): void => {
-        clearInterval(checkInterval);
+        if (checkInterval) {
+          clearInterval(checkInterval);
+          checkInterval = null;
+        }
       };
       signal.addEventListener("abort", cleanup, { once: true });
     }

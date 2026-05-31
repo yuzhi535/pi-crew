@@ -69,6 +69,8 @@ export class AnchorManager {
 	private anchors: Map<string, Anchor> = new Map();
 	private sessionAnchors: Map<string, string> = new Map();
 	private options: AnchorManagerOptions;
+	private readonly MAX_ANCHORS = 1000;
+	private readonly TTL_MS = 300000; // 5 minutes
 
 	constructor(options: AnchorManagerOptions = {}) {
 		this.options = options;
@@ -84,6 +86,12 @@ export class AnchorManager {
 	 */
 	setAnchor(sessionId: string, context: Record<string, unknown> = {}): string {
 		const anchorId = this.generateAnchorId();
+
+		// Evict expired or overflow anchors before adding new one
+		this.evictExpiredAnchors();
+		if (this.anchors.size >= this.MAX_ANCHORS) {
+			this.evictOldestAnchor();
+		}
 
 		const anchor: Anchor = {
 			id: anchorId,
@@ -108,6 +116,7 @@ export class AnchorManager {
 	 * @returns The anchor if exists, null otherwise
 	 */
 	getAnchor(sessionId: string): Anchor | null {
+		this.evictExpiredAnchors();
 		const anchorId = this.sessionAnchors.get(sessionId);
 		if (!anchorId) return null;
 		return this.anchors.get(anchorId) ?? null;
@@ -359,6 +368,40 @@ export class AnchorManager {
 	 */
 	private generateAnchorId(): string {
 		return `anchor-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+	}
+
+	/**
+	 * Evict expired anchors based on TTL.
+	 */
+	private evictExpiredAnchors(): void {
+		const now = Date.now();
+		for (const [anchorId, anchor] of this.anchors) {
+			if (now - anchor.createdAt > this.TTL_MS) {
+				this.sessionAnchors.delete(anchor.sessionId);
+				this.anchors.delete(anchorId);
+			}
+		}
+	}
+
+	/**
+	 * Evict the oldest anchor (LRU eviction when at max capacity).
+	 */
+	private evictOldestAnchor(): void {
+		let oldestAnchorId: string | null = null;
+		let oldestTime = Infinity;
+		for (const [anchorId, anchor] of this.anchors) {
+			if (anchor.createdAt < oldestTime) {
+				oldestTime = anchor.createdAt;
+				oldestAnchorId = anchorId;
+			}
+		}
+		if (oldestAnchorId) {
+			const anchor = this.anchors.get(oldestAnchorId);
+			if (anchor) {
+				this.sessionAnchors.delete(anchor.sessionId);
+			}
+			this.anchors.delete(oldestAnchorId);
+		}
 	}
 }
 

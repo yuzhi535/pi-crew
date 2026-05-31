@@ -381,6 +381,17 @@ export class HiddenHandoffService {
 
 		this.sendTimestamps.set(recipient, recentTimestamps);
 	}
+
+	/**
+	 * Dispose of resources.
+	 * Call this when the service is no longer needed.
+	 */
+	dispose(): void {
+		this.mailbox = null;
+		this.eventEmitter = null;
+		this.getParentAgentIdFn = null;
+		this.sendTimestamps.clear();
+	}
 }
 
 /**

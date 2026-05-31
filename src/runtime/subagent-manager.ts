@@ -220,7 +220,7 @@ export class SubagentManager {
 			const record = this.records.get(id);
 			if (!record) return undefined;
 			if (record.status !== "running" && record.status !== "queued") return record;
-			if (record.promise) await record.promise.catch(() => { /* status already set to error */ });
+			if (record.promise) await record.promise.catch((error) => { logInternalError("subagent-manager.waitForRecord", error, `id=${id}`); });
 			else await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 	}

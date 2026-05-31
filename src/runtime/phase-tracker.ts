@@ -354,4 +354,15 @@ export class PhaseTracker extends EventEmitter {
     this.currentPhaseName = null;
     this.phaseMetrics.clear();
   }
+
+  /**
+   * Dispose of resources (EventEmitter listeners).
+   * Call this when the tracker is no longer needed.
+   */
+  dispose(): void {
+    this.removeAllListeners();
+    this.phases = [];
+    this.currentPhaseName = null;
+    this.phaseMetrics.clear();
+  }
 }
