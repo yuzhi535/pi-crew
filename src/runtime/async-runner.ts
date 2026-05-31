@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -150,14 +150,18 @@ export async function spawnBackgroundTeamRun(manifest: TeamRunManifest): Promise
 	//
 	// IMPORTANT: session_shutdown handlers must NOT kill async runners.
 	// See register.ts cleanupRuntime — the kill loop was commented out.
-	const child = spawn(process.execPath, command.args, {
+	// Type assertion for setsid is necessary because Node.js types don't include it
+	// in SpawnOptions on all platforms, but it's supported on Unix systems.
+	// Use explicit cast through unknown to satisfy TypeScript's strict type checking.
+	const spawnOpts = {
 		cwd: manifest.cwd,
 		detached: true,
-		setsid: true as any,
+		setsid: true,
 		stdio: ["ignore", "pipe", "pipe"],
 		env: envWithoutParentPid,
 		windowsHide: true,
-	} as any) as any;
+	} as unknown as Parameters<typeof spawn>[2];
+	const child = spawn(process.execPath, command.args, spawnOpts);
 	child.on("error", (error: Error) => {
 		console.error(`[pi-crew] async spawn failed: ${error.message}`);
 	});

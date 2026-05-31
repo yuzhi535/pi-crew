@@ -860,7 +860,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 							.then(({ stopWatchdog }) => {
 								stopWatchdog(runId);
 							})
-							.catch(() => {});
+							.catch((error) => logInternalError("register.foreground-watchdog", error, `runId=${runId}`));
 					}
 					const ownerCurrent = isContextCurrent(ctx, ownerGeneration);
 					if (ctx.hasUI) {
@@ -943,9 +943,11 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	function getPiEvents():
 		| Parameters<typeof registerPiCrewRpc>[0]
 		| undefined {
-		if (pi && typeof pi === "object" && "events" in pi)
-			return (pi as unknown as Record<string, unknown>)
-				.events as Parameters<typeof registerPiCrewRpc>[0];
+		if (pi && typeof pi === "object" && "events" in pi) {
+			// pi.events may not be typed in the original pi type, so cast through unknown
+			const events = (pi as { events?: Parameters<typeof registerPiCrewRpc>[0] }).events;
+			return events;
+		}
 		return undefined;
 	}
 	rpcHandle = registerPiCrewRpc(getPiEvents(), () => currentCtx);
@@ -1499,7 +1501,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			// Health notifications: only warn about genuinely running runs
 			// Filter to only current session's runs to prevent cross-session notification leakage
 			const currentSessionGen = sessionGeneration;
-			const currentSessionId = currentCtx ? (currentCtx as unknown as Record<string, unknown>).sessionId as string | undefined : undefined;
+			const currentSessionId = currentCtx ? (currentCtx as { sessionId?: string }).sessionId : undefined;
 			const sessionManifests = manifests.filter(
 				(run) =>
 					!run.ownerSessionId ||
@@ -1759,19 +1761,13 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	// AGENTS.md requires confirm=true for management deletes.
 	pi.on("tool_call", async (event, ctx) => {
 		if (event.toolName !== "team") return;
-		const input = (event as { input?: Record<string, unknown> }).input;
-		if (!input) return;
-		const action =
-			typeof input.action === "string" ? input.action : undefined;
-		const destructiveActions = new Set([
-			"delete",
-			"forget",
-			"prune",
-			"cleanup",
-		]);
+		const rawInput = event.input;
+		if (!rawInput || typeof rawInput !== "object") return;
+		const input = rawInput as { action?: unknown; confirm?: unknown; force?: unknown };
+		const action = typeof input.action === "string" ? input.action : undefined;
+		const destructiveActions = new Set(["delete", "forget", "prune", "cleanup"]);
 		if (!action || !destructiveActions.has(action)) return;
-		const forceBypassesReferenceChecks =
-			action === "delete" && input.force === true;
+		const forceBypassesReferenceChecks = action === "delete" && input.force === true;
 		if (input.confirm === true || forceBypassesReferenceChecks) return;
 		return {
 			block: true,

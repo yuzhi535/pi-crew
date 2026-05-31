@@ -15,6 +15,7 @@ import { activeRunEntries, unregisterActiveRun, readActiveRunRegistry } from "..
 import { resolveRealContainedPath } from "../utils/safe-paths.ts";
 import { projectCrewRoot, userCrewRoot } from "../utils/paths.ts";
 import { terminateLiveAgentsForRun } from "./live-agent-manager.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 export interface RecoveryPlan {
 	runId: string;
@@ -159,7 +160,7 @@ export function cancelOrphanedRuns(
 			cancelled.push(manifest.runId);
 			cancelledRun = true;
 		});
-		if (cancelledRun) void terminateLiveAgentsForRun(manifest.runId, "cancelled", appendEvent, loaded.manifest.eventsPath).catch(() => {});
+		if (cancelledRun) void terminateLiveAgentsForRun(manifest.runId, "cancelled", appendEvent, loaded.manifest.eventsPath).catch((error) => logInternalError("crash-recovery.orphan.terminate", error, `runId=${manifest.runId}`));
 	}
 
 	return { cancelled, skipped };
@@ -268,7 +269,7 @@ export function purgeStaleActiveRunIndex(staleThresholdMs = 300_000, now = Date.
 							saveRunTasks(fullLoaded.manifest, repairedTasks);
 							for (const task of repairedTasks) { try { upsertCrewAgent(fullLoaded.manifest, recordFromTask(fullLoaded.manifest, task, "scaffold")); } catch { /* non-critical */ } }
 							updateRunStatus(fullLoaded.manifest, "cancelled", "Orphaned run: worker process dead and no recent activity");
-							void terminateLiveAgentsForRun(fullLoaded.manifest.runId, "cancelled", appendEvent, fullLoaded.manifest.eventsPath).catch(() => {});
+							void terminateLiveAgentsForRun(fullLoaded.manifest.runId, "cancelled", appendEvent, fullLoaded.manifest.eventsPath).catch((error) => logInternalError("crash-recovery.pid-dead.terminate", error, `runId=${fullLoaded.manifest.runId}`));
 						}
 					} catch {
 						// Best-effort manifest cleanup
@@ -299,7 +300,7 @@ export function purgeStaleActiveRunIndex(staleThresholdMs = 300_000, now = Date.
 						saveRunTasks(fullLoaded.manifest, repairedTasks);
 						for (const task of repairedTasks) { try { upsertCrewAgent(fullLoaded.manifest, recordFromTask(fullLoaded.manifest, task, "scaffold")); } catch { /* non-critical */ } }
 						updateRunStatus(fullLoaded.manifest, "cancelled", "Orphaned run: no async worker and no manifest update in over " + Math.round(staleThresholdMs / 60000) + " minutes");
-						void terminateLiveAgentsForRun(fullLoaded.manifest.runId, "cancelled", appendEvent, fullLoaded.manifest.eventsPath).catch(() => {});
+						void terminateLiveAgentsForRun(fullLoaded.manifest.runId, "cancelled", appendEvent, fullLoaded.manifest.eventsPath).catch((error) => logInternalError("crash-recovery.pid-dead.terminate", error, `runId=${fullLoaded.manifest.runId}`));
 					}
 				} catch {
 					// Best-effort
@@ -335,7 +336,7 @@ export function reconcileAllStaleRuns(cwd: string, manifestCache: ManifestCache,
 				for (const task of result.repairedTasks) { try { upsertCrewAgent(fresh.manifest, recordFromTask(fresh.manifest, task, "scaffold")); } catch { /* non-critical */ } }
 			}
 				updateRunStatus(fresh.manifest, "failed", `Stale run reconciled: ${result.detail}`);
-				void terminateLiveAgentsForRun(fresh.manifest.runId, "failed", appendEvent, fresh.manifest.eventsPath).catch(() => {});
+				void terminateLiveAgentsForRun(fresh.manifest.runId, "failed", appendEvent, fresh.manifest.eventsPath).catch((error) => logInternalError("crash-recovery.reconcile.terminate", error, `runId=${fresh.manifest.runId}`));
 				appendEvent(fresh.manifest.eventsPath, { type: "crew.run.reconciled_stale", runId: manifest.runId, message: result.detail, data: { verdict: result.verdict } });
 			}
 			if (result.verdict !== "healthy") {

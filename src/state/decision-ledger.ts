@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import { atomicWriteFile } from "./atomic-write.ts";
 
 export interface CoherenceMark {
 	matchesPrior: boolean;
@@ -94,6 +95,7 @@ export function initLedger(runId: string): void {
 /**
  * Append a new entry to the decision ledger.
  * Automatically computes and adds coherence marks.
+ * FIX: Uses atomic write to prevent partial writes on crash.
  */
 export function appendEntry(runId: string, entry: RolloutEntry): RolloutEntry {
 	const ledgerPath = getLedgerPath(runId);
@@ -114,9 +116,11 @@ export function appendEntry(runId: string, entry: RolloutEntry): RolloutEntry {
 		coherenceMark,
 	};
 
-	// Append to JSONL file
+	// Append to JSONL file using atomic write to prevent corruption
 	const line = JSON.stringify(entryWithCoherence) + "\n";
-	writeFileSync(ledgerPath, line, { flag: "a", encoding: "utf-8" });
+	// Use atomic write: read existing, append new entry, write atomically
+	const existingContent = existsSync(ledgerPath) ? readFileSync(ledgerPath, "utf-8") : "";
+	atomicWriteFile(ledgerPath, existingContent + line);
 	return entryWithCoherence;
 }
 
@@ -233,7 +237,7 @@ function overrideLastEntry(runId: string, coherenceMark: import("./types.js").Co
 	ledger[lastIndex] = { ...ledger[lastIndex], coherenceMark };
 	// Rewrite entire ledger to preserve all entries
 	const ledgerPath = getLedgerPath(runId);
-	writeFileSync(ledgerPath, ledger.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+	atomicWriteFile(ledgerPath, ledger.map((e) => JSON.stringify(e)).join("\n") + "\n");
 	return ledger[lastIndex];
 }
 
@@ -279,19 +283,19 @@ export function promoteCandidate(runId: string, candidate: string): RolloutEntry
 		ledger.push(entry);
 	}
 
-	// Rewrite entire ledger to preserve all entries
+	// Rewrite entire ledger atomically to preserve all entries
 	const ledgerPath = getLedgerPath(runId);
 	const dir = dirname(ledgerPath);
 	if (!existsSync(dir)) {
 		mkdirSync(dir, { recursive: true });
 	}
-	writeFileSync(ledgerPath, ledger.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+	atomicWriteFile(ledgerPath, ledger.map((e) => JSON.stringify(e)).join("\n") + "\n");
 
 	return entry;
 }
 
 /**
- * Decay a candidate by marking it as decayed with proper coherence.
+ * Decay a candidate by marking it as accepted with proper coherence.
  */
 export function decayCandidate(runId: string, candidate: string): RolloutEntry {
 	const latestDecision = getLatestDecision(runId);

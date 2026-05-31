@@ -18,6 +18,7 @@ import { readForegroundControlStatus, writeForegroundInterruptRequest } from "..
 import { followUpLiveAgent, getLiveAgent, listActiveLiveAgents, resumeLiveAgent, steerLiveAgent, stopLiveAgent } from "../../subagents/live/manager.ts";
 import { appendLiveAgentControlRequest } from "../../subagents/live/control.ts";
 import { liveControlRealtimeMessage, publishLiveControlRealtime } from "../../subagents/live/realtime.ts";
+import { logInternalError } from "../../utils/internal-error.ts";
 import { buildCapabilityInventory } from "../../runtime/capability-inventory.ts";
 import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
@@ -125,7 +126,7 @@ export async function handleApi(params: TeamToolParamsValue, ctx: TeamContext): 
 				saveRunTasks(manifest, tasks);
 				appendEvent(manifest.eventsPath, { type: "plan.cancelled", runId: manifest.runId, taskId: approval.planTaskId, message: "Adaptive implementation plan was cancelled.", metadata: { provenance: "api" } });
 				manifest = updateRunStatus(manifest, "cancelled", "Plan approval was cancelled.");
-				void terminateLiveAgentsForRun(manifest.runId, "cancelled", appendEvent, manifest.eventsPath).catch(() => {});
+				void terminateLiveAgentsForRun(manifest.runId, "cancelled", appendEvent, manifest.eventsPath).catch((error) => logInternalError("team-tool.cancel-plan.terminate", error, `runId=${manifest.runId}`));
 				return result(JSON.stringify({ planApproval: manifest.planApproval, cancelledTasks: tasks.filter((task) => task.status === "cancelled").map((task) => task.id) }, null, 2), { action: "api", status: "ok", runId: manifest.runId, artifactsRoot: manifest.artifactsRoot });
 			});
 		} catch (error) {

@@ -4,10 +4,22 @@ export interface ModelEntry {
 	provider: string;
 }
 
+/**
+ * Core Model interface representing a resolved model instance.
+ * Used by resolveModel return type to ensure proper typing.
+ */
+export interface Model {
+	id: string;
+	name?: string;
+	provider?: string;
+	// Allow additional properties from the registry
+	[key: string]: unknown;
+}
+
 export interface ModelRegistry {
-	find(provider: string, modelId: string): any;
-	getAll(): any[];
-	getAvailable?(): any[];
+	find(provider: string, modelId: string): Model | undefined;
+	getAll(): Model[];
+	getAvailable?(): Model[];
 }
 
 /**
@@ -15,7 +27,7 @@ export interface ModelRegistry {
  * Exact match first ("provider/modelId"), then fuzzy match.
  * Returns Model on success, error message string on failure.
  */
-export function resolveModel(input: string, registry: ModelRegistry): any | string {
+export function resolveModel(input: string, registry: ModelRegistry): Model | string {
 	const all = (registry.getAvailable?.() ?? registry.getAll()) as ModelEntry[];
 	const availableSet = new Set(all.map((m) => `${m.provider}/${m.id}`.toLowerCase()));
 

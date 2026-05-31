@@ -105,6 +105,41 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+function isString(value: unknown): value is string {
+	return typeof value === "string";
+}
+
+/**
+ * Type-safe extractor for message role from streaming events.
+ * Handles the case where message may be a Record with a role field.
+ */
+function extractMessageRole(obj: Record<string, unknown> | undefined): string | undefined {
+	const message = obj?.message ? asRecord(obj.message) : undefined;
+	return isString(message?.role) ? message.role : undefined;
+}
+
+/**
+ * Type-safe extractor for message usage from streaming events.
+ * Handles the case where message may be a Record with usage data.
+ */
+function extractMessageUsage(obj: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+	const message = obj?.message ? asRecord(obj.message) : undefined;
+	return message?.usage && typeof message.usage === "object" ? message.usage as Record<string, unknown> : undefined;
+}
+
+/**
+ * Type-safe extractor for tool name from streaming events.
+ * Handles various event structures: { tool: { name } }, { toolName }, { name }.
+ */
+function extractToolName(obj: Record<string, unknown> | undefined): string | undefined {
+	if (!obj) return undefined;
+	const tool = asRecord(obj.tool);
+	if (isString(tool?.name)) return tool.name;
+	if (isString(obj.toolName)) return obj.toolName;
+	if (isString(obj.name)) return obj.name;
+	return undefined;
+}
+
 function textFromContent(content: unknown): string[] {
 	if (typeof content === "string") return [content];
 	if (!Array.isArray(content)) return [];
@@ -477,8 +512,8 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 					}
 				}
 				// Accumulate lifetime usage that survives compaction
-				if (obj?.type === "message_end" && (obj as any).message?.role === "assistant") {
-					const u = (obj as any).message?.usage;
+				if (obj?.type === "message_end" && extractMessageRole(obj) === "assistant") {
+					const u = extractMessageUsage(obj);
 					if (u) {
 						trackTaskUsage(input.task.id, {
 							input: typeof u.input === "number" ? u.input : 0,
@@ -497,11 +532,11 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 				}
 				// G2: Track tool start/end for activity display
 				if (obj?.type === "tool_use" || obj?.type === "tool_execution_start") {
-					const toolName = (obj as any).tool?.name ?? (obj as any).toolName ?? (obj as any).name ?? "unknown";
+					const toolName = extractToolName(obj) ?? "unknown";
 					trackLiveAgentToolStart(agentId, toolName);
 				}
 				if (obj?.type === "tool_result" || obj?.type === "tool_execution_end") {
-					const toolName = (obj as any).tool?.name ?? (obj as any).toolName ?? (obj as any).name ?? "unknown";
+					const toolName = extractToolName(obj) ?? "unknown";
 					trackLiveAgentToolEnd(agentId, toolName);
 				}
 				// Phase 1: collect events for yield detection

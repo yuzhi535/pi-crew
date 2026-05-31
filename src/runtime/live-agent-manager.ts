@@ -103,12 +103,12 @@ export function registerLiveAgent(input: Omit<LiveAgentHandle, "createdAt" | "up
 	if (handle.pendingSteers.length && typeof handle.session.steer === "function") {
 		const pending = [...handle.pendingSteers];
 		handle.pendingSteers.length = 0;
-		for (const message of pending) void handle.session.steer(message).catch(() => {});
+		for (const message of pending) void handle.session.steer(message).catch((error) => logInternalError("live-agent-manager.steer", error, `agentId=${handle.agentId}`));
 	}
 	if (handle.pendingFollowUps.length && typeof handle.session.prompt === "function") {
 		const pending = [...handle.pendingFollowUps];
 		handle.pendingFollowUps.length = 0;
-		for (const message of pending) void handle.session.prompt(message, { source: "api", expandPromptTemplates: false }).catch(() => {});
+		for (const message of pending) void handle.session.prompt(message, { source: "api", expandPromptTemplates: false }).catch((error) => logInternalError("live-agent-manager.prompt", error, `agentId=${handle.agentId}`));
 	}
 	return handle;
 }
@@ -328,7 +328,7 @@ export function sendIrcMessage(targetAgentId: string, message: IrcMessage): void
 	// Fallback: inject as prompt (blocking)
 	if (typeof handle.session.prompt === "function") {
 		const ircPrompt = `[Message from ${message.from}] ${message.content}`;
-		void handle.session.prompt(ircPrompt, { source: "api", expandPromptTemplates: false }).catch(() => {});
+		void handle.session.prompt(ircPrompt, { source: "api", expandPromptTemplates: false }).catch((error) => logInternalError("live-agent-manager.irc-deliver", error, `agentId=${handle.agentId}`));
 	}
 }
 
@@ -360,7 +360,7 @@ export function broadcastIrcMessage(fromAgentId: string, message: IrcMessage): s
 		// Fallback: inject as prompt
 		if (typeof handle.session.prompt === "function") {
 			const ircPrompt = `[Broadcast from ${message.from}] ${message.content}`;
-			void handle.session.prompt(ircPrompt, { source: "api", expandPromptTemplates: false }).catch(() => {});
+			void handle.session.prompt(ircPrompt, { source: "api", expandPromptTemplates: false }).catch((error) => logInternalError("live-agent-manager.irc-broadcast", error, `agentId=${handle.agentId}`));
 		}
 		recipients.push(handle.agentId);
 	}

@@ -458,7 +458,7 @@ export async function runTeamTask(
 							taskId: task.id,
 							message: `Worker lifecycle: ${event.type}${event.error ? ` error=${event.error}` : ""}${event.exitCode != null ? ` exit=${event.exitCode}` : ""}`,
 							data: { ...event },
-						});
+						}).catch((error) => logInternalError("task-runner.lifecycle-event", error, `taskId=${task.id}, type=${event.type}`));
 					},
 					onStdoutLine: (line) => {
 						appendCrewAgentOutput(manifest, task.id, line);

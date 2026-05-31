@@ -80,6 +80,7 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.49",
+    "acorn": "^8.16.0",
     "ajv": "^8.20.0",
     "cli-highlight": "^2.1.11",
     "diff": "^5.2.0",

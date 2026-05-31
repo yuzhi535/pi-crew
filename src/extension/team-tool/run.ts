@@ -13,6 +13,7 @@ import { PipelineRunner, type PipelineWorkflow, type PipelineStage } from "../..
 import type { executeTeamRun as ExecuteTeamRunFn } from "../../runtime/team-runner.ts";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- type-only import for TS inference
 const _typeCheck: typeof ExecuteTeamRunFn = null as never as typeof ExecuteTeamRunFn;
+import { logInternalError } from "../../utils/internal-error.ts";
 let _cachedExecuteTeamRun: typeof ExecuteTeamRunFn | undefined;
 async function executeTeamRun(...args: Parameters<typeof ExecuteTeamRunFn>): Promise<Awaited<ReturnType<typeof ExecuteTeamRunFn>>> {
 	if (!_cachedExecuteTeamRun) {
@@ -174,7 +175,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	const runtimeResolution = runtimeResolutionState(runtime);
 	const executionManifest = { ...updatedManifest, runtimeResolution, runConfig: executedConfig, updatedAt: new Date().toISOString() };
 	atomicWriteJson(paths.manifestPath, executionManifest);
-	appendEventAsync(executionManifest.eventsPath, { type: "runtime.resolved", runId: executionManifest.runId, message: `Runtime resolved: ${runtime.kind} safety=${runtime.safety}`, data: { runtimeResolution } }).catch(() => {});
+	appendEventAsync(executionManifest.eventsPath, { type: "runtime.resolved", runId: executionManifest.runId, message: `Runtime resolved: ${runtime.kind} safety=${runtime.safety}`, data: { runtimeResolution } }).catch((error) => logInternalError("team-tool.run.resolved", error, `runId=${executionManifest.runId}`));
 	const runAsync = params.async ?? executedConfig.asyncByDefault ?? false;
 	let effectiveRuntime = runtime;
 	if (runAsync && runtime.kind === "live-session") {
@@ -184,7 +185,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	const effectiveManifest = effectiveRuntime !== runtime ? { ...executionManifest, runtimeResolution: effectiveRuntimeResolution, updatedAt: new Date().toISOString() } : executionManifest;
 	if (effectiveRuntime !== runtime) {
 		atomicWriteJson(paths.manifestPath, effectiveManifest);
-		appendEventAsync(effectiveManifest.eventsPath, { type: "runtime.resolved", runId: effectiveManifest.runId, message: `Runtime overridden: child-process (async fallback from live-session)`, data: { runtimeResolution: effectiveRuntimeResolution } }).catch(() => {});
+		appendEventAsync(effectiveManifest.eventsPath, { type: "runtime.resolved", runId: effectiveManifest.runId, message: `Runtime overridden: child-process (async fallback from live-session)`, data: { runtimeResolution: effectiveRuntimeResolution } }).catch((error) => logInternalError("team-tool.run.override", error, `runId=${effectiveManifest.runId}`));
 	}
 	if (runAsync) {
 		if (effectiveRuntime.safety === "blocked") {

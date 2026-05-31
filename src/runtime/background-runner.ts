@@ -24,6 +24,7 @@ import { directTeamAndWorkflowFromRun } from "./direct-run.ts";
 import { expandParallelResearchWorkflow } from "./parallel-research.ts";
 import { writeAsyncStartMarker } from "./async-marker.ts";
 import { startParentGuard, stopParentGuard } from "./parent-guard.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 /**
  * Heartbeat mechanism: periodically write a heartbeat file so the stale reconciler
@@ -323,7 +324,7 @@ async function main(): Promise<void> {
 			if (loaded) {
 				// LAZY: live-agent-manager only needed on failure cleanup path; avoid module load at hot path.
 				const { terminateLiveAgentsForRun } = await import("./live-agent-manager.ts");
-				void terminateLiveAgentsForRun(loaded.manifest.runId, "failed", appendEvent, loaded.manifest.eventsPath).catch(() => {});
+				void terminateLiveAgentsForRun(loaded.manifest.runId, "failed", appendEvent, loaded.manifest.eventsPath).catch((error) => logInternalError("background-runner.terminate", error, `runId=${loaded.manifest.runId}`));
 			}
 		} catch { /* best-effort */ }
 		const message = error instanceof Error ? error.message : String(error);

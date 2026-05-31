@@ -36,6 +36,7 @@ import { registerRunPromise, resolveRunPromise, rejectRunPromise } from "./run-t
 import { clearTrackedTaskUsage } from "./usage-tracker.ts";
 import { CrewCancellationError, buildSyntheticTerminalEvidence, cancellationReasonFromSignal } from "./cancellation.ts";
 import { effectivenessPolicyDecision, evaluateRunEffectiveness, formatRunEffectivenessLines } from "./effectiveness.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 export interface ExecuteTeamRunInput {
 	manifest: TeamRunManifest;
@@ -279,7 +280,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		resolveRunPromise(manifest.runId, result);
 		cleanupUsage();
 		// Terminate live agents for this run — agents are done when the run ends.
-		void terminateLiveAgentsForRun(manifest.runId, "completed", appendEvent, manifest.eventsPath).catch(() => {});
+		void terminateLiveAgentsForRun(manifest.runId, "completed", appendEvent, manifest.eventsPath).catch((error) => logInternalError("team-runner.completed.terminate", error, `runId=${manifest.runId}`));
 
 		// Emit run completion hook (100% reliable, fire-and-forget)
 		crewHooks.emit({ type: "run_completed", timestamp: new Date().toISOString(), runId: manifest.runId, data: { status: result.manifest.status, taskCount: result.tasks.length } });
@@ -519,7 +520,7 @@ async function executeTeamRunCore(
 						attemptId: (attempt) => `${manifest.runId}:${task.id}:attempt-${attempt}`,
 						onAttemptFailed: (attempt, error, delayMs, info) => {
 							lastAttemptId = info.attemptId;
-							appendEventAsync(manifest.eventsPath, { type: "crew.task.retry_attempt", runId: manifest.runId, taskId: task.id, message: error.message, data: { attempt, attemptId: info.attemptId, delayMs }, metadata: { attemptId: info.attemptId } }).catch(() => {});
+							appendEventAsync(manifest.eventsPath, { type: "crew.task.retry_attempt", runId: manifest.runId, taskId: task.id, message: error.message, data: { attempt, attemptId: info.attemptId, delayMs }, metadata: { attemptId: info.attemptId } }).catch((error) => logInternalError("team-runner.retry-attempt", error, `taskId=${task.id}`));
 							input.metricRegistry?.histogram("crew.task.retry_delay_ms", "Retry backoff delay, milliseconds").observe({ runId: manifest.runId, taskId: task.id }, delayMs);
 						},
 						onRetryGivenUp: (attempts, error, info) => {
@@ -536,7 +537,7 @@ async function executeTeamRunCore(
 						const freshManifest = fresh?.manifest ?? manifest;
 						const freshTasks = fresh?.tasks ?? tasks;
 						const cancelledTasks = freshTasks.map((item) => item.id === task.id && (item.status === "queued" || item.status === "running") ? { ...item, status: "cancelled" as const, finishedAt: new Date().toISOString(), error: `${reason.message} (${reason.code})` } : item);
-						appendEventAsync(freshManifest.eventsPath, { type: "task.cancelled", runId: freshManifest.runId, taskId: task.id, message: reason.message, data: { reason, phase: "retry" }, metadata: lastAttemptId ? { attemptId: lastAttemptId } : undefined }).catch(() => {});
+						appendEventAsync(freshManifest.eventsPath, { type: "task.cancelled", runId: freshManifest.runId, taskId: task.id, message: reason.message, data: { reason, phase: "retry" }, metadata: lastAttemptId ? { attemptId: lastAttemptId } : undefined }).catch((error) => logInternalError("team-runner.cancelled", error, `taskId=${task.id}`));
 						return { manifest: updateRunStatus(freshManifest, "cancelled", reason.message), tasks: cancelledTasks };
 					}
 					if (lastFailed) return lastFailed;
