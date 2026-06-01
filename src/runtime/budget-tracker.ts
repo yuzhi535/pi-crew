@@ -298,6 +298,23 @@ export class TeamBudgetTracker extends EventEmitter {
       percentUsed: this.percentUsed(),
     };
   }
+
+  /**
+   * Dispose of resources (EventEmitter listeners, timers).
+   * Call this when the tracker is no longer needed.
+   */
+  dispose(): void {
+    this.removeAllListeners();
+    if (this.abortInterval) {
+      clearInterval(this.abortInterval);
+      this.abortInterval = null;
+    }
+    this.abortController = null;
+    this.used = 0;
+    this.phaseUsage = [];
+    this.warningEmitted = false;
+    this.exhaustedEmitted = false;
+  }
 }
 
 /**

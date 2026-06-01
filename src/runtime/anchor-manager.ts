@@ -4,6 +4,11 @@
 const MAX_ANCHORS = 50;
 
 /**
+ * Maximum number of handoffs per anchor to prevent memory leaks.
+ */
+const MAX_HANDOFFS_PER_ANCHOR = 100;
+
+/**
  * AnchorManager - Creates shared summary points where multiple handoffs accumulate.
  * 
  * Based on pi-boomerang's anchorMode pattern:
@@ -205,6 +210,10 @@ export class AnchorManager {
 			anchor = implicitAnchor;
 		}
 
+		// Enforce handoff limit per anchor to prevent unbounded growth
+		if (anchor!.handoffs.length >= MAX_HANDOFFS_PER_ANCHOR) {
+			anchor!.handoffs.shift();
+		}
 		anchor!.handoffs.push(handoff);
 
 		this.options.eventEmitter?.emit("anchor:handoffAccumulated", {
