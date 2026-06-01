@@ -35,16 +35,32 @@ export function isSecretKey(keyName: string): boolean {
 
 // Linear-time Authorization header redaction
 export function redactAuthHeader(line: string): string {
-	const idx = line.toLowerCase().indexOf("authorization:");
-	if (idx === -1) return line;
+	const lower = line.toLowerCase();
+	const authIdx = lower.indexOf("authorization:");
+	if (authIdx === -1) return line;
 	
-	// Find end of value (next newline or carriage return)
-	let end = idx + 14; // length of "authorization:"
-	while (end < line.length && line[end] !== "\r" && line[end] !== "\n") {
-		end++;
+	// Verify word boundary - must be at start of line or preceded by whitespace/comma/brace
+	if (authIdx > 0) {
+		const before = line[authIdx - 1];
+		if (before !== ' ' && before !== ',' && before !== '{' && before !== '[' && before !== '"' && before !== '\r' && before !== '\n') {
+			return line; // Not a word boundary
+		}
 	}
 	
-	return line.substring(0, end) + " ***" + (end < line.length ? line.substring(end) : "");
+	// Check if this is followed by Bearer token (don't redact Bearer tokens separately)
+	// Look for "Bearer" after "authorization:"
+	const afterAuth = lower.substring(authIdx + 14).trimStart();
+	if (!afterAuth.startsWith('bearer ')) {
+		// No Bearer token, this is a regular Authorization header - redact it
+		let end = authIdx + 14;
+		while (end < line.length && line[end] !== "\r" && line[end] !== "\n") {
+			end++;
+		}
+		return line.substring(0, end) + " ***" + (end < line.length ? line.substring(end) : "");
+	}
+	
+	// It's a Bearer token format - don't redact here, let redactBearerTokens handle it
+	return line;
 }
 
 // Linear-time Bearer token redaction
@@ -55,15 +71,28 @@ export function redactBearerTokens(line: string): string {
 	
 	while (i < line.length) {
 		if (upper.startsWith("BEARER ", i)) {
+			// Check word boundary: preceded by start, space, comma, brace, or newline
+			if (i > 0) {
+				const before = line[i - 1];
+				if (before !== ' ' && before !== ',' && before !== '{' && before !== '[' && before !== '"' && before !== '\r' && before !== '\n') {
+					result.push(line[i]);
+					i++;
+					continue;
+				}
+			}
+			
+			// Found "Bearer " - now find the token
+			const bearerPrefix = line.substring(i, i + 7); // "Bearer "
 			let j = i + 7;
 			let tokenLen = 0;
-			// Count valid token characters (max 200 to prevent runaway)
 			while (j < line.length && tokenLen < 200 && /[A-Za-z0-9._~+/-]/.test(line[j])) {
 				j++;
 				tokenLen++;
 			}
+			
 			if (tokenLen >= 8) {
-				result.push(line.substring(i, j) + "***");
+				// Replace with Bearer + *** (redact the token)
+				result.push(bearerPrefix + "***");
 				i = j;
 				continue;
 			}
@@ -82,10 +111,70 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function redactSecretString(value: string): string {
-	return value
-		.replace(PEM_PRIVATE_KEY_PATTERN, "***")
-		.replace(redactAuthHeader(value), "***")
-		.replace(redactBearerTokens(value), "***");
+	let result = value;
+	
+	// Replace PEM private keys
+	result = result.replace(PEM_PRIVATE_KEY_PATTERN, "***");
+	
+	// Replace Authorization headers (non-Bearer format)
+	result = redactAuthHeader(result);
+	
+	// Replace Bearer tokens
+	result = redactBearerTokens(result);
+	
+	// Replace inline secrets: key=value or key:value patterns
+	result = redactInlineSecrets(result);
+	
+	return result;
+}
+
+// Linear-time inline secret redaction: token=xxx, api_key=xxx, etc.
+function redactInlineSecrets(value: string): string {
+	const result: string[] = [];
+	let i = 0;
+	
+	while (i < value.length) {
+		// Look for pattern: word_chars + = or : + non-whitespace_value
+		// Check for secret key followed by = or :
+		let j = i;
+		let keyLen = 0;
+		
+		// Collect key characters (alphanumeric, underscore, hyphen)
+		while (j < value.length && /[a-zA-Z0-9_-]/.test(value[j])) {
+			j++;
+			keyLen++;
+		}
+		
+		if (keyLen > 0 && j < value.length && (value[j] === '=' || value[j] === ':')) {
+			const key = value.substring(i, i + keyLen);
+			
+			// Check if this is a secret key
+			if (isSecretKey(key)) {
+				// Find the value (everything after = or : until space, comma, or end)
+				const sep = value[j];
+				let k = j + 1;
+				let valLen = 0;
+				while (k < value.length && valLen < 500 && value[k] !== ' ' && value[k] !== ',' && value[k] !== ';' && value[k] !== '"' && value[k] !== '"' && value[k] !== '\r' && value[k] !== '\n') {
+					k++;
+					valLen++;
+				}
+				
+				// Only redact if there's actual content
+				if (valLen > 0) {
+					result.push(key);
+					result.push(sep);
+					result.push("***");
+					i = k;
+					continue;
+				}
+			}
+		}
+		
+		result.push(value[i]);
+		i++;
+	}
+	
+	return result.join("");
 }
 
 export function redactSecrets(value: unknown, keyName = ""): unknown {
