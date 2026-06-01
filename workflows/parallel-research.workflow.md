@@ -1,6 +1,6 @@
 ---
 name: parallel-research
-description: Parallel research with shard exploration and mandatory context compaction
+description: Parallel research with shard exploration and synthesis
 ---
 
 ## discover
@@ -36,25 +36,11 @@ Explore the extension bundle/small-package shard from the discover output. Focus
 role: analyst
 dependsOn: explore-core, explore-ui, explore-runtime, explore-extensions
 
-**MANDATORY**: Use tiered summarization to prevent losing details.
-
-### TIER 1 - Executive Summary (500 tokens):
-- 3-5 key patterns found across shards
-- Major architectural decisions
-- Top 3 risks
-
-### TIER 2 - Detailed Findings (3000 tokens):
-- Per-shard summaries with file:line references
-- Specific code patterns identified
-- Reusable utilities/functions found
-
-### TIER 3 - File Manifest (no limit):
-- List all files that warrant attention
-- Agent should read files directly when implementing
+Synthesize all shard findings. Use discover output if available, but do not require it. Identify common patterns, gaps, and concrete recommendations.
 
 ## write
 role: writer
 dependsOn: synthesize
 output: research-summary.md
 
-Write a concise final summary with evidence, risks, and actionable next steps (max 2000 tokens).
+Write a concise final summary with evidence, risks, and actionable next steps.

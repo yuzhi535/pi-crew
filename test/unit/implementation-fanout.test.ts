@@ -23,7 +23,7 @@ test("implementation workflow delegates fanout decisions to an adaptive planner"
 	assert.ok(team);
 	assert.ok(workflow);
 	assert.deepEqual(validateWorkflowForTeam(workflow, team), []);
-	assert.deepEqual(workflow.steps.map((step) => step.id), ["assess", "compact"]);
+	assert.deepEqual(workflow.steps.map((step) => step.id), ["assess"]);
 	assert.match(workflow.steps[0]!.task, /smallest effective number of subagents/i);
 	assert.match(workflow.steps[0]!.task, /ADAPTIVE_PLAN_JSON_START/);
 });

@@ -1,6 +1,6 @@
 ---
 name: implementation
-description: Adaptive implementation workflow with mandatory context compaction between phases
+description: Adaptive implementation workflow where a planner agent decides the subagent fanout
 ---
 
 ## assess
@@ -41,29 +41,3 @@ Rules:
 - Do not include more than 12 total subagents; split or summarize oversized plans instead.
 - A good plan for a complex task has 2-4 phases with 2-4 parallel tasks each.
 - A simple task may have just 1-2 phases with 1-2 tasks.
-
-## compact
-role: planner
-input: previous-phase-results
-output: compacted-context.json
-
-**MANDATORY**: Before proceeding to next phase, compact context SMARTLY.
-
-Tiered summary approach (DO NOT lose critical details):
-
-### TIER 1 - Essential Summary (500 tokens max):
-- High-level findings
-- Key decisions made
-- Blockers if any
-
-### TIER 2 - Detailed Reference (3000 tokens max):
-- File:Line references for issues found
-- Key code snippets (max 5 most important)
-- Specific test failures with error messages
-
-### TIER 3 - Access Points (unlimited):
-- List of files modified/read
-- Commands to run (tests, builds)
-- Agent should READ FILES DIRECTLY, not rely on embedded content
-
-CRITICAL: Do NOT strip line numbers, error messages, or specific code references. Agents need these to fix issues.
