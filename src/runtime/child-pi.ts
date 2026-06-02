@@ -455,8 +455,16 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			let noResponseTimer: NodeJS.Timeout | undefined;
 			const finalDrainMs = input.finalDrainMs ?? FINAL_DRAIN_MS;
 			const hardKillMs = input.hardKillMs ?? HARD_KILL_MS;
+			// FIX (Round 14): Bound the env-controlled response timeout to
+			// [1_000ms, 3_600_000ms] (1s–1h) so a hostile or accidental value
+			// (e.g. 1, or 999_999_999) cannot disable the timeout or cause
+			// instant kills. Out-of-range values fall back to the input or
+			// built-in default.
+			const RESPONSE_TIMEOUT_MIN_MS = 1_000;
+			const RESPONSE_TIMEOUT_MAX_MS = 3_600_000;
 			const responseTimeoutEnv = Number.parseInt(process.env.PI_TEAMS_CHILD_RESPONSE_TIMEOUT_MS ?? "", 10);
-			const responseTimeoutMs = Number.isFinite(responseTimeoutEnv) && responseTimeoutEnv > 0 ? responseTimeoutEnv : input.responseTimeoutMs ?? RESPONSE_TIMEOUT_MS;
+			const envInRange = Number.isFinite(responseTimeoutEnv) && responseTimeoutEnv >= RESPONSE_TIMEOUT_MIN_MS && responseTimeoutEnv <= RESPONSE_TIMEOUT_MAX_MS;
+			const responseTimeoutMs = envInRange ? responseTimeoutEnv : input.responseTimeoutMs ?? RESPONSE_TIMEOUT_MS;
 			let responseTimeoutHit = false;
 			let forcedFinalDrain = false;
 			let abortRequested = input.signal?.aborted === true;

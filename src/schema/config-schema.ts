@@ -118,8 +118,8 @@ export const PiTeamsReliabilityConfigSchema = Type.Object({
 
 export const PiTeamsOtlpConfigSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean()),
-	endpoint: Type.Optional(Type.String({ minLength: 1 })),
-	headers: Type.Optional(Type.Record(Type.String({ minLength: 1 }), Type.String())),
+	endpoint: Type.Optional(Type.String({ minLength: 1, maxLength: 2048, pattern: "^https?://" })),
+	headers: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 256 }), Type.String({ maxLength: 4096 }))),
 	intervalMs: Type.Optional(Type.Integer({ minimum: 5000 })),
 }, { additionalProperties: false });
 

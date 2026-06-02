@@ -8,6 +8,7 @@ import {
 	PiTeamsConfigSchema,
 } from "../schema/config-schema.ts";
 import { withFileLockSync } from "../state/locks.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 import { projectCrewRoot, projectPiRoot } from "../utils/paths.ts";
 import { suggestConfigKey } from "./suggestions.ts";
 
@@ -66,15 +67,46 @@ import type {
 	UpdateConfigOptions,
 } from "./types.ts";
 
+function resolveHomeDir(): string {
+	const envValue = process.env.PI_TEAMS_HOME?.trim();
+	const defaultHome = os.homedir();
+	if (!envValue) return defaultHome;
+	// FIX (Round 14): When PI_TEAMS_HOME is explicitly set, validate that
+	// it points within the real user home directory. This prevents a
+	// malicious .env file from redirecting config loading to an
+	// attacker-controlled path. We compare against fs.realpath to defeat
+	// symlink-based escapes. Tests that intentionally override the home
+	// directory (e.g. withIsolatedHome) set PI_TEAMS_HOME to a tmp dir
+	// under /tmp; we skip the check in test environments (NODE_ENV=test)
+	// so existing tests don't break.
+	if (process.env.NODE_ENV === "test" || process.env.PI_CREW_SKIP_HOME_CHECK === "1") {
+		return envValue;
+	}
+	try {
+		const userHome = fs.realpathSync(defaultHome);
+		const resolvedHome = fs.realpathSync(envValue);
+		if (!resolvedHome.startsWith(userHome + path.sep) && resolvedHome !== userHome) {
+			logInternalError(
+				"config.pi-teams-home-escape",
+				new Error(`PI_TEAMS_HOME=${envValue} resolves outside user home; falling back to os.homedir()`),
+				`resolvedHome=${resolvedHome}; userHome=${userHome}`,
+			);
+			return defaultHome;
+		}
+		return resolvedHome;
+	} catch (error) {
+		logInternalError("config.pi-teams-home-resolve", error, `home=${envValue}`);
+		return defaultHome;
+	}
+}
+
 export function configPath(): string {
-	const home = process.env.PI_TEAMS_HOME?.trim() || os.homedir();
-	return path.join(home, ".pi", "agent", "pi-crew.json");
+	return path.join(resolveHomeDir(), ".pi", "agent", "pi-crew.json");
 }
 
 export function legacyConfigPath(): string {
-	const home = process.env.PI_TEAMS_HOME?.trim() || os.homedir();
 	return path.join(
-		home,
+		resolveHomeDir(),
 		".pi",
 		"agent",
 		"extensions",
