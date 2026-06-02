@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.5.12] — Round 17 Audit Fixes (2026-06-02)
+
+### Phase 1: Signal Handler Stacking (HIGH)
+- `src/extension/crew-cleanup.ts` — Added module-level `signalHandlersRegistered` flag. `process.on("SIGTERM"/"SIGHUP")` is now registered only once even if `registerCleanupHandler` is called multiple times. Without this fix, listeners stack up on extension reload and `cleanupChildProcesses` fires N times on shutdown.
+- Also wrapped `handleSignal()` with `.catch()` to prevent unhandled promise rejections.
+
+### Phase 2: L1 Cleanup (continued)
+Replaced 8 `console.error` calls with `logInternalError` for consistency:
+- `src/extension/crew-cleanup.ts` (3 calls)
+- `src/extension/async-notifier.ts:124`
+- `src/runtime/async-runner.ts:166`
+- `src/runtime/hidden-handoff.ts:244`
+- `src/runtime/crew-hooks.ts:167,172`
+
+### Phase 3+4: Test Coverage
+- 8 new tests in `test/unit/crew-hooks.test.ts`
+- 1 new test in `test/unit/crew-cleanup.test.ts` (signal handler idempotency)
+
+### Tests
+- 2313/2313 pass (was 2308 in v0.5.11; +5 net from new tests)
+- 9 new tests across 2 test files
+- TypeScript: 0 errors
+
 ## [0.5.11] — Round 16 Audit Fixes (2026-06-02)
 
 ### Phase 1: L1 cleanup (continued)
