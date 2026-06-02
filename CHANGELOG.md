@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.5.11] — Round 16 Audit Fixes (2026-06-02)
+
+### Phase 1: L1 cleanup (continued)
+Replaced 6 `process.stderr.write` calls with `logInternalError` for consistency with v0.5.9 L1 fix:
+- `src/extension/notification-router.ts:87` — sink error fallback
+- `src/i18n.ts:106` — missing translation warning
+- `src/observability/metric-registry.ts:40,52,64` — metric description change warnings
+- `src/state/jsonl-writer.ts:71` — write failed warning
+
+Note: `src/runtime/parent-guard.ts:37` left as-is — that's an exit-time log that must fire synchronously.
+
+### Phase 2: Removed dead code
+- `src/extension/notification-router.ts` — removed unused `seenCleanupCounter` field
+
+### Phase 3: Defensive `MAX_TRACKED_STATES` cap
+- `src/runtime/overflow-recovery.ts` — added `MAX_TRACKED_STATES = 5000` cap. `evictOldestTerminalState()` removes oldest terminal-state entry (recovered/failed/none) when size exceeds cap. Live states in compaction/retrying are protected.
+
+### Phase 4: Test coverage for under-tested modules
+- 8 new tests in `test/unit/notification-router.test.ts`
+- 12 new tests in `test/unit/overflow-recovery.test.ts`
+- 7 new tests in `test/unit/auto-resume.test.ts`
+- Total: 27 new tests
+- Bonus: fixed `CorrelationContext` type misuse in `test/unit/observability.test.ts`
+
+### Tests
+- 2308/2308 pass (was 2311 in v0.5.10; -3 from CorrelationContext type fixes)
+- 27 new tests across 3 new test files
+- TypeScript: 0 errors
+
 ## [0.5.10] — Round 15 Audit Fixes (2026-06-02)
 
 ### Phase 1: Semaphore Queue Cap (HIGH)
