@@ -202,3 +202,54 @@ test("renderTeamToolResult handles error status", () => {
 	assert.ok(component instanceof Text, "Expected Text for error status");
 	assert.ok((component as Text as any).text?.includes("status=failed"), "Should include status");
 });
+
+test("renderAgentToolResult sanitizes tabs in error messages (Round 20)", () => {
+	// FIX (Round 20, render-utils sanitization): Tool errors can embed raw tabs
+	// from file content (e.g. apply_patch, hashline). If we render the error
+	// verbatim, the tabs break the TUI border alignment. The error line is now
+	// passed through replaceTabs + truncLine (mirrors upstream oh-my-pi
+	// render-utils.ts:177-185).
+	const result = {
+		details: {
+			agentId: "tab-agent",
+			status: "failed",
+			error: "tab\terror\tmessage",
+		},
+	};
+
+	const component = renderAgentToolResult(result as any, undefined, mockTheme, undefined);
+	assert.ok(component instanceof Container, "Expected Container for agent with error");
+
+	// Walk the container children and find the error line. We just need to
+	// confirm no raw tab characters survive in any rendered Text.
+	const children = (component as Container as any).children as Array<{ text?: string }>;
+	for (const child of children) {
+		if (child.text?.includes("Error:")) {
+			assert.ok(!child.text.includes("\t"), `Error line should not contain raw tabs: ${JSON.stringify(child.text)}`);
+			// Tab expanded to 3 spaces (the replaceTabs implementation).
+			assert.ok(child.text.includes("tab   error   message"), "Tabs should be replaced with 3 spaces");
+		}
+	}
+});
+
+test("renderAgentToolResult truncates very long error messages (Round 20)", () => {
+	// FIX (Round 20, render-utils sanitization): Very long error messages
+	// (e.g. embedded stack traces) must be truncated to fit the inner width
+	// so they don't break the TUI layout. Inner width is computed from the
+	// theme; we just verify the error line is shorter than the raw input.
+	const longError = "x".repeat(5000);
+	const result = {
+		details: {
+			agentId: "long-agent",
+			status: "failed",
+			error: longError,
+		},
+	};
+
+	const component = renderAgentToolResult(result as any, undefined, mockTheme, undefined);
+	assert.ok(component instanceof Container, "Expected Container for agent with error");
+	const children = (component as Container as any).children as Array<{ text?: string }>;
+	const errorLine = children.find((c) => c.text?.includes("Error:"));
+	assert.ok(errorLine, "Should find an error line");
+	assert.ok((errorLine!.text?.length ?? 0) < 5000, "Error line should be truncated");
+});

@@ -5,6 +5,7 @@
  */
 import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
+import { replaceTabs } from "./render-diff.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
 export interface Theme {
@@ -185,7 +186,15 @@ export function renderAgentProgress(
 	}
 
 	// Error
-	if (record.error) addLine(theme.fg("error", `Error: ${record.error}`));
+	// FIX (Round 20, render-utils sanitization): Sanitize tool-error display so
+	// embedded tabs / control chars / newlines / very long strings cannot break
+	// the terminal layout. Mirrors the upstream oh-my-pi pattern at
+	// packages/coding-agent/src/tools/render-utils.ts:177-185:
+	//   formatErrorMessage = replaceTabs(truncateToWidth(clean, LINE_CAP))
+	if (record.error) {
+		const clean = truncLine(replaceTabs(String(record.error)), innerW);
+		addLine(theme.fg("error", `Error: ${clean}`));
+	}
 
 	// Usage line
 	const usage = record.usage;
@@ -300,7 +309,12 @@ export function renderAgentToolResult(
 			const label = item.agentId || "agent";
 			c.addChild(new Text(`${icon}  ${theme.fg("toolTitle", theme.bold(label))}`, 0, 0));
 			if (item.error) {
-				c.addChild(new Text(theme.fg("error", `  Error:  ${item.error}`), 0, 0));
+				// FIX (Round 20, render-utils sanitization): Sanitize tool-error
+				// display so embedded tabs / newlines / very long strings cannot
+				// break the TUI border alignment. Mirrors upstream oh-my-pi
+				// render-utils.ts:177-185.
+				const clean = truncLine(replaceTabs(String(item.error)), w - 2);
+				c.addChild(new Text(theme.fg("error", `  Error:  ${clean}`), 0, 0));
 			} else if (item.output) {
 				for (const line of item.output.split("\n").slice(0, 5))
 					c.addChild(new Text(theme.fg("dim", `  ${truncLine(line, w - 2)}`), 0, 0));
@@ -318,7 +332,10 @@ export function renderAgentToolResult(
 		const label = d.agentId;
 		c.addChild(new Text(`${icon}  ${theme.fg("toolTitle", theme.bold(label))}`, 0, 0));
 		if (d.error) {
-			c.addChild(new Text(theme.fg("error", `  Error:  ${d.error}`), 0, 0));
+			// FIX (Round 20, render-utils sanitization): Same sanitization as
+			// above — see renderAgentToolResult header comment.
+			const clean = truncLine(replaceTabs(String(d.error)), w - 2);
+			c.addChild(new Text(theme.fg("error", `  Error:  ${clean}`), 0, 0));
 		} else if (d.output) {
 			for (const line of d.output.split("\n").slice(0, 5))
 				c.addChild(new Text(theme.fg("dim", `  ${truncLine(line, w - 2)}`), 0, 0));

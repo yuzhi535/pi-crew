@@ -18,7 +18,7 @@ function parseDiffLine(line: string): ParsedDiffLine | null {
 	return { prefix: match[1], lineNum: match[2], content: match[3] };
 }
 
-function replaceTabs(text: string): string {
+export function replaceTabs(text: string): string {
 	return text.replace(/\t/g, "   ");
 }
 

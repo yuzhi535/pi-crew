@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { TeamRunManifest } from "./types.ts";
 import { DEFAULT_LOCKS } from "../config/defaults.ts";
 import { sleepSync } from "../utils/sleep.ts";
@@ -59,22 +60,60 @@ function isLockHolderAlive(filePath: string): boolean {
 	}
 }
 
-function writeLockFile(filePath: string): void {
+function writeLockFile(filePath: string, token: string): void {
 	const fd = fs.openSync(filePath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
 	try {
-		fs.writeSync(fd, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }));
+		fs.writeSync(fd, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString(), token }));
 	} finally {
 		fs.closeSync(fd);
 	}
 }
 
-function acquireLockWithRetry(filePath: string, staleMs: number): void {
+/**
+ * Read the token stored in a lock file. Returns undefined if the file
+ * cannot be read or parsed.
+ */
+function readLockToken(filePath: string): string | undefined {
+	try {
+		const raw = fs.readFileSync(filePath, "utf-8");
+		const parsed = JSON.parse(raw) as { token?: unknown };
+		return typeof parsed.token === "string" ? parsed.token : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Release a lock file, but ONLY if the stored token matches. This prevents
+ * the "losing contender wipes winner's lock" race that occurs when:
+ *   1. Process A acquires lock with token T_A
+ *   2. Process B times out waiting, steals the lock (overwriting with T_B)
+ *   3. Process A finishes, tries to release — would otherwise rm Process B's lock
+ *
+ * With token matching, A's release is a no-op for B's lock.
+ */
+function releaseLock(filePath: string, token: string): void {
+	const stored = readLockToken(filePath);
+	if (stored === undefined || stored === token) {
+		try {
+			fs.rmSync(filePath, { force: true });
+		} catch {
+			// Best-effort cleanup. Either someone else with the same token got
+			// there first, or the lock is already gone — both are fine.
+		}
+	}
+	// If the stored token does not match, our lock has been stolen
+	// (probably stale and overtaken). Do not touch it — the new holder owns it.
+}
+
+function acquireLockWithRetry(filePath: string, staleMs: number): string {
 	let attempt = 0;
 	const deadline = Date.now() + staleMs * 2;
 	while (true) {
+		const token = randomUUID();
 		try {
-			writeLockFile(filePath);
-			return;
+			writeLockFile(filePath, token);
+			return token;
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code !== "EEXIST") throw error;
@@ -113,13 +152,14 @@ function readLockStateAsync(filePath: string, staleMs: number): void {
 	}
 }
 
-async function acquireLockWithRetryAsync(filePath: string, staleMs: number): Promise<void> {
+async function acquireLockWithRetryAsync(filePath: string, staleMs: number): Promise<string> {
 	let attempt = 0;
 	const deadline = Date.now() + staleMs * 2;
 	while (true) {
+		const token = randomUUID();
 		try {
-			writeLockFile(filePath);
-			return;
+			writeLockFile(filePath, token);
+			return token;
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code !== "EEXIST") throw error;
@@ -159,15 +199,12 @@ export function withFileLockSync<T>(filePath: string, fn: () => T, options: RunL
 	const lockFile = `${filePath}.lock`;
 	const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
 	fs.mkdirSync(path.dirname(lockFile), { recursive: true });
-	acquireLockWithRetry(lockFile, staleMs);
+	const token = acquireLockWithRetry(lockFile, staleMs);
 	try {
 		return fn();
 	} finally {
-		try {
-			fs.rmSync(lockFile, { force: true });
-		} catch {
-			// Best-effort lock cleanup.
-		}
+		// Token-guarded release: don't rm the lock if it has been stolen.
+		releaseLock(lockFile, token);
 	}
 }
 
@@ -175,15 +212,11 @@ export function withRunLockSync<T>(manifest: TeamRunManifest, fn: () => T, optio
 	const filePath = lockPath(manifest);
 	const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	acquireLockWithRetry(filePath, staleMs);
+	const token = acquireLockWithRetry(filePath, staleMs);
 	try {
 		return fn();
 	} finally {
-		try {
-			fs.rmSync(filePath, { force: true });
-		} catch {
-			// Best-effort lock cleanup.
-		}
+		releaseLock(filePath, token);
 	}
 }
 
@@ -191,14 +224,10 @@ export async function withRunLock<T>(manifest: TeamRunManifest, fn: () => Promis
 	const filePath = lockPath(manifest);
 	const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	await acquireLockWithRetryAsync(filePath, staleMs);
+	const token = await acquireLockWithRetryAsync(filePath, staleMs);
 	try {
 		return await fn();
 	} finally {
-		try {
-			fs.rmSync(filePath, { force: true });
-		} catch {
-			// Best-effort lock cleanup.
-		}
+		releaseLock(filePath, token);
 	}
 }
