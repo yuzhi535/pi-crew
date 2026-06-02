@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.5.10] — Round 15 Audit Fixes (2026-06-02)
+
+### Phase 1: Semaphore Queue Cap (HIGH)
+- **H1**: `src/runtime/semaphore.ts:11` - `#queue` unbounded growth → added `MAX_QUEUE = 10_000` cap. `acquire()` now throws "Semaphore queue full" when at cap.
+
+### Phase 2: Observability Hardening (MEDIUM)
+- **L1**: `src/observability/event-bus.ts:47` - `console.error` → `logInternalError` for consistency
+- **OTLPExporter**: 
+  - Added `MAX_SNAPSHOTS_PER_PUSH = 5_000` cap to prevent OOM/oversized payloads
+  - Added `inFlight` promise tracking in `start()` to prevent overlapping setInterval pushes
+- **live-agent-manager**: Added `MAX_LIVE_AGENTS = 5_000` cap. `registerLiveAgent()` now evicts oldest completed agent first; if none, evicts oldest running with warning.
+
+### Phase 3: Test Coverage (LOW)
+- Added first-ever test coverage for `src/observability/`:
+  - 8 new tests in `test/unit/observability.test.ts` covering metric-registry, correlation, OTLP conversion
+- Reveals new finding: `crew.<domain>.<measure>` naming pattern enforcement is good (already validated)
+
+### Regression: Team-Runner Heartbeat (CRITICAL)
+- **CRITICAL regression** discovered via background watcher notification
+- `team-runner.ts` had NO periodic heartbeat, so any team run >5 min was being marked stale by the reconciler
+- Root cause of Round 15 review cancellation
+- Added `startTeamRunHeartbeat()` helper - writes `heartbeat.json` to stateRoot every 30s
+- Wired into `executeTeamRun()` with start/stop on both success and error paths
+- Same JSON shape as background-runner for reconciler compatibility
+
+### Tests
+- 2311 tests pass / 0 failures (was 2297 in v0.5.9)
+- +14 new tests across 3 new test files:
+  - `test/unit/team-runner-heartbeat.test.ts` (2 tests)
+  - `test/unit/round15-observability.test.ts` (4 tests)
+  - `test/unit/observability.test.ts` (8 tests)
+- TypeScript: 0 errors
+
 ## [0.5.9] — Round 14 Audit Fixes (2026-06-02)
 
 ### Phase 1: Sandbox Security (3 CRITICAL fixes)
