@@ -25,6 +25,13 @@ export class BM25Search<T extends SearchDocument> {
   private readonly b: number;
   private readonly docLenMap: Map<string, number>;
   private readonly N: number;
+  /**
+   * Precomputed document frequency per term. Cached at construction time
+   * to avoid O(N) recomputation on every search() call. The cache is
+   * immutable for a given document corpus, so it's safe to share across
+   * search() invocations.
+   */
+  private readonly dfCache: Map<string, number>;
 
   constructor(documents: T[], fieldWeights: Record<string, number> = {}, config: BM25Config = {}) {
     this.documents = documents;
@@ -34,6 +41,7 @@ export class BM25Search<T extends SearchDocument> {
     this.N = documents.length;
 
     this.docLenMap = new Map();
+    this.dfCache = new Map();
 
     for (const doc of documents) {
       const fieldValues = Object.values(doc.fields).join(" ");
@@ -43,26 +51,36 @@ export class BM25Search<T extends SearchDocument> {
 
     const totalLen = [...this.docLenMap.values()].reduce((a, b) => a + b, 0);
     this.avgDocLen = totalLen / this.N || 1;
+
+    // Precompute df for all terms in the corpus. We do this once instead
+    // of on-demand to avoid the O(Q * N * field_count) cost per search call.
+    this.precomputeDocumentFrequencies();
   }
 
   /**
-   * Compute document frequency for a query term using indexOf for better performance.
-   * Uses linear-time substring matching instead of regex to avoid ReDoS.
+   * Build a map of term -> document frequency. O(N * avg_terms * field_count).
+   * Called once in the constructor.
    */
-  private df(term: string): number {
-    const termLower = term.toLowerCase();
-    let count = 0;
+  private precomputeDocumentFrequencies(): void {
     for (const doc of this.documents) {
       for (const field of Object.keys(this.fieldWeights)) {
         const text = (doc.fields[field] ?? "").toLowerCase();
-        // Use indexOf for linear-time substring search
-        if (text.includes(termLower)) {
-          count++;
-          break;
+        // Extract unique terms via split on whitespace
+        const terms = new Set(text.split(/\s+/).filter(Boolean));
+        for (const term of terms) {
+          if (term.length === 0) continue;
+          this.dfCache.set(term, (this.dfCache.get(term) ?? 0) + 1);
         }
       }
     }
-    return count;
+  }
+
+  /**
+   * Get document frequency for a term. Returns the precomputed value.
+   * O(1) lookup.
+   */
+  private df(term: string): number {
+    return this.dfCache.get(term.toLowerCase()) ?? 0;
   }
 
   search(query: string, options?: { limit?: number; minScore?: number }): SearchResult<T>[] {

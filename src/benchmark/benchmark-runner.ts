@@ -3,7 +3,7 @@
  * Provides tiered evaluation for workflow tasks.
  */
 
-import { execSync } from "child_process";
+import { execFileSync } from "node:child_process";
 
 export interface BenchmarkJudge {
 	type: "pytest" | "grep" | "command";
@@ -78,6 +78,16 @@ function validateCommand(command: string): void {
  * Tier 3: command execution
  * Fails fast on first tier failure.
  */
+function splitCommand(command: string): { program: string; args: string[] } {
+	// Naive split on whitespace. validateCommand already rejects shell
+	// metacharacters, so a simple split is safe.
+	const parts = command.trim().split(/\s+/);
+	if (parts.length === 0) {
+		throw new Error("Empty command");
+	}
+	return { program: parts[0]!, args: parts.slice(1) };
+}
+
 export async function runBenchmark(task: BenchmarkTask): Promise<BenchmarkResult> {
 	const startTime = Date.now();
 	const judgeResults: BenchmarkResult["judgeResults"] = [];
@@ -88,10 +98,13 @@ export async function runBenchmark(task: BenchmarkTask): Promise<BenchmarkResult
 			let output: string | undefined;
 
 			if (judge.type === "pytest" && judge.command) {
-				// Validate command before execution
+				// Validate command before execution (defense-in-depth)
 				validateCommand(judge.command);
+				// Use execFileSync to avoid shell parsing. validateCommand
+				// already rejects metacharacters, so a simple split is safe.
+				const { program, args } = splitCommand(judge.command);
 				// Tier 1: pytest - fast deterministic check
-				output = execSync(judge.command, {
+				output = execFileSync(program, args, {
 					timeout: 5000,
 					encoding: "utf-8",
 					cwd: process.cwd(),
@@ -99,20 +112,22 @@ export async function runBenchmark(task: BenchmarkTask): Promise<BenchmarkResult
 				// Look for pytest summary line with passed count
 				passed = output.includes("passed");
 			} else if (judge.type === "grep" && judge.pattern && judge.command) {
-				// Validate command before execution
+				// Validate command before execution (defense-in-depth)
 				validateCommand(judge.command);
+				const { program, args } = splitCommand(judge.command);
 				// Tier 2: grep pattern matching
-				output = execSync(judge.command, {
+				output = execFileSync(program, args, {
 					timeout: 5000,
 					encoding: "utf-8",
 					cwd: process.cwd(),
 				});
 				passed = output.includes(judge.pattern);
 			} else if (judge.type === "command" && judge.command) {
-				// Validate command before execution
+				// Validate command before execution (defense-in-depth)
 				validateCommand(judge.command);
+				const { program, args } = splitCommand(judge.command);
 				// Tier 3: command execution
-				output = execSync(judge.command, {
+				output = execFileSync(program, args, {
 					timeout: 10000,
 					encoding: "utf-8",
 					cwd: process.cwd(),
