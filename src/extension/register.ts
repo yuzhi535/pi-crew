@@ -482,6 +482,13 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		}
 	};
 	const autoRecoveryLast = new Map<string, number>();
+	// FIX (Round 22, defensive cap): Bound the cooldown-gate Map. Each run
+	// contributes up to 4 keys (one per maybeNotifyHealth kind). Without a cap,
+	// a long-running pi session that runs thousands of teams accumulates
+	// thousands of entries. Eviction: oldest insertion first — matches the
+	// 5-minute cooldown gate semantics, since once the gate has expired the
+	// entry is irrelevant.
+	const AUTO_RECOVERY_LAST_MAX_ENTRIES = 1000;
 	const configureDeliveryCoordinator = (): void => {
 		deliveryCoordinator?.dispose();
 		deliveryCoordinator = undefined;
@@ -1531,6 +1538,14 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 							now - previous < 5 * 60_000
 						)
 							return;
+						// Defensive cap: evict oldest entries before inserting
+						// when size exceeds the limit. Map's natural insertion
+						// order means the first key is the oldest.
+						while (autoRecoveryLast.size >= AUTO_RECOVERY_LAST_MAX_ENTRIES) {
+							const oldest = autoRecoveryLast.keys().next().value;
+							if (oldest === undefined) break;
+							autoRecoveryLast.delete(oldest);
+						}
 						autoRecoveryLast.set(key, now);
 						notifyOperator({
 							id: key,

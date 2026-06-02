@@ -263,7 +263,27 @@ export function readCrewAgentStatus(manifest: TeamRunManifest, taskOrAgentId: st
 }
 
 const agentEventSeqCache = new Map<string, { size: number; mtimeMs: number; seq: number }>();
+// FIX (Round 22, defensive cap): Bound the per-file-path cache. Without a cap,
+// a long-running pi-crew process that spawns 1000s of agents accumulates 1000s
+// of entries. Mirrors the `asyncAgentReaderCache` pattern (above) and the
+// `NotificationRouter.SEEN_MAP_MAX_SIZE` pattern.
+const AGENT_EVENT_SEQ_CACHE_MAX_ENTRIES = 1000;
 const AGENT_EVENT_SEQ_SIDECAR = ".seq";
+
+/**
+ * Set an entry in the seq cache, evicting the oldest entries when the cache
+ * exceeds the cap. Map's natural insertion order means the first key is the
+ * oldest — same as the pattern used in `asyncAgentReaderCache`.
+ */
+function setAgentEventSeqCache(filePath: string, entry: { size: number; mtimeMs: number; seq: number }): void {
+	if (agentEventSeqCache.has(filePath)) agentEventSeqCache.delete(filePath);
+	agentEventSeqCache.set(filePath, entry);
+	while (agentEventSeqCache.size > AGENT_EVENT_SEQ_CACHE_MAX_ENTRIES) {
+		const oldest = agentEventSeqCache.keys().next().value;
+		if (oldest === undefined) break;
+		agentEventSeqCache.delete(oldest);
+	}
+}
 
 function readSeqFromSidecar(filePath: string): number | undefined {
 	try {
@@ -295,7 +315,7 @@ function nextAgentEventSeq(filePath: string): number {
 	// FIX: Try sidecar file for O(1) lookup before falling back to O(n) scan.
 	const sidecarSeq = readSeqFromSidecar(filePath);
 	if (sidecarSeq !== undefined) {
-		agentEventSeqCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: sidecarSeq });
+		setAgentEventSeqCache(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: sidecarSeq });
 		return sidecarSeq + 1;
 	}
 	let max = 0;
@@ -309,7 +329,7 @@ function nextAgentEventSeq(filePath: string): number {
 			max += 1;
 		}
 	}
-	agentEventSeqCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: max });
+	setAgentEventSeqCache(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: max });
 	writeSeqToSidecar(filePath, max);
 	return max + 1;
 }
@@ -321,7 +341,7 @@ export function appendCrewAgentEvent(manifest: TeamRunManifest, taskId: string, 
 	fs.appendFileSync(filePath, `${JSON.stringify(redactSecrets({ seq, time: new Date().toISOString(), event }))}\n`, "utf-8");
 	try {
 		const stat = fs.statSync(filePath);
-		agentEventSeqCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, seq });
+		setAgentEventSeqCache(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, seq });
 		writeSeqToSidecar(filePath, seq);
 	} catch (error) {
 		logInternalError("crew-agent-records.stat", error, `filePath=${filePath}`);
