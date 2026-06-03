@@ -1,6 +1,7 @@
 ---
 name: observability-reliability
 description: "Metrics, diagnostics, correlation, retry, deadletter, and recovery evidence workflow."
+origin: pi-crew
 triggers:
   - "add metrics"
   - "diagnose failure"

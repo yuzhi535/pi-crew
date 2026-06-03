@@ -1,6 +1,7 @@
 ---
 name: model-routing-context
 description: Model routing, parent context, thinking level, and prompt construction workflow. Use when changing model fallback, child Pi args, inherited context, task prompts, or compact-read behavior.
+origin: pi-crew
 triggers:
   - "change model"
   - "parent context"
@@ -15,7 +16,7 @@ Use this skill when working on model/context propagation.
 
 ## Source patterns distilled
 
-- Pi session context/model state: `source/pi-mono/packages/coding-agent/src/core/session-manager.ts`, `agent-session.ts`, compaction modules
+- Pi session context/model state: `source/pi/packages/coding-agent/src/core/session-manager.ts`, `agent-session.ts`, compaction modules
 - pi-crew model and prompt code: `src/runtime/model-fallback.ts`, `src/runtime/pi-args.ts`, `src/runtime/task-runner/prompt-builder.ts`, `src/runtime/task-output-context.ts`, `src/extension/team-tool/context.ts`
 
 ## Rules

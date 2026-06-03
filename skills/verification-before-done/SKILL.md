@@ -1,6 +1,7 @@
 ---
 name: verification-before-done
 description: "Evidence before claims."
+origin: pi-crew
 triggers:
   - "done"
   - "verify this"

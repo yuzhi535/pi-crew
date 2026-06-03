@@ -1,6 +1,7 @@
 ---
 name: scrutinize
 description: "Outsider-perspective review questioning intent before tracing code."
+origin: pi-crew
 triggers:
   - "scrutinize this"
   - "question this"

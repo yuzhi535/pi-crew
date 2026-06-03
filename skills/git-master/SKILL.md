@@ -1,6 +1,7 @@
 ---
 name: git-master
 description: "Commit and release hygiene for safe version-control work."
+origin: pi-crew
 triggers:
   - "commit this"
   - "tag release"

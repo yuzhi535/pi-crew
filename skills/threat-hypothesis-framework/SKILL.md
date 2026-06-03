@@ -1,6 +1,7 @@
 ---
 name: threat-hypothesis-framework
 description: "Structured investigation using testable hypotheses."
+origin: distilled:anthropic-cybersecurity-skills
 triggers:
   - "hunt for"
   - "investigate"

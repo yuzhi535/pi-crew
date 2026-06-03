@@ -1,6 +1,7 @@
 ---
 name: safe-bash
 description: "Safe shell-command workflow."
+origin: pi-crew
 triggers:
   - "run this command"
   - "execute bash"

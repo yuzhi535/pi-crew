@@ -1,6 +1,7 @@
 ---
 name: ownership-session-security
 description: "Session ownership and authorization workflow."
+origin: pi-crew
 triggers:
   - "cancel run"
   - "respond to task"

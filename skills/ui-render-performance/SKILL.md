@@ -1,6 +1,7 @@
 ---
 name: ui-render-performance
 description: "Non-blocking Pi TUI render workflow."
+origin: pi-crew
 triggers:
   - "widget render"
   - "dashboard pane"
@@ -14,7 +15,7 @@ Use this skill for Pi/pi-crew TUI work.
 
 ## Source patterns distilled
 
-- Pi TUI is synchronous immediate-mode/string rendering: `source/pi-mono/packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+- Pi TUI is synchronous immediate-mode/string rendering: `source/pi/packages/coding-agent/src/modes/interactive/interactive-mode.ts`
 - Pi extension examples use event-driven state updates, not render-time loading.
 - pi-crew UI: `src/extension/register.ts`, `src/ui/run-dashboard.ts`, `src/ui/run-snapshot-cache.ts`, `src/ui/crew-widget.ts`, `src/ui/powerbar-publisher.ts`, `src/ui/render-scheduler.ts`
 

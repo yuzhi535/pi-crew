@@ -1,6 +1,7 @@
 ---
 name: post-mortem
 description: "Write engineering RCA record after bug is fixed."
+origin: pi-crew
 triggers:
   - "post-mortem"
   - "root cause"

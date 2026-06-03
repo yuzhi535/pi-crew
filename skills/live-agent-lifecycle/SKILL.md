@@ -1,6 +1,7 @@
 ---
 name: live-agent-lifecycle
 description: "Live agent registration, workspace isolation, termination, and eviction workflow."
+origin: pi-crew
 triggers:
   - "register agent"
   - "terminate agent"

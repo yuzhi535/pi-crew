@@ -1,6 +1,7 @@
 ---
 name: worktree-isolation
 description: "Conflict-safe git worktree workflow."
+origin: pi-crew
 triggers:
   - "create worktree"
   - "parallel workers"

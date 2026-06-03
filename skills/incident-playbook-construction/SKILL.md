@@ -1,6 +1,7 @@
 ---
 name: incident-playbook-construction
 description: "Build structured incident response playbooks and runbooks."
+origin: distilled:anthropic-cybersecurity-skills
 triggers:
   - "build playbook"
   - "create runbook"

@@ -1,6 +1,7 @@
 ---
 name: systematic-debugging
 description: "Four-phase debugging discipline with refuse gates."
+origin: pi-crew
 triggers:
   - "debug this"
   - "investigate"

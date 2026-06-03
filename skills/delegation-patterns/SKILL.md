@@ -1,6 +1,7 @@
 ---
 name: delegation-patterns
 description: "Subagent/team delegation workflow."
+origin: pi-crew
 triggers:
   - "delegate this"
   - "split this task"

@@ -1,6 +1,7 @@
 ---
 name: state-mutation-locking
 description: "Durable state mutation and locking workflow."
+origin: pi-crew
 triggers:
   - "modify manifest"
   - "update tasks"

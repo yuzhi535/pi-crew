@@ -1,6 +1,7 @@
 ---
 name: pi-extension-lifecycle
 description: Pi extension lifecycle and registration patterns.
+origin: pi-crew
 triggers:
   - "add extension"
   - "register tools"
@@ -15,8 +16,8 @@ Use this skill when working on Pi extension registration or lifecycle behavior.
 
 ## Source patterns distilled
 
-- Pi core: `source/pi-mono/packages/coding-agent/src/core/extensions/types.ts`, `loader.ts`, `runner.ts`
-- Pi examples: `source/pi-mono/packages/coding-agent/examples/extensions/`
+- Pi core: `source/pi/packages/coding-agent/src/core/extensions/types.ts`, `loader.ts`, `runner.ts`
+- Pi examples: `source/pi/packages/coding-agent/examples/extensions/`
 - pi-crew extension entry: `src/extension/register.ts`, `src/extension/registration/*.ts`
 
 ## Rules

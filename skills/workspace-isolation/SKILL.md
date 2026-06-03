@@ -1,6 +1,7 @@
 ---
 name: workspace-isolation
 description: "Workspace isolation boundaries."
+origin: pi-crew
 triggers:
   - "workspace isolation"
   - "cross-workspace access"

@@ -1,6 +1,7 @@
 ---
 name: mailbox-interactive
 description: "Interactive waiting-task and mailbox workflow."
+origin: pi-crew
 triggers:
   - "respond to worker"
   - "nudge agent"

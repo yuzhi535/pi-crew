@@ -1,6 +1,7 @@
 ---
 name: resource-discovery-config
 description: "pi-crew resource and configuration discovery workflow."
+origin: pi-crew
 triggers:
   - "discover agents"
   - "find teams"
@@ -15,7 +16,7 @@ Use this skill for pi-crew resource/config work.
 
 ## Source patterns distilled
 
-- Pi resource loader: `source/pi-mono/packages/coding-agent/src/core/resource-loader.ts`, extension `resources_discover` hook
+- Pi resource loader: `source/pi/packages/coding-agent/src/core/resource-loader.ts`, extension `resources_discover` hook
 - pi-crew discovery: `src/agents/discover-agents.ts`, `src/teams/discover-teams.ts`, `src/workflows/discover-workflows.ts`
 - Config: `src/config/config.ts`, `src/schema/config-schema.ts`, `schema.json`, `docs/resource-formats.md`
 

@@ -1,6 +1,7 @@
 ---
 name: requirements-to-task-packet
 description: "Use when a goal, issue, roadmap item, review finding, or user request must become actionable worker tasks."
+origin: pi-crew
 triggers:
   - "convert requirements"
   - "create task packet"

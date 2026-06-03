@@ -1,6 +1,7 @@
 ---
 name: security-review
 description: "Security review patterns with audit and detection authoring."
+origin: distilled:anthropic-cybersecurity-skills
 triggers:
   - "security review"
   - "vulnerability scan"

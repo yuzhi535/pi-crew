@@ -1,6 +1,7 @@
 ---
 name: event-log-tracing
 description: "Structured event logging for worker lifecycle, live agents, crash recovery."
+origin: pi-crew
 triggers:
   - "event log"
   - "trace events"

@@ -1,6 +1,7 @@
 ---
 name: orchestration
 description: "Multi-phase orchestration for planners and executors."
+origin: pi-crew
 triggers:
   - "orchestrate this"
   - "coordinate tasks"
@@ -73,7 +74,7 @@ Maintain the original scope exactly. Không mở rộng scope vì "thấy thêm 
 ### Step 3 — Dispatch phase
 
 - Launch all parallel subagents in one `team` call.
-- Each subagent receives a complete task packet (see `task-packet` skill).
+- Each subagent receives a complete task packet (see `requirements-to-task-packet` skill).
 - Set explicit file ownership per worker — no two workers touch the same file.
 - Use `workspaceMode: 'worktree'` when parallel edits risk conflict.
 

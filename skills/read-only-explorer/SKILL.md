@@ -1,6 +1,7 @@
 ---
 name: read-only-explorer
 description: "Read-only exploration and audit workflow."
+origin: pi-crew
 triggers:
   - "explore code"
   - "audit source"

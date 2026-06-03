@@ -1,6 +1,7 @@
 ---
 name: iterative-audit
 description: "Iterative multi-round codebase audit with diminishing-returns detection. Run 5-20+ rounds, each focusing on one specific area. Built from 19 rounds of dogfooding pi-crew on itself."
+origin: pi-crew
 triggers:
   - "audit this codebase"
   - "review everything"

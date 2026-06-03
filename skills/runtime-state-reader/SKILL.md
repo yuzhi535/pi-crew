@@ -1,6 +1,7 @@
 ---
 name: runtime-state-reader
 description: Safe read-only navigation of pi-crew run state.
+origin: pi-crew
 triggers:
   - "inspect manifest"
   - "read tasks"

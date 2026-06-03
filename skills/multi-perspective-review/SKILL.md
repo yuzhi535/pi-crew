@@ -1,6 +1,7 @@
 ---
 name: multi-perspective-review
 description: "Multi-perspective code review with simpler-alternative pass."
+origin: pi-crew
 triggers:
   - "review this"
   - "look at this"

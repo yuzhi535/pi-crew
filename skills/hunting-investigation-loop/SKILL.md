@@ -1,6 +1,7 @@
 ---
 name: hunting-investigation-loop
 description: "Active hypothesis-driven investigation and threat hunting."
+origin: distilled:anthropic-cybersecurity-skills
 triggers:
   - "hunt for"
   - "find evidence of"

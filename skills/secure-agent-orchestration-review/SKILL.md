@@ -1,6 +1,7 @@
 ---
 name: secure-agent-orchestration-review
 description: "Use when reviewing delegation, skill loading, tool access, worker prompts, artifacts, runtime config, state, ownership, or subprocess execution."
+origin: pi-crew
 triggers:
   - "review delegation"
   - "check skill security"

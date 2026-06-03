@@ -1,6 +1,7 @@
 ---
 name: async-worker-recovery
 description: Background worker, heartbeat, stale-run, crash-recovery, and deadletter workflow. Use when debugging stuck/dead workers or changing async run reliability.
+origin: pi-crew
 triggers:
   - "worker crashed"
   - "stale run"

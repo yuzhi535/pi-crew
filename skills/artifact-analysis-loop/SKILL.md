@@ -1,6 +1,7 @@
 ---
 name: artifact-analysis-loop
 description: "Systematic artifact examination for code, files, and binaries."
+origin: distilled:anthropic-cybersecurity-skills
 triggers:
   - "analyze this artifact"
   - "examine file"

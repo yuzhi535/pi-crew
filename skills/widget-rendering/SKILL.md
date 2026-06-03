@@ -1,6 +1,7 @@
 ---
 name: widget-rendering
 description: "Pi TUI crew widget data sources, display priority, and rendering performance."
+origin: pi-crew
 triggers:
   - "empty agent"
   - "ghost run"
@@ -259,7 +260,7 @@ If ANY answer is NO → Stop. Fix widget rendering issues before proceeding.
 - `src/runtime/crew-agent-records.ts` — readCrewAgents, agents.json
 - `src/runtime/process-status.ts` — hasStaleAsyncProcess, isDisplayActiveRun
 - `src/runtime/background-runner.ts` — active run filtering with async PID check
-- `src/runtime/active-run-registry.ts` — purgeStaleActiveRunIndex
+- `src/state/active-run-registry.ts` — purgeStaleActiveRunIndex
 
 ---
 

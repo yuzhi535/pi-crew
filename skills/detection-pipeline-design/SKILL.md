@@ -1,6 +1,7 @@
 ---
 name: detection-pipeline-design
 description: "Design data pipelines for security monitoring and threat intelligence."
+origin: distilled:anthropic-cybersecurity-skills
 triggers:
   - "build pipeline"
   - "design detection"
@@ -282,4 +283,4 @@ npx tsc --noEmit
 node --experimental-strip-types --test test/unit/detection-pipeline.test.ts
 ```
 
-*See also: `detection-signature-authoring` (in security-review) for detection rule patterns.*
+*See also: `security-review` skill for detection rule patterns and signature authoring guidance.*

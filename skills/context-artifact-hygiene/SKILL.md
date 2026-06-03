@@ -1,6 +1,7 @@
 ---
 name: context-artifact-hygiene
 description: "Use when constructing worker prompts, reading artifacts/logs, summarizing runs, compacting context, or handing work between agents."
+origin: pi-crew
 triggers:
   - "construct prompt"
   - "read artifact"

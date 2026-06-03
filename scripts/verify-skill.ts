@@ -328,6 +328,23 @@ function verifySkill(skillPath: string): VerificationResult {
 	try {
 		const content = fs.readFileSync(skillPath, "utf-8");
 		
+		// Check YAML frontmatter for required fields
+		const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+		if (frontmatterMatch) {
+			const frontmatter = frontmatterMatch[1];
+			if (!/^origin:/m.test(frontmatter)) {
+				result.errors.push("Missing 'origin' field in YAML frontmatter");
+			}
+			if (!/^name:/m.test(frontmatter)) {
+				result.errors.push("Missing 'name' field in YAML frontmatter");
+			}
+			if (!/^description:/m.test(frontmatter)) {
+				result.errors.push("Missing 'description' field in YAML frontmatter");
+			}
+		} else {
+			result.errors.push("No YAML frontmatter found");
+		}
+
 		// Check for trigger section
 		result.hasTriggerSection = hasTriggerSection(content);
 		if (!result.hasTriggerSection) {

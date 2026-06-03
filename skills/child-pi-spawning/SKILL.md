@@ -1,6 +1,7 @@
 ---
 name: child-pi-spawning
 description: "Child Pi worker spawning, lifecycle callbacks, and failure modes."
+origin: pi-crew
 triggers:
   - "worker crashed"
   - "worker blink"
