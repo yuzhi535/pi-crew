@@ -128,6 +128,28 @@ export function validateTaskPacket(packet: TaskPacket): TaskPacketValidationResu
 	return { valid: errors.length === 0, errors };
 }
 
+/**
+ * Structured handoff template for task completion reports.
+ * Distilled from ECC dmux-workflows pattern — workers use this format
+ * so verifiers and downstream consumers can parse output predictably.
+ */
+export const HANDOFF_TEMPLATE = [
+	"## Handoff",
+	"",
+	"### Summary",
+	"<!-- 2-3 sentences describing what was done -->",
+	"",
+	"### Files Changed",
+	"<!-- List each file changed with brief description -->",
+	"<!-- - path/to/file.ts: description -->",
+	"",
+	"### Tests / Verification",
+	"<!-- What tests pass? What was manually verified? -->",
+	"",
+	"### Follow-ups",
+	"<!-- Any remaining issues or next steps -->",
+].join("\n");
+
 export function renderTaskPacket(packet: TaskPacket): string {
 	return [
 		"# Task Packet",

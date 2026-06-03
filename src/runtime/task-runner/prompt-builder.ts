@@ -3,7 +3,7 @@ import type { TeamRunManifest, TeamTaskState, TaskOutputSchema } from "../../sta
 import type { WorkflowStep } from "../../workflows/workflow-config.ts";
 import { buildMemoryBlock } from "../agent-memory.ts";
 import { permissionForRole } from "../role-permission.ts";
-import { renderTaskPacket } from "../task-packet.ts";
+import { renderTaskPacket, HANDOFF_TEMPLATE } from "../task-packet.ts";
 import { buildWorkspaceTree } from "../workspace-tree.ts";
 
 /**
@@ -132,6 +132,9 @@ export async function renderTaskPrompt(manifest: TeamRunManifest, step: Workflow
 		task.taskPacket?.outputSchema ? renderOutputSchemaBlock(task.taskPacket.outputSchema) : "",
 		"Task:",
 		step.task.replaceAll("{goal}", manifest.goal),
+		"",
+		"When your task is complete, structure your final output using this handoff template:",
+		HANDOFF_TEMPLATE,
 	].join("\n");
 
 	const full = [stablePrefix, "", dynamicSuffix].join("\n");

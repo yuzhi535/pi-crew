@@ -81,6 +81,7 @@ export interface CrewWorktreeConfig {
 	setupHook?: string;
 	setupHookTimeoutMs?: number;
 	linkNodeModules?: boolean;
+	seedPaths?: string[];
 }
 
 export interface CrewUiConfig {

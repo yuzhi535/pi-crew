@@ -201,6 +201,63 @@ function pruneStaleWorktrees(repoRoot: string): void {
 	catch { /* best-effort */ }
 }
 
+/**
+ * Normalize and validate seed paths — ensure all paths stay within repoRoot.
+ * Rejects path traversal (../) and absolute paths.
+ */
+export function normalizeSeedPaths(seedPaths: string[], repoRoot: string): string[] {
+	const resolvedRepoRoot = path.resolve(repoRoot);
+	const entries = Array.isArray(seedPaths) ? seedPaths : [];
+	const seen = new Set<string>();
+	const normalized: string[] = [];
+
+	for (const entry of entries) {
+		if (typeof entry !== "string" || entry.trim().length === 0) continue;
+
+		const absolutePath = path.resolve(resolvedRepoRoot, entry);
+		const relativePath = path.relative(resolvedRepoRoot, absolutePath);
+
+		if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+			throw new Error(`seedPaths entries must stay inside repoRoot: ${entry}`);
+		}
+
+		const normalizedPath = relativePath.split(path.sep).join("/");
+		if (seen.has(normalizedPath)) continue;
+		seen.add(normalizedPath);
+		normalized.push(normalizedPath);
+	}
+
+	return normalized;
+}
+
+/**
+ * Overlay seed paths from repoRoot into worktreePath.
+ * Copies files and directories, creating parent dirs as needed.
+ * Skips non-existent sources with logInternalError (non-fatal).
+ */
+export function overlaySeedPaths(repoRoot: string, worktreePath: string, seedPaths: string[]): void {
+	const normalized = normalizeSeedPaths(seedPaths, repoRoot);
+
+	for (const seedPath of normalized) {
+		const sourcePath = path.join(repoRoot, seedPath);
+		const destinationPath = path.join(worktreePath, seedPath);
+
+		if (!fs.existsSync(sourcePath)) {
+			logInternalError("worktree.seedPaths.missing", new Error(`Seed path does not exist: ${seedPath}`));
+			continue;
+		}
+
+		fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+		fs.rmSync(destinationPath, { force: true, recursive: true });
+		fs.cpSync(sourcePath, destinationPath, {
+			dereference: false,
+			force: true,
+			preserveTimestamps: true,
+			recursive: true,
+		});
+	}
+}
+
 export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskState): PreparedTaskWorkspace {
 	if (manifest.workspaceMode !== "worktree") return { cwd: task.cwd };
 	const repoRoot = findGitRoot(manifest.cwd);
@@ -219,6 +276,11 @@ export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskSt
 		}
 		if (currentBranch !== branch) {
 			throw new Error(`Existing worktree branch mismatch at ${worktreePath}: expected '${branch}', got '${currentBranch}'.`);
+		}
+		// Overlay seed paths from config (reused worktree)
+		const reusedSeedPaths = loadedConfig.config.worktree?.seedPaths;
+		if (reusedSeedPaths && reusedSeedPaths.length > 0) {
+			overlaySeedPaths(repoRoot, worktreePath, reusedSeedPaths);
 		}
 		return { cwd: worktreePath, worktreePath, branch, reused: true };
 	}
@@ -242,6 +304,11 @@ export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskSt
 	}
 	const syntheticPaths = runSetupHook(manifest, task, repoRoot, worktreePath, branch);
 	const nodeModulesLinked = loadedConfig.config.worktree?.linkNodeModules === true ? linkNodeModulesIfPresent(repoRoot, worktreePath) : false;
+	// Overlay seed paths from config
+	const seedPaths = loadedConfig.config.worktree?.seedPaths;
+	if (seedPaths && seedPaths.length > 0) {
+		overlaySeedPaths(repoRoot, worktreePath, seedPaths);
+	}
 	return { cwd: worktreePath, worktreePath, branch, reused: false, nodeModulesLinked, syntheticPaths };
 }
 

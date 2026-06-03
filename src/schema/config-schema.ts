@@ -56,6 +56,7 @@ export const PiTeamsWorktreeConfigSchema = Type.Object({
 	setupHook: Type.Optional(Type.String({ minLength: 1 })),
 	setupHookTimeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
 	linkNodeModules: Type.Optional(Type.Boolean()),
+	seedPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 }, { additionalProperties: false });
 
 export const AgentOverrideSchema = Type.Object({
