@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.22] — Remaining Issues from Ultimate Sweep (2026-06-03)
+
+### Highlights
+- `DEFAULT_CHILD_PI` frozen with `Readonly<>` type (prevents mutation)
+- `parseWithSchema` logs validation failures with context
+- Global registry cleanup (`uninstallCrewGlobalRegistry`)
+- Mailbox sender auth and cross-workspace hooks documented
+
+### Fixes
+- `defaults.ts`: `DEFAULT_CHILD_PI` wrapped in `Readonly<{...}>` to prevent mutation via module injection
+- `config.ts`: `parseWithSchema` logs validation failures when context provided
+- `team-tool.ts`: Added `uninstallCrewGlobalRegistry()` paired with install
+- `register.ts`: Calls `uninstallCrewGlobalRegistry()` in `cleanupRuntime()`
+- `mailbox.ts`: Security documentation for sender authentication
+- `hooks/registry.ts`: Security documentation for cross-workspace hook behavior
+
+### Stats
+- Test suite: 2703 pass + 1 skip, 0 fail
+- TypeScript: 0 errors
+
 ## [0.5.21] — Ultimate Final Sweep: HIGH Security + Correctness Fixes (2026-06-03)
 
 ### Highlights
