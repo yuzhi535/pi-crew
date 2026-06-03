@@ -1382,3 +1382,22 @@ correctness+error-handling, and performance+architecture audits across 77 source
 
 - Initial scaffold for `pi-crew`.
 - Added Pi package manifest, extension entry, minimal team tool, slash commands, builtin resources, and documentation placeholders.
+
+## [0.5.23] — Documentation & CI Update (2026-06-03)
+
+### Highlights
+- **CI typecheck re-enabled** — was disabled with stale comment about tsconfig errors
+- All docs updated to v0.5.22 references
+
+### Documentation
+- README.md: version stamp v0.5.22, updated security highlights (12 items)
+- SECURITY-ISSUES.md: added v0.5.17–v0.5.22 security fix summary
+- SECURITY-AUDIT.md: scope updated to v0.5.22
+- docs/architecture.md: v0.5.22, 38 rounds of review
+- docs/pi-crew-bugs.md: v0.5.22 + historical note
+- docs/TEST_MATRIX.md: test count updated to 2703
+- docs/deep-review-report.md: marked historical
+- docs/migration-v0.4-v0.5.md: drop-in replacement note
+
+### CI
+- `.github/workflows/ci.yml`: typecheck step re-enabled (was disabled since v0.3.x)
