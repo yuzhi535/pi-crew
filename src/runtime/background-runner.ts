@@ -138,7 +138,7 @@ async function main(): Promise<void> {
 		try {
 			const logPath = path.join(_cwd, ".crew/state/runs", _runId, "background.log");
 			logFd = fs.openSync(logPath, "a");
-			const origWrite = (prefix: string) => (data: any, ...args: any[]) => {
+			const origWrite = (_prefix: string) => (data: unknown, ...args: unknown[]) => {
 				const msg = [data, ...args].map(String).join(" ") + "\n";
 				fs.writeSync(logFd!, msg);
 			};

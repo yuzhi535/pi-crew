@@ -96,9 +96,11 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 			}
 			return foregroundResult;
 		},
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		renderCall(args: any, theme: any, context: any): any {
 			return renderAgentToolCall(args, theme, context);
 		},
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		renderResult(result: any, options: any, theme: any, context: any): any {
 			return renderAgentToolResult(result, options, theme, context);
 		},

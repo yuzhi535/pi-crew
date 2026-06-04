@@ -29,6 +29,15 @@ export interface AgentToolResultDetails {
 	results?: Array<{ agentId?: string; status?: string; output?: string; error?: string }>;
 }
 
+/** Combined type for renderAgentToolResult — handles both nested details and flat result shapes */
+interface AgentResultData extends AgentToolResultDetails {
+	agentId?: string;
+	status?: string;
+	error?: string;
+	output?: string;
+	runId?: string;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 export function formatTokens(n: number): string {
@@ -295,7 +304,7 @@ export function renderAgentToolResult(
 	_options: unknown, theme: Theme, _context: unknown,
 ): Component {
 	// Handle both nested details and flattened result shape
-	const d = (result as any).details ?? result;
+	const d = (result.details ?? result) as AgentResultData;
 	const c = new Container();
 	const w = 116;
 
@@ -352,7 +361,7 @@ export function renderAgentToolResult(
 function extractText(content: unknown[] | undefined): string {
 	if (!content) return "(no output)";
 	if (!Array.isArray(content)) return String(content);
-	return content.filter((c: any) => c?.type === "text").map((c: any) => c?.text ?? "").join("\n") || "(no output)";
+	return content.filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null && (c as Record<string, unknown>).type === "text").map((c) => String((c as Record<string, unknown>).text ?? "")).join("\n") || "(no output)";
 }
 
 function parseArgs(argsStr: string | undefined): Record<string, unknown> {

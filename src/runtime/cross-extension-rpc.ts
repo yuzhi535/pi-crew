@@ -38,10 +38,10 @@ function handleRpc<P extends { requestId: string }>(
 			const reply: { success: true; data?: unknown } = { success: true };
 			if (data !== undefined) reply.data = data;
 			events.emit(`${channel}:reply:${params.requestId}`, reply);
-		} catch (err: any) {
+		} catch (err: unknown) {
 			events.emit(`${channel}:reply:${params.requestId}`, {
 				success: false,
-				error: err?.message ?? String(err),
+				error: err instanceof Error ? err.message : String(err),
 			});
 		}
 	});

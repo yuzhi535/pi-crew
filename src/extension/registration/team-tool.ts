@@ -105,9 +105,11 @@ export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): 
 				stopProgress.stop();
 			}
 		},
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		renderCall(args: any, theme: any, context: any): any {
 			return renderTeamToolCall(args, theme, context);
 		},
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		renderResult(result: any, options: any, theme: any, context: any): any {
 			return renderTeamToolResult(result, options, theme, context);
 		},

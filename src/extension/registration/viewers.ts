@@ -58,6 +58,7 @@ export async function openLiveConversation(ctx: ExtensionCommandContext, initial
 	const handle = liveAgents.find((h) => h.runId === selected.runId && (selected.taskId ? h.taskId === selected.taskId : true));
 	if (!handle) return false;
 	const theme = asCrewTheme({});
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	await ctx.ui.custom<undefined>((tui: any, _theme: any, _keybindings: any, done: (result: undefined) => void) => {
 		const columns = tui?.terminal?.columns ?? 80;
 		const rows = tui?.terminal?.rows ?? 24;
