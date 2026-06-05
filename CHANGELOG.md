@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.6.2] — Issue #28 + #29 Fixes + Post-Review Hardening (2026-06-05)
+
+### Highlights
+- **Issue #28 fixed**: `crew-init.ts` jiti namespace race — inline `parseRoot`/`safeJoin`/`safeDirname`/`safeResolve` helpers; jiti upgraded 2.6.1 → 2.7.0
+- **Issue #29 fixed**: 11 hardcoded `.crew/state/runs/...` sites now use `projectCrewRoot()` for `.pi/teams/` fallback
+- **Subagent defense-in-depth**: `record.promise` rejection can no longer crash pi via `unhandledRejection`
+- **2 new MEDIUM-severity path-traversal vulnerabilities fixed** in `decision-ledger.ts` (7 functions) and `run-graph.ts` (3 functions)
+- **F-8 safeJoin edge case** fixed (trailing separator handling)
+- **~100 new tests** across 7 files (5 e2e scripts + 18 regression tests for the new fixes)
+
+### Security Fixes (MEDIUM)
+- `decision-ledger.ts`: `initLedger`, `appendEntry`, `getLedger`, `getLatestDecision`, `summarizeLedger`, `promoteCandidate`, `decayCandidate` now call `assertSafePathId("runId", runId)` to prevent path-traversal
+- `run-graph.ts`: `saveRunGraph`, `loadRunGraph`, `listRunGraphs` use `projectCrewRoot()` and `assertSafePathId("runId", runId)` (same bug class as issue #29)
+
+### Bug Fixes
+- **F-1** (post-issue-#29 review): removed duplicate "Defense in depth" comment in `subagent-manager.ts`
+- **F-3** (post-issue-#29 review): added F-6 documentation in `test/unit/crew-init.test.ts` header
+- **F-8** (post-issue-#29 review): `safeJoin("/", "foo")` no longer produces `"//foo"`; trailing separator in parts is stripped (UNC paths preserved)
+- **`crew-init.ts safeJoin`**: collapse internal runs of separator while preserving leading UNC `\\\\` and POSIX `/`
+
+### Test Coverage
+- 9 new regression tests in `test/unit/issue-29-pi-paths.test.ts` (resolver precedence, `waitForRun` error message in both layouts, checkpoint/skill-effectiveness round-trip in `.pi/`-only project, decision-ledger path, defense-in-depth via real child process)
+- 13 new tests in `test/unit/crew-init.test.ts` (F-1 UNC preservation, F-2 jiti race via `path` Proxy, F-3 `safeResolve` graceful degradation, F-4 `__test__internals` export convention, F-5 stale docstring, F-6 async-runner rationale, F-8 trailing-separator)
+- 4 new tests in `test/unit/crew-init.test.ts` for `safeJoin` (F-8 regression coverage)
+- 7 new tests in `test/unit/decision-ledger.test.ts` (path-traversal rejection)
+- 3 new tests in `test/unit/run-graph.test.ts` (path-traversal rejection)
+- 14 new tests in `test/unit/skill-effectiveness.test.ts` (cwd parameter migration)
+- 5 new E2E scripts in `scripts/test-issue-29-*.ts`:
+  - `test-issue-29-e2e.ts` — unit-level integration
+  - `test-issue-29-crash.ts` — focused crash reproduction
+  - `test-issue-29-team-tool.ts` — slow-path early-exit error message
+  - `test-issue-29-real-tasks.ts` — full `executeTeamRun` pipeline in `.pi/`-only project (25 assertions)
+  - **`test-issue-29-real-runtime.ts`** — spawns REAL detached `background-runner.ts` process (most realistic)
+
+### Test Quality Improvements
+- **F-4** (post-issue-#29 review): `crew-init.ts findProjectRoot` now accepts optional `path` dep; test passes the `stubPath` Proxy directly to source code (not a copy)
+- **F-5** (post-issue-#29 review): defense-in-depth crash test now spawns a real child process so the host's `unhandledRejection` detector can actually fire (was previously a comment-only test)
+
+### Stats
+- 7 source files changed (3 fixes + 1 new path-resolver usage)
+- 7 test files changed (4 unit + 5 e2e scripts)
+- 9 commits since v0.6.1: `e95e055`, `cd8c3b8`, `a80fe6c`, `362789c`, `0c78307`, `083afaf`, `d33b86c`, `03c0a20`, `1bedd24`, `0ce3d5a`, `b17fb6b`, `f8731e6`, `105d31d`, `00c66a5`, `2d49910`, `6cbbafa`
+
 ## [0.6.1] — Post-v0.6.0 Security Hardening + Test Coverage (2026-06-04)
 
 ### Highlights

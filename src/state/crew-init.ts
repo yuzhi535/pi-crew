@@ -154,12 +154,16 @@ function safeDirname(p: string): string {
 	return p.slice(0, idx);
 }
 
-function safeResolve(p: string): string {
-	if (path && typeof path.resolve === "function") return path.resolve(p);
+function safeResolve(p: string, pathDep?: typeof path): string {
+	const dep = pathDep ?? path;
+	if (dep && typeof dep.resolve === "function") return dep.resolve(p);
 	return p;
 }
 
-function findProjectRoot(start: string): string | undefined {
+function findProjectRoot(
+	start: string,
+	pathDep?: typeof path,
+): string | undefined {
 	const dirMarkers = [".git", ".hg", ".svn"];
 	const fileMarkers = [
 		"package.json",
@@ -170,7 +174,7 @@ function findProjectRoot(start: string): string | undefined {
 	// Use `parseRoot` (inlined above) to avoid `path.parse` for the critical
 	// termination root — fixes the jiti namespace race in issue #28.
 	const root = parseRoot(start);
-	let current = safeResolve(start);
+	let current = safeResolve(start, pathDep);
 	// Walk up to find project root
 	while (current !== root) {
 		for (const marker of dirMarkers) {
@@ -264,4 +268,5 @@ export const __test__internals = {
 	safeJoin,
 	safeDirname,
 	safeResolve,
+	findProjectRoot,
 };

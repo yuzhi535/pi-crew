@@ -33,7 +33,9 @@ console.log("Issue #29 end-to-end reproduction test");
 console.log("=".repeat(72));
 console.log(`Project root: ${projectRoot}`);
 console.log(`Has .pi/:  ${fs.existsSync(path.join(projectRoot, ".pi"))}`);
-console.log(`Has .crew/: ${fs.existsSync(path.join(projectRoot, ".crew"))} (should be false)`);
+console.log(
+	`Has .crew/: ${fs.existsSync(path.join(projectRoot, ".crew"))} (should be false)`,
+);
 console.log();
 
 // ── Step 2: Install crash detectors ──────────────────────────────────────
@@ -46,7 +48,10 @@ process.on("uncaughtException", (error) => {
 	console.error("✗ FATAL: uncaughtException fired");
 	console.error("  This is the bug described in issue #29.");
 	console.error(`  Error: ${error.message}`);
-	if (error.stack) console.error(`  Stack: ${error.stack.split("\n").slice(0, 8).join("\n")}`);
+	if (error.stack)
+		console.error(
+			`  Stack: ${error.stack.split("\n").slice(0, 8).join("\n")}`,
+		);
 });
 
 process.on("unhandledRejection", (reason) => {
@@ -57,13 +62,19 @@ process.on("unhandledRejection", (reason) => {
 	console.error("✗ FATAL: unhandledRejection fired");
 	console.error("  This is the bug described in issue #29.");
 	console.error(`  Reason: ${reasonErr.message}`);
-	if (reasonErr.stack) console.error(`  Stack: ${reasonErr.stack.split("\n").slice(0, 8).join("\n")}`);
+	if (reasonErr.stack)
+		console.error(
+			`  Stack: ${reasonErr.stack.split("\n").slice(0, 8).join("\n")}`,
+		);
 });
 
 // ── Step 3: Trigger the bug path ─────────────────────────────────────────
 
 async function main(): Promise<void> {
-	const piCrewRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+	const piCrewRoot = path.resolve(
+		path.dirname(fileURLToPath(import.meta.url)),
+		"..",
+	);
 
 	// Dynamic import so the .ts files are loaded through tsx, not require.
 	const { SubagentManager } = await import(
@@ -81,7 +92,9 @@ async function main(): Promise<void> {
 	console.log(`projectCrewRoot(projectRoot) = ${resolvedRoot}`);
 	const expectedRoot = path.join(projectRoot, ".pi", "teams");
 	if (resolvedRoot !== expectedRoot) {
-		console.error(`✗ projectCrewRoot returned ${resolvedRoot}, expected ${expectedRoot}`);
+		console.error(
+			`✗ projectCrewRoot returned ${resolvedRoot}, expected ${expectedRoot}`,
+		);
 		process.exit(1);
 	}
 	console.log("✓ projectCrewRoot correctly resolves to .pi/teams/");
@@ -103,12 +116,18 @@ async function main(): Promise<void> {
 		console.log(`✓ waitForRun threw after ${elapsed}ms (as expected)`);
 		console.log(`  Message: ${msg}`);
 		if (msg.includes(".pi/teams")) {
-			console.log("✓ Error message references .pi/teams/ (resolver applied)");
+			console.log(
+				"✓ Error message references .pi/teams/ (resolver applied)",
+			);
 		} else if (msg.includes(".crew/state/runs")) {
-			console.error(`✗ Error message still references .crew/state/runs/ (BUG NOT FIXED)`);
+			console.error(
+				`✗ Error message still references .crew/state/runs/ (BUG NOT FIXED)`,
+			);
 			process.exit(1);
 		} else {
-			console.error(`✗ Error message doesn't reference expected path: ${msg}`);
+			console.error(
+				`✗ Error message doesn't reference expected path: ${msg}`,
+			);
 			process.exit(1);
 		}
 	}
@@ -117,7 +136,9 @@ async function main(): Promise<void> {
 	// ── Test 3b: Indirect crash path via SubagentManager ────────────────
 	// This is the ACTUAL crash path: subagent fails → record.promise rejects
 	// → no caller awaits → unhandled rejection → pi crashes.
-	console.log("Test 3b: SubagentManager with runner that throws (no awaiter)");
+	console.log(
+		"Test 3b: SubagentManager with runner that throws (no awaiter)",
+	);
 	console.log("-".repeat(72));
 	const mgr = new SubagentManager();
 
@@ -159,14 +180,18 @@ async function main(): Promise<void> {
 	// ── Step 4: Final verdict ───────────────────────────────────────────
 	if (crashed) {
 		console.error("=".repeat(72));
-		console.error("✗ TEST FAILED: process crashed (uncaughtException or unhandledRejection)");
+		console.error(
+			"✗ TEST FAILED: process crashed (uncaughtException or unhandledRejection)",
+		);
 		console.error("=".repeat(72));
 		console.error("The fix in commit a80fe6c did NOT prevent the crash.");
 		process.exit(1);
 	}
 
 	if (record.status !== "error") {
-		console.error(`✗ TEST FAILED: record.status should be 'error', got '${record.status}'`);
+		console.error(
+			`✗ TEST FAILED: record.status should be 'error', got '${record.status}'`,
+		);
 		process.exit(1);
 	}
 
@@ -174,7 +199,9 @@ async function main(): Promise<void> {
 	console.log("✓ ALL TESTS PASSED");
 	console.log("  - projectCrewRoot correctly resolves .pi/teams/");
 	console.log("  - waitForRun() throws with .pi/teams/ in error message");
-	console.log("  - SubagentManager rejection is caught by defense-in-depth .catch");
+	console.log(
+		"  - SubagentManager rejection is caught by defense-in-depth .catch",
+	);
 	console.log("  - No uncaughtException or unhandledRejection fired");
 	console.log("=".repeat(72));
 

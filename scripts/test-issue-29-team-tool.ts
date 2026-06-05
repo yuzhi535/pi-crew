@@ -40,19 +40,28 @@ fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
 console.log("Issue #29 REAL-WORLD reproduction test");
 console.log(`Project: ${tmpDir}`);
 console.log(`  Has .pi/:  ${fs.existsSync(path.join(tmpDir, ".pi"))}`);
-console.log(`  Has .crew/: ${fs.existsSync(path.join(tmpDir, ".crew"))} (should be false)`);
+console.log(
+	`  Has .crew/: ${fs.existsSync(path.join(tmpDir, ".crew"))} (should be false)`,
+);
 console.log();
 
 async function main(): Promise<void> {
-	const piCrewRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+	const piCrewRoot = path.resolve(
+		path.dirname(fileURLToPath(import.meta.url)),
+		"..",
+	);
 
 	// Realistic scenario: the run manifest does NOT exist yet (the background
 	// worker is still starting up). waitForRun() takes the slow path and
 	// hits the early-exit check on attempt 0 — that's where the bug fires.
 	const runId = `team_real_${Date.now().toString(36)}`;
 	console.log(`Looking for run ${runId}`);
-	console.log(`  Expected (correct) path: ${path.join(tmpDir, ".pi", "teams", "state", "runs", runId)}`);
-	console.log(`  Buggy path:              ${path.join(tmpDir, ".crew", "state", "runs", runId)}`);
+	console.log(
+		`  Expected (correct) path: ${path.join(tmpDir, ".pi", "teams", "state", "runs", runId)}`,
+	);
+	console.log(
+		`  Buggy path:              ${path.join(tmpDir, ".crew", "state", "runs", runId)}`,
+	);
 	console.log();
 
 	const { waitForRun } = await import(
@@ -67,7 +76,9 @@ async function main(): Promise<void> {
 			pollIntervalMs: 100,
 		});
 		const elapsed = Date.now() - start;
-		console.error(`✗ waitForRun unexpectedly SUCCEEDED in ${elapsed}ms (should have thrown)`);
+		console.error(
+			`✗ waitForRun unexpectedly SUCCEEDED in ${elapsed}ms (should have thrown)`,
+		);
 		console.error(`  manifest.status = ${result.manifest.status}`);
 		process.exit(1);
 	} catch (error) {
@@ -80,19 +91,29 @@ async function main(): Promise<void> {
 		// The error message must reference the CORRECT path (.pi/teams/...),
 		// not the old hardcoded .crew/state/runs/...
 		if (msg.includes(".pi/teams")) {
-			console.log("✓ Error message references .pi/teams/ (resolver applied)");
-			console.log("✓ TEST PASSED: waitForRun correctly resolves .pi/teams/state/runs/");
+			console.log(
+				"✓ Error message references .pi/teams/ (resolver applied)",
+			);
+			console.log(
+				"✓ TEST PASSED: waitForRun correctly resolves .pi/teams/state/runs/",
+			);
 			fs.rmSync(tmpDir, { recursive: true, force: true });
 			process.exit(0);
 		}
 		if (msg.includes(".crew/state/runs")) {
-			console.error("✗ TEST FAILED: Error message references .crew/state/runs/");
+			console.error(
+				"✗ TEST FAILED: Error message references .crew/state/runs/",
+			);
 			console.error("  This is the bug described in issue #29:");
-			console.error("  waitForRun() looked in .crew/state/runs/ instead of .pi/teams/state/runs/");
+			console.error(
+				"  waitForRun() looked in .crew/state/runs/ instead of .pi/teams/state/runs/",
+			);
 			fs.rmSync(tmpDir, { recursive: true, force: true });
 			process.exit(1);
 		}
-		console.error(`✗ TEST FAILED: Error message doesn't reference expected path`);
+		console.error(
+			`✗ TEST FAILED: Error message doesn't reference expected path`,
+		);
 		console.error(`  Got: ${msg}`);
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 		process.exit(1);

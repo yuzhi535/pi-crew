@@ -268,7 +268,7 @@ test("ensureCrewDirectory survives a corrupted `path` namespace binding (issue #
 	// to lock in their behavior — this is the same code path that runs when
 	// `path.parse` is `undefined` in the jiti race.
 	const crewInitModule = await import("../../src/state/crew-init.ts");
-	const { parseRoot, safeJoin, safeDirname, safeResolve } =
+	const { parseRoot, safeJoin, safeDirname, safeResolve, findProjectRoot } =
 		crewInitModule.__test__internals;
 
 	// parseRoot: POSIX
@@ -329,8 +329,10 @@ test("ensureCrewDirectory survives a corrupted `path` namespace binding (issue #
 	// In the original jiti race, `path` is a namespace object whose properties
 	// are `undefined` (the namespace exists but its bindings haven't been
 	// populated yet). We simulate this with a Proxy that returns `undefined`
-	// for every property access, and re-run `findProjectRoot`'s logic with
-	// those helpers. This is the same code path that runs in production.
+	// for every property access, and pass it to the source's findProjectRoot
+	// (which now accepts an optional path dependency). This proves the
+	// production code path works with a broken `path` binding, not just a
+	// copy of the logic in the test.
 	const stubPath = new Proxy(
 		{},
 		{
@@ -342,26 +344,6 @@ test("ensureCrewDirectory survives a corrupted `path` namespace binding (issue #
 			},
 		},
 	);
-	// Re-implement the `findProjectRoot` loop body in terms of the stub `path`
-	// and the inline helpers, exactly as in src/state/crew-init.ts. If the
-	// inline helpers are correct, this loop completes without throwing.
-	function findProjectRootWithStubPath(start: string): string | undefined {
-		const dirMarkers = [".git", ".hg", ".svn"];
-		const root = parseRoot(start);
-		let current = start; // safeResolve returns input when path is missing
-		// Limit iterations so an infinite loop is caught.
-		let iterations = 0;
-		while (current !== root && iterations++ < 100) {
-			for (const marker of dirMarkers) {
-				// safeJoin returns "/current/.git" even when path is missing
-				if (fs.existsSync(safeJoin(current, marker))) return current;
-			}
-			const parent = safeDirname(current);
-			if (parent === current) break;
-			current = parent;
-		}
-		return undefined;
-	}
 	// Use a real temp directory; with the inline helpers, the stub `path`
 	// should never be called and the loop should walk up to the .git marker.
 	const realProject = fs.mkdtempSync(
@@ -371,10 +353,13 @@ test("ensureCrewDirectory survives a corrupted `path` namespace binding (issue #
 	const nested = path.join(realProject, "a", "b", "c", "d");
 	fs.mkdirSync(nested, { recursive: true });
 	try {
-		// We pass the relative nested path so safeResolve (with stub) doesn't
-		// resolve it; the loop still walks up because parseRoot returns the
-		// same value for any POSIX absolute path.
-		const result = findProjectRootWithStubPath(realProject);
+		// Pass the stubbed `path` dependency to the source's findProjectRoot.
+		// With the fix, the inline helpers (parseRoot, safeJoin, safeDirname,
+		// safeResolve) don't delegate to `path`, so the loop completes.
+		const result = findProjectRoot(
+			realProject,
+			stubPath as unknown as typeof path,
+		);
 		assert.equal(
 			result,
 			realProject,
@@ -383,33 +368,29 @@ test("ensureCrewDirectory survives a corrupted `path` namespace binding (issue #
 	} finally {
 		fs.rmSync(realProject, { recursive: true, force: true });
 	}
-	// Reference stubPath to keep it in scope (no-op but documents intent).
-	assert.equal(typeof stubPath, "object");
 
 	// --- F-3 regression: safeResolve degradation is graceful ---
 	// If path.resolve is unavailable, safeResolve returns its input. The
 	// findProjectRoot loop should still terminate (either by finding a
-	// marker or by walking all the way to the root).
-	function findProjectRootWithIdentityResolve(
-		start: string,
-	): string | undefined {
-		const dirMarkers = [".git", ".hg", ".svn"];
-		const root = parseRoot(start);
-		let current = start; // identity fallback
-		let iterations = 0;
-		while (current !== root && iterations++ < 100) {
-			for (const marker of dirMarkers) {
-				if (fs.existsSync(safeJoin(current, marker))) return current;
-			}
-			const parent = safeDirname(current);
-			if (parent === current) break;
-			current = parent;
-		}
-		return undefined;
-	}
-	// Should not throw; returns undefined or the directory containing .git.
+	// marker or by walking all the way to the root). Pass a path proxy
+	// whose `.resolve` is undefined; safeResolve should fall back to
+	// identity, and the source's findProjectRoot should still complete.
+	const stubNoResolve = new Proxy(
+		{},
+		{
+			get(target, prop) {
+				if (prop === "resolve") return undefined; // identity fallback
+				return undefined;
+			},
+		},
+	);
 	assert.doesNotThrow(() => {
-		findProjectRootWithIdentityResolve("/some/absolute/path");
+		// Should not throw; returns undefined (no .git anywhere up the tree).
+		const result = findProjectRoot(
+			"/some/absolute/path",
+			stubNoResolve as unknown as typeof path,
+		);
+		assert.equal(result, undefined);
 	});
 });
 

@@ -24,6 +24,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { projectCrewRoot } from "../../src/utils/paths.ts";
 
 /** Make a temp dir that mimics a .pi-based project (no .crew/). */
@@ -300,46 +301,55 @@ test("issue #29 — subagent-manager.start() does not crash when record.promise 
 	// The defense-in-depth fix attaches a .catch to record.promise inside
 	// start(). Without that fix, an unhandled rejection from a subagent
 	// failure would propagate to uncaughtException and crash the host
-	// process. This test verifies the fix by:
-	//   1. Spawning a subagent whose runner throws.
-	//   2. NOT awaiting the resulting record.promise.
-	//   3. Asserting the process survives and the record is marked 'error'.
+	// process. This test verifies the fix in a CHILD process so the host
+	// process's unhandled-rejection detector can actually fire (Node.js
+	// treats `process.on("unhandledRejection")` as global to the process
+	// — in a unit test inside the same process, our own listener would
+	// mask the one in subagent-manager.ts).
+	//
+	// Strategy: spawn a Node.js child that:
+	//   1. Sets up its own uncaughtException + unhandledRejection listeners.
+	//   2. Spawns a subagent whose runner throws, without awaiting.
+	//   3. Waits 500ms, then exits with code 0 if no crash, 1 if crashed.
+	//
+	// This is a true integration test of the fix's crash-safety claim.
 	const dir = makePiProject();
+	const driverPath = path.join(dir, "defense-in-depth-driver.mjs");
+	const driver = `
+		import * as fs from "node:fs";
+		const { SubagentManager } = await import(${JSON.stringify(pathToFileURL(path.resolve("src/runtime/subagent-manager.ts")).href)});
+		let crashed = false;
+		process.on("uncaughtException", () => { crashed = true; });
+		process.on("unhandledRejection", () => { crashed = true; });
+		const mgr = new SubagentManager();
+		const throwingRunner = async () => { throw new Error("runner failed"); };
+		mgr.spawn({
+			cwd: process.cwd(),
+			type: "test",
+			description: "test",
+			prompt: "throw",
+			background: false,
+		}, throwingRunner);
+		await new Promise(r => setTimeout(r, 500));
+		process.exit(crashed ? 1 : 0);
+	`;
 	try {
-		// We need the unhandled-rejection detector from the host process.
-		// For the unit test, we instead check that record.promise.catch was
-		// wired (i.e. attaching a second .catch after start() works and
-		// the record's status is set to 'error').
-		const sm = await import("../../src/runtime/subagent-manager.ts");
-		const mgr = new sm.SubagentManager();
-		const runnerThatThrows = async (
-			_options: import("../../src/runtime/subagent-manager.ts").SubagentSpawnOptions,
-			_signal?: AbortSignal,
-		): Promise<
-			import("../../src/extension/tool-result.ts").PiTeamsToolResult
-		> => {
-			throw new Error("runner failed");
-		};
-		const record = mgr.spawn(
-			{
-				cwd: dir,
-				type: "test",
-				description: "test",
-				prompt: "throw",
-				background: false,
-			},
-			runnerThatThrows,
-		);
-		assert.ok(record, "spawn() should return a record");
-		assert.ok(record.promise, "Record should have a promise");
-		// Wait for the promise to reject (don't attach .catch — let the
-		// defense-in-depth .catch handle it).
-		await new Promise((resolve) => setTimeout(resolve, 200));
-		// The record should be marked 'error' (not 'running' and not crashed).
+		fs.writeFileSync(driverPath, driver);
+		const { spawnSync } = await import("node:child_process");
+		const result = spawnSync(process.execPath, [driverPath], {
+			cwd: dir,
+			env: { ...process.env, NODE_ENV: "test" },
+			timeout: 10_000,
+		});
+		if (result.status !== 0) {
+			console.error("Driver stdout:", result.stdout?.toString());
+			console.error("Driver stderr:", result.stderr?.toString());
+		}
 		assert.equal(
-			record.status,
-			"error",
-			"Record should be marked 'error' after runner throws",
+			result.status,
+			0,
+			`Subprocess should exit 0 (no crash) but got ${result.status}. ` +
+				`If status=1, the defense-in-depth .catch did not prevent unhandledRejection.`,
 		);
 	} finally {
 		rmTemp(dir);

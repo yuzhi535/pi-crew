@@ -44,7 +44,9 @@ console.log("Issue #29 REAL-TASK E2E test (exercises public API)");
 console.log("=".repeat(72));
 console.log(`Project: ${tmpDir}`);
 console.log(`  Has .pi/  : ${fs.existsSync(path.join(tmpDir, ".pi"))}`);
-console.log(`  Has .crew/: ${fs.existsSync(path.join(tmpDir, ".crew"))} (should be false)`);
+console.log(
+	`  Has .crew/: ${fs.existsSync(path.join(tmpDir, ".crew"))} (should be false)`,
+);
 console.log();
 
 // ── Crash detection ──────────────────────────────────────────────────────
@@ -63,7 +65,10 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-const piCrewRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const piCrewRoot = path.resolve(
+	path.dirname(fileURLToPath(import.meta.url)),
+	"..",
+);
 let pass = 0;
 let fail = 0;
 const failures: string[] = [];
@@ -103,12 +108,13 @@ async function main(): Promise<void> {
 	// doesn't spawn child Pi processes). It internally creates the manifest,
 	// tasks.json, events.jsonl, and exercises every projectCrewRoot() site.
 	console.log();
-	console.log("Test 2: Full executeTeamRun() pipeline (with placeholder workers)");
+	console.log(
+		"Test 2: Full executeTeamRun() pipeline (with placeholder workers)",
+	);
 	console.log("-".repeat(72));
 
-	const { createRunManifest, createTasksFromWorkflow, loadRunManifestById } = await import(
-		path.join(piCrewRoot, "src/state/state-store.ts")
-	);
+	const { createRunManifest, createTasksFromWorkflow, loadRunManifestById } =
+		await import(path.join(piCrewRoot, "src/state/state-store.ts"));
 	const { discoverTeams, allTeams } = await import(
 		path.join(piCrewRoot, "src/teams/discover-teams.ts")
 	);
@@ -125,7 +131,9 @@ async function main(): Promise<void> {
 	const teams = allTeams(discoverTeams(tmpDir));
 	const agents = allAgents(discoverAgents(tmpDir));
 	const workflows = allWorkflows(discoverWorkflows(tmpDir));
-	console.log(`  Discovered ${teams.length} teams, ${agents.length} agents, ${workflows.length} workflows`);
+	console.log(
+		`  Discovered ${teams.length} teams, ${agents.length} agents, ${workflows.length} workflows`,
+	);
 
 	const team = teams.find((t) => t.name === "fast-fix");
 	const workflow = workflows.find((w) => w.name === "fast-fix");
@@ -133,7 +141,11 @@ async function main(): Promise<void> {
 	check("fast-fix workflow found", Boolean(workflow));
 
 	if (team && workflow) {
-		const { manifest, tasks: initialTasks, paths } = createRunManifest({
+		const {
+			manifest,
+			tasks: initialTasks,
+			paths,
+		} = createRunManifest({
 			cwd: tmpDir,
 			team,
 			workflow,
@@ -161,7 +173,14 @@ async function main(): Promise<void> {
 			console.log(`  Final status: ${result.manifest.status}`);
 
 			// Verify the manifest is at the right path
-			const expectedStateRoot = path.join(tmpDir, ".pi", "teams", "state", "runs", manifest.runId);
+			const expectedStateRoot = path.join(
+				tmpDir,
+				".pi",
+				"teams",
+				"state",
+				"runs",
+				manifest.runId,
+			);
 			check(
 				`manifest.stateRoot is under .pi/teams/state/runs/`,
 				result.manifest.stateRoot === expectedStateRoot,
@@ -170,7 +189,10 @@ async function main(): Promise<void> {
 
 			// Verify the manifest can be reloaded
 			const reloaded = loadRunManifestById(tmpDir, manifest.runId);
-			check("manifest can be reloaded by loadRunManifestById()", Boolean(reloaded));
+			check(
+				"manifest can be reloaded by loadRunManifestById()",
+				Boolean(reloaded),
+			);
 			if (reloaded) {
 				check(
 					"reloaded manifest has same runId",
@@ -192,7 +214,11 @@ async function main(): Promise<void> {
 
 			// Verify all expected files are under .pi/teams/
 			const runDir = expectedStateRoot;
-			const expectedFiles = ["manifest.json", "tasks.json", "events.jsonl"];
+			const expectedFiles = [
+				"manifest.json",
+				"tasks.json",
+				"events.jsonl",
+			];
 			for (const f of expectedFiles) {
 				check(
 					`${f} exists at .pi/teams/state/runs/<runId>/${f}`,
@@ -202,7 +228,9 @@ async function main(): Promise<void> {
 		} catch (error) {
 			fail++;
 			failures.push("executeTeamRun");
-			console.error(`  ✗ executeTeamRun FAILED: ${(error as Error).message}`);
+			console.error(
+				`  ✗ executeTeamRun FAILED: ${(error as Error).message}`,
+			);
 		}
 	}
 
@@ -263,7 +291,9 @@ async function main(): Promise<void> {
 
 	// ── Test 4: waitForRun() with non-existent runId (slow path) ────────
 	console.log();
-	console.log("Test 4: waitForRun() with non-existent runId (slow path early-exit)");
+	console.log(
+		"Test 4: waitForRun() with non-existent runId (slow path early-exit)",
+	);
 	console.log("-".repeat(72));
 	try {
 		await waitForRun("team_definitely_does_not_exist_xyz_29", tmpDir, {
@@ -286,19 +316,46 @@ async function main(): Promise<void> {
 	console.log();
 	console.log("Test 5: saveCheckpoint / loadCheckpoint round-trip");
 	console.log("-".repeat(72));
-	const { saveCheckpoint, loadCheckpoint, listCheckpoints, clearCheckpointStores } = await import(
-		path.join(piCrewRoot, "src/runtime/checkpoint.ts")
-	);
+	const {
+		saveCheckpoint,
+		loadCheckpoint,
+		listCheckpoints,
+		clearCheckpointStores,
+	} = await import(path.join(piCrewRoot, "src/runtime/checkpoint.ts"));
 	const ckRunId = `ck_real_${Date.now().toString(36)}`;
 	const ckTaskId = "task-real-1";
-	saveCheckpoint(ckRunId, ckTaskId, 1, "context", "progress", "agent-real", "model-real", tmpDir);
+	saveCheckpoint(
+		ckRunId,
+		ckTaskId,
+		1,
+		"context",
+		"progress",
+		"agent-real",
+		"model-real",
+		tmpDir,
+	);
 	const loaded = loadCheckpoint(ckRunId, ckTaskId, tmpDir);
 	check("saveCheckpoint → loadCheckpoint round-trip", Boolean(loaded));
 	if (loaded) {
-		check("loaded checkpoint has correct taskId", loaded.taskId === ckTaskId);
-		check("loaded checkpoint has correct progress", loaded.progress === "progress");
+		check(
+			"loaded checkpoint has correct taskId",
+			loaded.taskId === ckTaskId,
+		);
+		check(
+			"loaded checkpoint has correct progress",
+			loaded.progress === "progress",
+		);
 	}
-	const ckPath = path.join(tmpDir, ".pi", "teams", "state", "runs", ckRunId, "checkpoints", `${ckTaskId}.json`);
+	const ckPath = path.join(
+		tmpDir,
+		".pi",
+		"teams",
+		"state",
+		"runs",
+		ckRunId,
+		"checkpoints",
+		`${ckTaskId}.json`,
+	);
 	check(
 		`checkpoint file at .pi/teams/state/runs/${ckRunId}/checkpoints/${ckTaskId}.json`,
 		fs.existsSync(ckPath),
@@ -326,11 +383,25 @@ async function main(): Promise<void> {
 		confidence: 0.7,
 	});
 	const seList = getSkillActivations(tmpDir, seRunId);
-	check("recordSkillActivation → getSkillActivations round-trip", seList.length === 1);
+	check(
+		"recordSkillActivation → getSkillActivations round-trip",
+		seList.length === 1,
+	);
 	if (seList.length === 1) {
-		check("recorded skill has correct skillId", seList[0].skillId === "verification-before-done");
+		check(
+			"recorded skill has correct skillId",
+			seList[0].skillId === "verification-before-done",
+		);
 	}
-	const sePath = path.join(tmpDir, ".pi", "teams", "state", "runs", seRunId, "skill-activations.jsonl");
+	const sePath = path.join(
+		tmpDir,
+		".pi",
+		"teams",
+		"state",
+		"runs",
+		seRunId,
+		"skill-activations.jsonl",
+	);
 	check(
 		`skill-activations file at .pi/teams/state/runs/${seRunId}/skill-activations.jsonl`,
 		fs.existsSync(sePath),
@@ -353,7 +424,10 @@ async function main(): Promise<void> {
 		reasoning: "lowest cost",
 	});
 	const ledger = getLedger(ledgerRunId);
-	check(`initLedger + appendEntry round-trip (${ledger.length} entries)`, ledger.length === 1);
+	check(
+		`initLedger + appendEntry round-trip (${ledger.length} entries)`,
+		ledger.length === 1,
+	);
 
 	// ── Test 8: background-runner.ts path computation (offline) ──────────
 	// We can't actually spawn the background worker (it requires a real
@@ -393,7 +467,10 @@ async function main(): Promise<void> {
 	);
 	// Do NOT await record.promise — this is the scenario that crashes pi.
 	await new Promise((resolve) => setTimeout(resolve, 300));
-	check(`record.status is 'error' after runner throws`, record.status === "error");
+	check(
+		`record.status is 'error' after runner throws`,
+		record.status === "error",
+	);
 	check(
 		`no uncaughtException/unhandledRejection fired`,
 		!crashed,
@@ -403,7 +480,9 @@ async function main(): Promise<void> {
 	// ── Final verdict ───────────────────────────────────────────────────
 	console.log();
 	console.log("=".repeat(72));
-	console.log(`Results: ${pass} passed, ${fail} failed, ${crashed ? "1" : "0"} crashed`);
+	console.log(
+		`Results: ${pass} passed, ${fail} failed, ${crashed ? "1" : "0"} crashed`,
+	);
 	if (failures.length > 0) {
 		console.error("Failures:");
 		for (const f of failures) console.error(`  - ${f}`);

@@ -17,7 +17,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-issue-29-crash-"));
+const tmpDir = fs.mkdtempSync(
+	path.join(os.tmpdir(), "pi-crew-issue-29-crash-"),
+);
 fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
 
 console.log("Issue #29 CRASH reproduction test");
@@ -44,7 +46,10 @@ process.on("unhandledRejection", (reason) => {
 });
 
 async function main(): Promise<void> {
-	const piCrewRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+	const piCrewRoot = path.resolve(
+		path.dirname(fileURLToPath(import.meta.url)),
+		"..",
+	);
 	const { SubagentManager } = await import(
 		path.join(piCrewRoot, "src/runtime/subagent-manager.ts")
 	);
@@ -82,17 +87,29 @@ async function main(): Promise<void> {
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 
 	if (crashed) {
-		console.error("✗ FAIL: process crashed (uncaughtException/unhandledRejection fired)");
-		console.error("  The defense-in-depth fix in subagent-manager.ts did NOT prevent the crash.");
+		console.error(
+			"✗ FAIL: process crashed (uncaughtException/unhandledRejection fired)",
+		);
+		console.error(
+			"  The defense-in-depth fix in subagent-manager.ts did NOT prevent the crash.",
+		);
 		if (crashError?.stack) {
 			console.error("  Stack trace:");
-			console.error(crashError.stack.split("\n").slice(0, 10).map((l) => `    ${l}`).join("\n"));
+			console.error(
+				crashError.stack
+					.split("\n")
+					.slice(0, 10)
+					.map((l) => `    ${l}`)
+					.join("\n"),
+			);
 		}
 		process.exit(1);
 	}
 
 	if (record.status !== "error") {
-		console.error(`✗ FAIL: record.status should be 'error', got '${record.status}'`);
+		console.error(
+			`✗ FAIL: record.status should be 'error', got '${record.status}'`,
+		);
 		process.exit(1);
 	}
 
