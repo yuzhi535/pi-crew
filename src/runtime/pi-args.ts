@@ -15,6 +15,19 @@ const DEFAULT_MAX_CREW_DEPTH = 2;
 // Prevents accumulation of /tmp/pi-crew-* dirs from crashed/killed tests.
 const createdTempDirs = new Set<string>();
 
+/**
+ * Resolve the temp-dir base path.
+ * Uses pi's own config dir (`~/.pi/agent/pi-crew/tmp/`) so the temp files
+ * live alongside other pi state and never pollute the shared /tmp directory.
+ * Respects `PI_CODING_AGENT_DIR` env var (pi's documented override).
+ */
+function getPiTempBase(): string {
+	const agentDir =
+		process.env.PI_CODING_AGENT_DIR?.trim() ||
+		path.join(os.homedir(), ".pi", "agent");
+	return path.join(agentDir, "pi-crew", "tmp");
+}
+
 export interface BuildPiWorkerArgsInput {
 	task: string;
 	agent: AgentConfig;
@@ -131,10 +144,9 @@ export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerA
 
 	let tempDir: string | undefined;
 	if (input.agent.systemPrompt) {
-		// On Windows, prefer a subdirectory within the user's profile over system temp
-		const tmpBase = process.platform === "win32" && os.homedir()
-			? path.join(os.homedir(), ".pi-crew", "tmp")
-			: os.tmpdir();
+		// Use pi's own config dir instead of /tmp so temp files live alongside
+		// other pi state and don't pollute the shared system temp dir.
+		const tmpBase = getPiTempBase();
 		tempDir = createSafeTempDir(tmpBase, `pi-crew-${process.pid}-`);
 		const promptPath = path.join(tempDir, `${input.agent.name.replace(/[^\w.-]/g, "_")}.md`);
 		fs.writeFileSync(promptPath, input.agent.systemPrompt, { mode: 0o600 });
@@ -143,9 +155,7 @@ export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerA
 
 	if (input.task.length > TASK_ARG_LIMIT) {
 		if (!tempDir) {
-			const tmpBase = process.platform === "win32" && os.homedir()
-				? path.join(os.homedir(), ".pi-crew", "tmp")
-				: os.tmpdir();
+			const tmpBase = getPiTempBase();
 			tempDir = createSafeTempDir(tmpBase, `pi-crew-${process.pid}-`);
 		}
 		const taskPath = path.join(tempDir, "task.md");
