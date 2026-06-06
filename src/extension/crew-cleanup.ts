@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { logInternalError } from "../utils/internal-error.ts";
+import { cleanupAllTrackedTempDirs } from "../runtime/pi-args.ts";
 // NOTE: globalProgressTracker import kept for documentation but not directly used
 // since we don't have agent IDs to untrack. Actual progress clearing should be
 // handled by the progress tracker itself on shutdown.
@@ -112,12 +113,14 @@ async function cleanupChildProcesses(): Promise<void> {
 }
 
 async function cleanupTempDirectories(): Promise<void> {
-	// NOTE: getTempDir is not available in paths.ts.
-	// For now, just log that cleanup is pending.
-	// Actual temp directory cleanup should be implemented by the run-graph
-	// or the specific code that creates temporary workspaces.
+	// Clean up every temp dir created in this process. Previously this was
+	// a stub that just logged; it caused /tmp/pi-crew-* dirs to accumulate
+	// from killed test runs and child-pi invocations. See issue #<n>.
 	try {
-		console.log(`[pi-crew] Temp directory cleanup deferred to run-graph`);
+		const result = cleanupAllTrackedTempDirs();
+		if (result.cleaned > 0) {
+			console.log(`[pi-crew] Cleaned ${result.cleaned} tracked temp dirs (${result.failed} failed)`);
+		}
 	} catch (error) {
 		logInternalError("crew-cleanup.temp", error);
 	}

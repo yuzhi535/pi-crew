@@ -7,6 +7,12 @@ import { checkProcessLiveness } from "./process-status.ts";
 
 /** Age threshold for orphaned temp directory cleanup: 1 hour. */
 const ORPHAN_TEMP_DIR_AGE_THRESHOLD_MS = 60 * 60 * 1000;
+/** Defense-in-depth: cap the number of /tmp/pi-crew-* entries processed per
+ * reconcile tick. With a few thousand accumulated dirs, processing them all
+ * synchronously can block the main thread for many seconds, causing the
+ * terminal to appear hung. We process in batches; the rest are handled on
+ * subsequent ticks. */
+const ORPHAN_TEMP_SCAN_BATCH_SIZE = 50;
 
 /**
  * Result of reconciling a single stale run.
@@ -380,7 +386,14 @@ export function reconcileOrphanedTempWorkspaces(
 	let cleanedDirs = 0;
 	try {
 		const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
-		for (const entry of entries) {
+		// Sort for deterministic order; cap to ORPHAN_TEMP_SCAN_BATCH_SIZE per
+		// tick to avoid main-thread stalls when /tmp has thousands of
+		// pi-crew-* dirs from past interrupted test runs.
+		const candidates = entries
+			.filter((e) => e.isDirectory() && e.name.startsWith("pi-crew-"))
+			.sort((a, b) => a.name.localeCompare(b.name))
+			.slice(0, ORPHAN_TEMP_SCAN_BATCH_SIZE);
+		for (const entry of candidates) {
 			if (!entry.isDirectory() || !entry.name.startsWith("pi-crew-"))
 				continue;
 			const workspaceDir = path.join(tmpDir, entry.name);

@@ -10,6 +10,11 @@ const PROMPT_RUNTIME_EXTENSION_PATH = path.resolve(path.dirname(fileURLToPath(im
 const TASK_ARG_LIMIT = 8000;
 const DEFAULT_MAX_CREW_DEPTH = 2;
 
+// Track every temp dir created in this process so we can clean them up
+// even if the parent is killed before child-pi.ts cleanup runs.
+// Prevents accumulation of /tmp/pi-crew-* dirs from crashed/killed tests.
+const createdTempDirs = new Set<string>();
+
 export interface BuildPiWorkerArgsInput {
 	task: string;
 	agent: AgentConfig;
@@ -85,7 +90,10 @@ function createSafeTempDir(base: string, prefix: string): string {
 		}
 		throw e;
 	}
-	return fs.realpathSync(rawTempDir);
+	const resolved = fs.realpathSync(rawTempDir);
+	// Track for global cleanup on shutdown / crash
+	createdTempDirs.add(resolved);
+	return resolved;
 }
 
 export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerArgsResult {
@@ -172,7 +180,30 @@ export function cleanupTempDir(tempDir: string | undefined): void {
 	if (!tempDir) return;
 	try {
 		fs.rmSync(tempDir, { recursive: true, force: true });
+		createdTempDirs.delete(tempDir);
 	} catch {
 		// Best effort.
 	}
+}
+
+/**
+ * Clean up ALL temp dirs created in this process. Called from
+ * crew-cleanup.ts on session_shutdown to prevent accumulation of
+ * /tmp/pi-crew-* dirs when individual cleanupTempDir calls are missed
+ * (e.g. parent process killed before child-pi.ts settles).
+ */
+export function cleanupAllTrackedTempDirs(): { cleaned: number; failed: number } {
+	let cleaned = 0;
+	let failed = 0;
+	// Snapshot to avoid mutation during iteration
+	for (const dir of [...createdTempDirs]) {
+		try {
+			fs.rmSync(dir, { recursive: true, force: true });
+			createdTempDirs.delete(dir);
+			cleaned++;
+		} catch {
+			failed++;
+		}
+	}
+	return { cleaned, failed };
 }
