@@ -157,6 +157,10 @@ export function createManifestCache(cwd: string, options: ManifestCacheOptions =
 			listCache.clear();
 			timer?.unref();
 		}, ttlMs);
+		// Unref immediately so the timer never blocks process exit (defense in
+		// depth: the in-callback unref above may not run if shutdown happens
+		// before the timer fires).
+		listTimer.unref();
 	}
 
 	function loadManifest(runId: string, rootsToCheck: string[]): CachedManifest | undefined {

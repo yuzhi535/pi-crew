@@ -765,7 +765,27 @@ function handleInvalidate(
 /**
  * Locate the CWD where a run's state is stored.
  * Tries ctx.cwd first, then scans immediate child directories for .crew/state/runs/<runId>.
+ *
+ * Defensive bounds (prevent hang on large dirs like /tmp in CI):
+ * - Skips entries that are well-known system/ephemeral dirs (e.g. .npm, node_modules, .git)
+ * - Caps the scan at MAX_SCAN_ENTRIES to avoid pathological scans
+ * - Skips hidden entries (starting with `.`) unless they look like run directories
+ *   (e.g. .crew, .pi, .tmp-crew-runs)
  */
+const MAX_SCAN_ENTRIES = 1000;
+const SKIP_SCAN_DIRS = new Set([
+	"node_modules",
+	".git",
+	".npm",
+	".cache",
+	".local",
+	"proc",
+	"sys",
+	"dev",
+	"Library",
+	"Applications",
+]);
+
 export function locateRunCwd(
 	runId: string,
 	baseCwd: string,
@@ -773,10 +793,23 @@ export function locateRunCwd(
 	// Fast path: run is in the current CWD
 	if (loadRunManifestById(baseCwd, runId)) return baseCwd;
 
-	// Scan immediate child directories
+	// Scan immediate child directories, but with defensive bounds.
 	try {
-		for (const entry of fs.readdirSync(baseCwd, { withFileTypes: true })) {
+		const entries = fs.readdirSync(baseCwd, { withFileTypes: true });
+		const boundedEntries = entries.length > MAX_SCAN_ENTRIES
+			? entries.slice(0, MAX_SCAN_ENTRIES)
+			: entries;
+		for (const entry of boundedEntries) {
 			if (!entry.isDirectory()) continue;
+			if (SKIP_SCAN_DIRS.has(entry.name)) continue;
+			// Skip hidden entries except well-known run-storage prefixes
+			if (entry.name.startsWith(".")) {
+				if (
+					!entry.name.startsWith(".crew") &&
+					!entry.name.startsWith(".pi") &&
+					!entry.name.startsWith(".tmp-crew")
+				) continue;
+			}
 			const candidate = path.join(baseCwd, entry.name);
 			if (loadRunManifestById(candidate, runId)) return candidate;
 		}

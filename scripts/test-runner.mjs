@@ -5,7 +5,12 @@
  * Problem: `tsx --test` always exits 0 even when tests fail.
  * Fix: Parse output for "# fail N", exit 1 if N > 0.
  *
- * Usage: node scripts/test-runner.mjs <args passed to tsx --test>
+ * Always passes --test-force-exit so the child process cannot hang the
+ * parent (pi) on shutdown. Defensive: prevents the "pi froze" failure
+ * mode where a long-running test keeps file handles/timers open and
+ * blocks the agent's wait-for-exit.
+ *
+ * Usage: node scripts/test-runner.mjs [tsx test args...]
  */
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -16,9 +21,13 @@ if (args.length === 0) {
 	process.exit(1);
 }
 
+// Always inject --test-force-exit to guarantee child exits (prevents pi hang).
+const hasForceExit = args.includes("--test-force-exit");
+const finalArgs = hasForceExit ? args : ["--test-force-exit", ...args];
+
 const result = spawnSync(
 	process.execPath,
-	["--import", "tsx/esm", "--test", ...args],
+	["--import", "tsx/esm", "--test", ...finalArgs],
 	{
 		stdio: ["inherit", "pipe", "inherit"],
 		encoding: "utf-8",

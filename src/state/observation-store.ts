@@ -9,6 +9,8 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync, appendFileSync } from "node:fs";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { logInternalError } from "../utils/internal-error.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -151,7 +153,8 @@ export class ObservationStore {
 	 */
 	save(): void {
 		try {
-			mkdirSync(this.storePath.substring(0, this.storePath.lastIndexOf("/")), { recursive: true });
+			// Use path.dirname for cross-platform support (handles both \ and /)
+			mkdirSync(path.dirname(this.storePath), { recursive: true });
 			writeFileSync(this.storePath, JSON.stringify({
 				observations: this.observations,
 				compressed: this.compressed,

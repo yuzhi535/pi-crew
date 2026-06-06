@@ -85,7 +85,11 @@ describe("sharedPath", () => {
 		try {
 			const manifest = makeManifest(tmp);
 			const p = sharedPath(manifest, "sub/file.txt");
-			assert.ok(p.endsWith("sub/file.txt"));
+			// Cross-platform: use path.sep or check for both / and \
+			assert.ok(
+				p.endsWith("sub/file.txt") || p.endsWith("sub\\file.txt"),
+				`expected path to end with sub/file.txt, got: ${p}`,
+			);
 		} finally {
 			removeTrackedTempDir(tmp);
 		}

@@ -79,6 +79,13 @@ export class IntercomQueue {
 					});
 					this.pending.delete(id);
 				}, message.timeout);
+				// Defense in depth: never let a pending-message timer block
+				// process exit. The timer is cleared via respond()/evict() in
+				// the normal case; .unref() ensures shutdown isn't blocked if
+				// the queue is abandoned.
+				if (entry.timer && typeof entry.timer.unref === "function") {
+					entry.timer.unref();
+				}
 			}
 
 			this.pending.set(id, entry);

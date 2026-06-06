@@ -99,13 +99,16 @@ test("issue #29 — run-tracker waitForRun error message points at .pi/teams/ in
 			caught = error as Error;
 		}
 		assert.ok(caught, "waitForRun should have thrown");
-		// The error message must include .pi/teams/, not .crew/.
+		// The error message must include .pi/teams/ (or its Windows equivalent
+		// .pi\teams\), not .crew/.
+		const dotPiTeams = `.pi${path.sep}teams`;
 		assert.ok(
-			caught!.message.includes(".pi/teams"),
+			caught!.message.includes(dotPiTeams) || caught!.message.includes(".pi/teams"),
 			`Error message should reference .pi/teams/ for .pi-based project; got: ${caught!.message}`,
 		);
 		assert.ok(
-			!caught!.message.includes(".crew/state/runs"),
+			!caught!.message.includes(`.crew${path.sep}state${path.sep}runs`) &&
+				!caught!.message.includes(".crew/state/runs"),
 			`Error message should NOT reference .crew/state/runs/ in .pi-based project; got: ${caught!.message}`,
 		);
 	} finally {
@@ -127,8 +130,9 @@ test("issue #29 — run-tracker waitForRun error message points at .crew/ in a .
 			caught = error as Error;
 		}
 		assert.ok(caught, "waitForRun should have thrown");
+		// Cross-platform: .crew/ might be .crew\ on Windows
 		assert.ok(
-			caught!.message.includes(".crew/"),
+			caught!.message.includes(".crew/") || caught!.message.includes(".crew\\"),
 			`Error message should reference .crew/ for .crew-based project; got: ${caught!.message}`,
 		);
 	} finally {

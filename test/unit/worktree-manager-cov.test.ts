@@ -13,7 +13,12 @@ import {
 import { createTrackedTempDir, removeTrackedTempDir } from "../fixtures/test-tempdir.ts";
 
 function initGitRepo(dir: string) {
-	execFileSync("git", ["init", "-q", "--initial-branch=main"], { cwd: dir });
+	try {
+		execFileSync("git", ["init", "-q", "--initial-branch=main"], { cwd: dir });
+	} catch {
+		// Older git versions don't support --initial-branch
+		execFileSync("git", ["init", "-q"], { cwd: dir });
+	}
 	fs.writeFileSync(path.join(dir, ".gitignore"), ".crew\n", "utf-8");
 	execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", ".gitignore"], { cwd: dir });
 	execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"], { cwd: dir });

@@ -110,24 +110,44 @@ export function savePersistedSubagentRecord(
 }
 
 const ALLOWED_RECORD_FIELDS = new Set([
+	"id",
 	"agentId",
 	"agentName",
 	"subagentType",
+	"type",
+	"description",
+	"prompt",
 	"status",
-	"spawnedAt",
+	"startedAt",
 	"completedAt",
+	"spawnedAt",
 	"model",
 	"runId",
 	"cwd",
 	"taskId",
-	"taskId",
+	"result",
+	"error",
+	"resultConsumed",
+	"background",
+	"ownerSessionGeneration",
+	"stuckNotified",
+	"blockedAt",
+	"turnCount",
+	"terminated",
+	"durationMs",
 ]);
 
 function sanitizePersistedRecord(raw: unknown): SubagentRecord | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const obj = raw as Record<string, unknown>;
-	if (typeof obj.agentId !== "string" || !obj.agentId) return undefined;
-	const clean: Record<string, unknown> = { agentId: obj.agentId };
+	// Accept either `id` (public SubagentRecord field) or `agentId` (legacy).
+	// The saved JSON uses `id` (from serializableRecord → JSON.stringify of record).
+	const idValue = obj.id ?? obj.agentId;
+	if (typeof idValue !== "string" || !idValue) return undefined;
+	const clean: Record<string, unknown> = { id: idValue };
+	if (obj.agentId && typeof obj.agentId === "string") {
+		clean.agentId = obj.agentId;
+	}
 	for (const key of Object.keys(obj)) {
 		if (
 			ALLOWED_RECORD_FIELDS.has(key) &&
@@ -138,6 +158,8 @@ function sanitizePersistedRecord(raw: unknown): SubagentRecord | undefined {
 			clean[key] = obj[key];
 		}
 	}
+	// Re-validate `id` to prevent prototype/constructor smuggling
+	if (typeof clean.id !== "string" || clean.id.length === 0) return undefined;
 	return clean as unknown as SubagentRecord;
 }
 
