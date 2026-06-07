@@ -246,6 +246,9 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 			"PI_CREW_MAX_DEPTH",
 			"PI_CREW_INHERIT_PROJECT_CONTEXT",
 			"PI_CREW_INHERIT_SKILLS",
+			// PI_CREW_PARENT_PID is needed by child-pi's parent-guard (uses
+			// process.kill(pid, 0) liveness check). The PID is not a secret.
+			"PI_CREW_PARENT_PID",
 			"PI_TEAMS_DEPTH",
 			"PI_TEAMS_MAX_DEPTH",
 			"PI_TEAMS_INHERIT_PROJECT_CONTEXT",

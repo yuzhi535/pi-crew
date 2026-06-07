@@ -183,20 +183,23 @@ export async function spawnBackgroundTeamRun(manifest: TeamRunManifest): Promise
 			"NPM_CONFIG_REGISTRY",
 			"NPM_CONFIG_USERCONFIG",
 			"NPM_CONFIG_GLOBALCONFIG",
-			"PI_*",
-			"PI_CREW_*",
-			"PI_TEAMS_*",
+			// FIX: explicit list matches child-pi.ts to prevent regression.
+			// PI_CREW_PARENT_PID is needed for parent-guard (liveness check).
+			"PI_CREW_DEPTH",
+			"PI_CREW_MAX_DEPTH",
+			"PI_CREW_INHERIT_PROJECT_CONTEXT",
+			"PI_CREW_INHERIT_SKILLS",
+			"PI_CREW_PARENT_PID",
+			"PI_TEAMS_DEPTH",
+			"PI_TEAMS_MAX_DEPTH",
+			"PI_TEAMS_INHERIT_PROJECT_CONTEXT",
+			"PI_TEAMS_INHERIT_SKILLS",
+			"PI_TEAMS_PI_BIN",
+			"PI_TEAMS_MOCK_CHILD_PI",
 		],
 	});
-	// Block execution control vars from leaking
-	delete filteredEnv.PI_CREW_EXECUTE_WORKERS;
-	delete filteredEnv.PI_TEAMS_EXECUTE_WORKERS;
-	// PI_CREW_PARENT_PID is intentionally allowed through: background-runner
-	// uses it ONLY for `process.kill(pid, 0)` liveness check (parent-guard).
-	// The PID itself is not a secret. Without it, workers can't self-monitor
-	// the parent and remain orphaned indefinitely after a SIGKILL of pi.
-	// (Orphan-worker-registry provides a second layer of cleanup at next
-	// session_start in case workers are stuck and parent-guard can't fire.)
+	// FIX: removed delete workarounds — with explicit allowlist, these vars
+	// are no longer auto-leaked. Matches child-pi.ts.
 
 	const loader = resolveTypeScriptLoader();
 	if (!loader) {
