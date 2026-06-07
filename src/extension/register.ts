@@ -185,8 +185,8 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	const disposeI18n = initI18n(pi);
 	resetTimings();
 	time("register:start");
-	const globalStore = globalThis as Record<string, unknown>;
-	const runtimeCleanupStoreKey = "__piCrewRuntimeCleanup";
+	const globalStore = globalThis as Record<string | symbol, unknown>;
+	const runtimeCleanupStoreKey = Symbol("__piCrewRuntimeCleanup");
 	const previousRuntimeCleanup = globalStore[runtimeCleanupStoreKey];
 	time("register:init");
 	if (typeof previousRuntimeCleanup === "function") {

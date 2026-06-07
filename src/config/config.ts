@@ -8,6 +8,7 @@ import {
 	PiTeamsConfigSchema,
 } from "../schema/config-schema.ts";
 import { withFileLockSync } from "../state/locks.ts";
+import { atomicWriteFile } from "../state/atomic-write.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import { projectCrewRoot, projectPiRoot } from "../utils/paths.ts";
 import { suggestConfigKey } from "./suggestions.ts";
@@ -481,10 +482,22 @@ function mergeConfig(
 		};
 		if (Object.keys(merged.otlp.headers ?? {}).length === 0)
 			delete merged.otlp.headers;
-		// Validate OTLP headers for injection attacks (newlines, CR, null bytes)
+		// Validate OTLP headers for injection attacks:
+		// - Check keys for dangerous prototype pollution patterns
+		// - Block all control characters (except tab=0x09, newline=0x0A) to prevent
+		//   header injection via CR/LF/zero-byte/etc.
 		const invalidHeaders: string[] = [];
 		for (const [k, v] of Object.entries(merged.otlp.headers ?? {})) {
-			if (/[\r\n\x00]/.test(String(v))) { invalidHeaders.push(k); }
+			// Recursively check all keys (including nested objects) for dangerous names
+			const checkKey = (key: string): boolean => {
+				const lowerKey = key.toLowerCase();
+				if (DANGEROUS_OBJECT_KEYS.has(lowerKey)) return true;
+				return false;
+			};
+			if (checkKey(k)) { invalidHeaders.push(k); continue; }
+			// Block any control characters except tab (0x09) in values
+			const valStr = String(v);
+			if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(valStr)) { invalidHeaders.push(k); }
 		}
 		if (invalidHeaders.length > 0) {
 			delete merged.otlp.headers;
@@ -511,10 +524,49 @@ const LIMIT_CEILINGS = {
 	runtimeGraceTurns: 1_000,
 } as const;
 
+/** Keys that could allow prototype pollution if merged into plain objects. */
+const DANGEROUS_OBJECT_KEYS = new Set([
+	"__proto__",
+	"constructor",
+	"prototype",
+	"hasOwnProperty",
+	"toString",
+	"valueOf",
+	"isPrototypeOf",
+	"propertyIsEnumerable",
+	"toLocaleString",
+	"__defineGetter__",
+	"__defineSetter__",
+	"__lookupGetter__",
+	"__lookupSetter__",
+]);
+
+/**
+ * Strips dangerous Object.prototype keys from an object.
+ * Returns a new object built with Object.create(null) to prevent
+ * prototype pollution attacks.
+ */
+function sanitizeObject(obj: Record<string, unknown>): Record<string, unknown> {
+	const sanitized: Record<string, unknown> = Object.create(null);
+	for (const [key, value] of Object.entries(obj)) {
+		// Case-insensitive check to catch __Proto__, CONSTRUCTOR, etc.
+		const lowerKey = key.toLowerCase();
+		if (DANGEROUS_OBJECT_KEYS.has(lowerKey)) continue;
+		if (value && typeof value === "object" && !Array.isArray(value)) {
+			sanitized[key] = sanitizeObject(value as Record<string, unknown>);
+		} else {
+			sanitized[key] = value;
+		}
+	}
+	return sanitized;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value))
 		return undefined;
-	return value as Record<string, unknown>;
+	// Defensive: create a sanitized copy to prevent prototype pollution.
+	// Uses Object.create(null) so the result has no prototype chain.
+	return sanitizeObject(value as Record<string, unknown>);
 }
 
 function parseWithSchema<T extends TSchema>(
@@ -1319,10 +1371,9 @@ export function updateConfig(
 			merged = parseConfig(raw);
 		}
 		fs.mkdirSync(path.dirname(filePath), { recursive: true });
-		fs.writeFileSync(
+		atomicWriteFile(
 			filePath,
 			`${JSON.stringify(merged, null, 2)}\n`,
-			"utf-8",
 		);
 		return { path: filePath, config: merged };
 	});

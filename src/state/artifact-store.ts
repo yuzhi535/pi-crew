@@ -97,6 +97,15 @@ export function cleanupOldArtifacts(artifactsRoot: string, options: ArtifactClea
 }
 
 function resolveInside(baseDir: string, relativePath: string): string {
+	// Check if baseDir is a symlink on every call to prevent symlink attacks
+	try {
+		if (fs.lstatSync(baseDir).isSymbolicLink()) throw new Error(`Artifacts root is a symbolic link — not allowed: ${baseDir}`);
+	} catch (err) {
+		// If lstatSync fails because baseDir doesn't exist yet, that's fine —
+		// it will be created by writeArtifact. Any other error should propagate.
+		if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+	}
+
 	const normalizedRelativePath = relativePath.replaceAll("\\", "/").replace(/^\.\/+/, "");
 	if (!normalizedRelativePath || normalizedRelativePath.split("/").some((segment) => segment === "..") || path.isAbsolute(normalizedRelativePath)) {
 		throw new Error(`Invalid artifact path: ${relativePath}`);
@@ -106,15 +115,13 @@ function resolveInside(baseDir: string, relativePath: string): string {
 	const relative = path.relative(base, resolved);
 	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Invalid artifact path: ${relativePath}`);
 	// C1: Extra normalization guard for case-insensitive / symlinked filesystems
-	const normalized = path.normalize(resolved);
-	if (!normalized.startsWith(base + path.sep) && normalized !== base) throw new Error(`Invalid artifact path (traversal): ${relativePath}`);
-	return normalized;
+	if (!resolved.startsWith(base + path.sep) && resolved !== base) throw new Error(`Invalid artifact path (traversal): ${relativePath}`);
+	return resolved;
 }
 
 export function writeArtifact(artifactsRoot: string, options: ArtifactWriteOptions): ArtifactDescriptor {
 	const filePath = resolveInside(artifactsRoot, options.relativePath);
 	fs.mkdirSync(artifactsRoot, { recursive: true });
-	if (fs.lstatSync(artifactsRoot).isSymbolicLink()) throw new Error(`Artifacts root is a symbolic link — not allowed: ${artifactsRoot}`);
 	resolveRealContainedPath(path.dirname(artifactsRoot), path.basename(artifactsRoot));
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	resolveRealContainedPath(artifactsRoot, path.dirname(filePath));

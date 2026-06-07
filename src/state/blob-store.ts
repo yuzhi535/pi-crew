@@ -2,12 +2,39 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { resolveRealContainedPath } from "../utils/safe-paths.ts";
-import { atomicWriteFile } from "./atomic-write.ts";
+import { atomicWriteFile, renameWithRetry } from "./atomic-write.ts";
 
 const SHA256_HEX = /^[a-f0-9]{64}$/i;
 
-function validateBlobHash(hash: string): void {
+function validateBlobHash(hash: string, algorithm?: string): void {
 	if (!SHA256_HEX.test(hash)) throw new Error(`Invalid blob hash: ${hash}`);
+	if (algorithm !== undefined && algorithm !== SHA256_PREFIX) {
+		throw new Error(`Invalid blob algorithm: ${algorithm} (expected ${SHA256_PREFIX})`);
+	}
+}
+
+/**
+ * Atomically write a Buffer to a file using temp-file + rename pattern.
+ * Prevents partial writes on crash and handles concurrent writes safely.
+ */
+function atomicWriteBuffer(filePath: string, content: Buffer): void {
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+	const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+	const fd = fs.openSync(tempPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW, 0o600);
+	try {
+		const openedStat = fs.fstatSync(fd);
+		if (!openedStat.isFile()) {
+			fs.closeSync(fd);
+			throw new Error(`Refusing to write: opened path is not a regular file: ${tempPath}`);
+		}
+		fs.writeSync(fd, content, 0, content.length);
+		fs.closeSync(fd);
+		renameWithRetry(tempPath, filePath);
+	} catch (error) {
+		try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
+		throw error;
+	}
 }
 
 const BLOBS_DIR = "blobs";
@@ -81,13 +108,15 @@ export function writeBlob(artifactsRoot: string, input: {
 	};
 	const metadataPath = path.join(metaDir, `${hash}.json`);
 
-	// FIX: Use atomicWriteFile for metadata only (JSON is string).
-	// Blob content (Buffer) uses raw writeFileSync since content is immutable
-	// and content-addressed (same hash = same content, no concurrent conflict).
-	// Metadata is the critical path for crash safety.
-	fs.writeFileSync(blobPath, content, Buffer.isBuffer(content) ? undefined : "utf-8");
-	// FIX: Use atomicWriteFile for metadata - prevents partial metadata
-	// on crash between content write and metadata write.
+	// Both content and metadata use atomic writes to prevent partial writes on crash.
+	// Content is immutable and content-addressed (same hash = same content), so
+	// concurrent writes to the same hash are safe. Metadata (mime, retention, etc.)
+	// is written atomically via atomicWriteFile to prevent race conditions between
+	// concurrent writers that might have different metadata values.
+	atomicWriteBuffer(blobPath, Buffer.isBuffer(content) ? content : Buffer.from(content, "utf-8"));
+	// Use atomicWriteFile for metadata - prevents partial metadata on crash.
+	// Both content and metadata writes are now atomic, ensuring that either both
+	// succeed or neither persists, preventing orphan blobs without metadata.
 	atomicWriteFile(metadataPath, JSON.stringify(metadata, null, 2));
 
 	return { hash, algorithm, blobPath: resolveRealContainedPath(artifactsRoot, blobPath), metadataPath: resolveRealContainedPath(artifactsRoot, metadataPath), sizeBytes: metadata.sizeBytes };

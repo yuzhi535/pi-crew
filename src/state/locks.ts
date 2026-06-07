@@ -72,7 +72,7 @@ function isLockHolderAlive(filePath: string): boolean {
 export type LockKind = "run" | "file";
 
 function writeLockFile(filePath: string, token: string, kind: LockKind = "file"): void {
-	const fd = fs.openSync(filePath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
+	const fd = fs.openSync(filePath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
 	try {
 		fs.writeSync(fd, JSON.stringify({ kind, pid: process.pid, createdAt: new Date().toISOString(), token }));
 	} finally {
@@ -86,6 +86,9 @@ function writeLockFile(filePath: string, token: string, kind: LockKind = "file")
  */
 function readLockToken(filePath: string): string | undefined {
 	try {
+		// Refuse to read a symlink — prevents reading a target an attacker placed
+		const stat = fs.lstatSync(filePath);
+		if (stat.isSymbolicLink()) return undefined;
 		const raw = fs.readFileSync(filePath, "utf-8");
 		const parsed = JSON.parse(raw) as { token?: unknown };
 		return typeof parsed.token === "string" ? parsed.token : undefined;

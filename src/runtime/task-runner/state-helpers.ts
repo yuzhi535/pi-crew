@@ -1,6 +1,7 @@
 import type { TaskCheckpointState, TeamRunManifest, TeamTaskState } from "../../state/types.ts";
 import { loadRunManifestById, saveRunTasks } from "../../state/state-store.ts";
 import { recordFromTask, upsertCrewAgent } from "../crew-agent-records.ts";
+import { logInternalError } from "../../utils/internal-error.ts";
 
 export function updateTask(tasks: TeamTaskState[], updated: TeamTaskState): TeamTaskState[] {
 	return tasks.map((task) => task.id === updated.id ? updated : task);
@@ -9,7 +10,12 @@ export function updateTask(tasks: TeamTaskState[], updated: TeamTaskState): Team
 export function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks: TeamTaskState[], updated: TeamTaskState): TeamTaskState[] {
 	const latest = loadRunManifestById(manifest.cwd, manifest.runId)?.tasks ?? fallbackTasks;
 	const merged = updateTask(latest, updated);
-	saveRunTasks(manifest, merged);
+	try {
+		saveRunTasks(manifest, merged);
+	} catch (err) {
+		logInternalError("persistSingleTaskUpdate", err);
+		return merged;
+	}
 	return merged;
 }
 

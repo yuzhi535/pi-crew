@@ -525,20 +525,28 @@ export function reconcileOrphanedTempWorkspaces(
 						) {
 							hasRunning = true;
 						}
-					} catch {
-						/* skip corrupt manifests */
+					} catch (err) {
+						// Log warning when skipping a directory due to error
+						console.warn(
+							`[stale-reconciler] Skipping manifest due to parse error: ${manifestPath}: ${err}`,
+						);
 					}
 				}
-			} catch {
-				/* skip unreadable dirs */
+			} catch (err) {
+				console.warn(
+					`[stale-reconciler] Skipping unreadable runs dir: ${stateRunsDir}: ${err}`,
+				);
 			}
 
 			// Post-loop: check if this workspace dir can be cleaned up.
 			// Eligible when cleanup is enabled, no running manifests remain, and
 			// the directory is older than the age threshold.
-			if (!hasRunning) {
-				// Re-scan manifests to confirm no running runs remain
-				// (some may have been cancelled on a previous pass)
+			// Re-scan manifests to confirm no running runs remain BEFORE the
+			// cleanup decision (fixes TOCTOU race where a manifest may have
+			// transitioned from 'running' to 'completed' between the main loop
+			// and this re-scan).
+			let canCleanup = !hasRunning;
+			if (canCleanup) {
 				if (fs.existsSync(stateRunsDir)) {
 					try {
 						for (const runDir of fs.readdirSync(stateRunsDir)) {
@@ -548,26 +556,33 @@ export function reconcileOrphanedTempWorkspaces(
 								"manifest.json",
 							);
 							if (!fs.existsSync(manifestPath)) continue;
+							let manifest: TeamRunManifest | undefined;
 							try {
-								const manifest: TeamRunManifest = JSON.parse(
+								manifest = JSON.parse(
 									fs.readFileSync(manifestPath, "utf-8"),
 								);
-								if (manifest.status === "running") {
-									hasRunning = true;
-									break;
-								}
-							} catch {
-								/* skip corrupt */
+							} catch (err) {
+								// Log warning when skipping a directory due to error
+								console.warn(
+									`[stale-reconciler] Skipping manifest due to parse error: ${manifestPath}: ${err}`,
+								);
+								continue;
+							}
+							if (manifest?.status === "running") {
+								canCleanup = false;
+								break;
 							}
 						}
-					} catch {
-						/* skip unreadable */
+					} catch (err) {
+						console.warn(
+							`[stale-reconciler] Skipping unreadable runs dir: ${stateRunsDir}: ${err}`,
+						);
 					}
 				}
 			}
 
 			const cleanupEnabled = options?.cleanupOrphanedTempDirs !== false;
-			if (cleanupEnabled && !hasRunning) {
+			if (cleanupEnabled && canCleanup) {
 				try {
 					const stat = fs.statSync(workspaceDir);
 					const dirAge = now - stat.mtimeMs;

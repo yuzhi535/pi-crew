@@ -65,7 +65,6 @@ function startTeamRunHeartbeat(stateRoot: string, runId: string): () => void {
 	};
 	writeHeartbeat();
 	const interval = setInterval(writeHeartbeat, 30_000);
-	interval.unref();
 	return () => clearInterval(interval);
 }
 
@@ -604,6 +603,13 @@ async function executeTeamRunCore(
 		if (results.length === 0) break;
 		manifest = { ...results.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...results.map((item) => item.manifest.artifacts)].flat()) };
 		tasks = mergeTaskUpdatesPreservingTerminal(tasks, results);
+		// Build a synthetic manifest that reflects the merged task state.
+		// The last result's manifest contains stale task state from that worker's
+		// snapshot; merged tasks are correct but manifest.tasks would be stale.
+		// Use type assertion because TeamRunManifest type omits tasks but the
+		// runtime object may have it (gets serialized to manifest.json).
+		(manifest as { tasks?: TeamTaskState[] }).tasks = tasks;
+		manifest = { ...manifest, updatedAt: new Date().toISOString() };
 
 		// Advance workflow phases whose tasks are all in terminal state
 		const terminalStatuses = new Set(["completed", "failed", "skipped", "cancelled", "needs_attention"]);

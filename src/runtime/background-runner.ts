@@ -127,6 +127,10 @@ function startInterruptGuard(
 				);
 				// Also abort the run signal so executeTeamRun exits quickly via its signal check.
 				abortController.abort();
+				// NOTE: process.exit() schedules exit handlers synchronously. The finally
+				// block in main() (stopParentGuard, cleanup, etc.) executes BEFORE the
+				// process actually terminates. This ordering is intentional — cleanup must
+				// run before exit handlers to ensure consistent state.
 				process.exit(130);
 			}
 		} catch {
@@ -144,11 +148,14 @@ function startInterruptGuard(
  * BEFORE async.completed is written to the event log.
  * This causes the async notifier to falsely detect a stuck run after quietMs expires.
  */
-function setupUnhandledRejectionGuard(state: {
-	cwd?: string;
-	runId?: string;
-	eventsPath?: string;
-}): void {
+function setupUnhandledRejectionGuard(
+	state: {
+		cwd?: string;
+		runId?: string;
+		eventsPath?: string;
+	},
+	abortController: AbortController,
+): void {
 	process.on("unhandledRejection", (reason, promise) => {
 		const message =
 			reason instanceof Error ? reason.message : String(reason);
@@ -177,10 +184,12 @@ function setupUnhandledRejectionGuard(state: {
 				appendErr,
 			);
 		}
-		// BUG #17 FIX: Do NOT call process.exit() here. Previously, unhandled
-		// rejection from child Pi workers would kill the entire background runner.
-		// Instead, set exitCode and let the run complete normally.
-		process.exitCode = 1;
+		// FIX Issue #1: Call abortController.abort() to signal child processes to
+		// terminate, then exit immediately. Previously this only set exitCode=1
+		// without exiting, allowing execution to continue and write async.completed
+		// as SUCCESS while the process would later exit with code 1 (conflict).
+		abortController.abort();
+		process.exit(1);
 	});
 }
 
@@ -399,7 +408,8 @@ async function main(): Promise<void> {
 		runId,
 		eventsPath: loaded.manifest.eventsPath,
 	};
-	setupUnhandledRejectionGuard(rejectionGuardState);
+	const abortController = new AbortController();
+	setupUnhandledRejectionGuard(rejectionGuardState, abortController);
 
 	appendEvent(manifest.eventsPath, {
 		type: "async.started",
@@ -413,11 +423,6 @@ async function main(): Promise<void> {
 		pid: process.pid,
 		startedAt: new Date().toISOString(),
 	});
-	// FIX: Create AbortController EARLY so interrupt guard can use it.
-	// abortController.signal flows through: executeTeamRun → runTeamTask → runChildPi.
-	// When interrupt guard detects cancel, abortController.abort() fires the abort
-	// handler in runChildPi which kills child processes immediately.
-	const abortController = new AbortController();
 	const stopHeartbeat = startHeartbeat(
 		manifest.stateRoot,
 		manifest.eventsPath,
@@ -425,8 +430,11 @@ async function main(): Promise<void> {
 	);
 	const stopInterruptGuard = startInterruptGuard(manifest, abortController);
 	console.log(`[background-runner] DEBUG: heartbeat+interrupt guard started`);
-	// BUG #17: Keep-alive interval prevents event loop from exiting during
-	// jiti compilation. Pure empty interval (no I/O to avoid io_uring issues).
+	// NOTE: Keep-alive interval is NOT unref'd (unlike heartbeat and interrupt
+	// guard intervals which ARE unref'd). This is intentional — during jiti
+	// compilation of team-runner.ts, the event loop must not drain prematurely.
+	// The interval is always cleared in the finally block, so the delay is
+	// bounded by the 5s interval. The event loop exit is deferred at most 5s.
 	const keepAlive = setInterval(() => {}, 5000);
 
 	try {

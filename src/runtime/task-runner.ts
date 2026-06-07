@@ -387,13 +387,17 @@ export async function runTeamTask(
 			const persistHeartbeat = (force = false): void => {
 				const now = Date.now();
 				if (!force && now - lastHeartbeatPersistedAt < 1000) return;
-				lastHeartbeatPersistedAt = now;
+				// Write task state BEFORE updating in-memory heartbeat so a crash
+				// never produces a fresher in-memory heartbeat than what's persisted.
+				// This prevents the stale reconciler from seeing a live heartbeat
+				// paired with stale task state (which could cause false zombie detection).
 				task = {
 					...task,
 					heartbeat: touchWorkerHeartbeat(
 						task.heartbeat ?? createWorkerHeartbeat(task.id),
 					),
 				};
+				lastHeartbeatPersistedAt = now;
 				tasks = persistSingleTaskUpdate(manifest, tasks, task);
 			};
 			const persistChildProgress = (

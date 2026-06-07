@@ -139,16 +139,24 @@ export function compactEventLog(eventsPath: string, config?: Partial<RotationCon
  */
 export function rotateEventLog(eventsPath: string): boolean {
 	if (!fs.existsSync(eventsPath)) return false;
-	try {
-		const ts = new Date().toISOString().replace(/[:.]/g, "-");
-		const archivePath = `${eventsPath}.${ts}.archive.jsonl`;
-		fs.renameSync(eventsPath, archivePath);
-		fs.writeFileSync(eventsPath, "", "utf-8");
-		return true;
-	} catch (error) {
-		logInternalError("event-log.rotate", error, `eventsPath=${eventsPath}`);
-		return false;
-	}
+	// FIX: Wrap rotation in lock and use atomic rename+write pattern.
+	// Create new file atomically first (via atomicWriteFile temp+rename),
+	// then rename the old file to archive. This guarantees the events file
+	// never disappears between rename and new-file-creation.
+	return withEventLogLockSync(eventsPath, () => {
+		try {
+			const ts = new Date().toISOString().replace(/[:.]/g, "-");
+			const archivePath = `${eventsPath}.${ts}.archive.jsonl`;
+			// Step 1: atomically create new empty file at eventsPath
+			atomicWriteFile(eventsPath, "");
+			// Step 2: atomically rename old content to archive
+			fs.renameSync(eventsPath, archivePath);
+			return true;
+		} catch (error) {
+			logInternalError("event-log.rotate", error, `eventsPath=${eventsPath}`);
+			return false;
+		}
+	});
 }
 
 export interface EventLogStats {

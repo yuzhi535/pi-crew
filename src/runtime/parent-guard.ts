@@ -17,7 +17,16 @@
  * ```
  */
 
-const POLL_INTERVAL_MS = 3_000;
+/**
+ * Poll interval for parent liveness checks (in milliseconds).
+ * Default: 3000ms (3 seconds). A parent killed by SIGKILL is only detected
+ * at the next poll tick.
+ *
+ * WARNING: Values below 1000ms significantly increase overhead for large
+ * numbers of parallel workers, since each poll issues a process.kill(pid, 0)
+ * syscall per worker. Only tune this if immediate detection is critical.
+ */
+const POLL_INTERVAL_MS = Number(process.env.PI_CREW_PARENT_GUARD_INTERVAL_MS) || 3_000;
 
 let guardInterval: ReturnType<typeof setInterval> | undefined;
 

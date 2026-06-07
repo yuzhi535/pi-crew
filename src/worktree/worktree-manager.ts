@@ -28,6 +28,10 @@ function git(cwd: string, args: string[]): string {
 	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...sanitizeEnvSecrets(process.env, { allowList: ["PATH", "HOME", "USER", "USERPROFILE", "SHELL", "TERM", "LANG", "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "NVM_BIN", "NVM_DIR", "NODE_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "PI_*", "PI_CREW_*"] }), LANG: "C", LC_ALL: "C" }, windowsHide: true }).trim();
 }
 
+// Note: Dots are allowed in branch names (git supports them), but if branch names
+// are ever used in path construction, dots could cause ambiguity with relative
+// path handling. This function is safe for path use because it replaces dots with
+// dashes via the regex above, so output always contains only alphanumerics, dashes, slashes, and underscores.
 function sanitizeBranchPart(value: string): string {
 	return value.toLowerCase().replace(/[^a-z0-9._/-]+/g, "-").replace(/^-+|-+$/g, "") || "task";
 }
@@ -255,7 +259,7 @@ export function overlaySeedPaths(repoRoot: string, worktreePath: string, seedPat
 		fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
 		fs.rmSync(destinationPath, { force: true, recursive: true });
 		fs.cpSync(sourcePath, destinationPath, {
-			dereference: false,
+			dereference: true,
 			force: true,
 			preserveTimestamps: true,
 			recursive: true,

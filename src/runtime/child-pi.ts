@@ -570,8 +570,21 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 								turnCount += 1;
 								if (maxTurns !== undefined && !softLimitReached && turnCount >= maxTurns) {
 									softLimitReached = true;
-									// Inject steer via stdin to tell child to wrap up
-									child.stdin?.write(JSON.stringify({ type: "steer", message: "You have reached your turn limit. Wrap up immediately — provide your final answer now." }) + "\n");
+									// Inject steer via stdin to tell child to wrap up.
+									// If stdin is not writable or the write fails (backpressure/closed),
+									// the steer cannot be injected and the agent could run indefinitely.
+									// Kill the process tree in that case to enforce the turn limit.
+									if (child.stdin?.writable) {
+										const steerPayload = JSON.stringify({ type: "steer", message: "You have reached your turn limit. Wrap up immediately — provide your final answer now." }) + "\n";
+										const writeSucceeded = child.stdin.write(steerPayload);
+										if (!writeSucceeded) {
+											logInternalError("child-pi.steer-backpressure", new Error("stdin write returned false during steer injection; buffer full"), `pid=${child.pid}`);
+											killProcessTree(child.pid, child);
+										}
+									} else {
+										logInternalError("child-pi.steer-not-writable", new Error("stdin not writable when attempting steer injection"), `pid=${child.pid}`);
+										killProcessTree(child.pid, child);
+									}
 								} else if (maxTurns !== undefined && softLimitReached && turnCount >= maxTurns + (graceTurns ?? 5)) {
 									// Hard abort — terminate after grace turns
 									try { child.kill(process.platform === "win32" ? undefined : "SIGTERM"); } catch { /* best-effort */ }

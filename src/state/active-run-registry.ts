@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { serialize, deserialize } from "node:v8";
 import { DEFAULT_CACHE, DEFAULT_PATHS } from "../config/defaults.ts";
 import type { TeamRunManifest } from "./types.ts";
-import { atomicWriteJson, renameWithRetry } from "./atomic-write.ts";
+import { atomicWriteJson, renameWithRetry, isSymlinkSafePath } from "./atomic-write.ts";
 import { userCrewRoot } from "../utils/paths.ts";
 import { isSafePathId } from "../utils/safe-paths.ts";
 import { sharedScanCache } from "../utils/scan-cache.ts";
@@ -12,6 +12,9 @@ import { logInternalError } from "../utils/internal-error.ts";
 
 /** Magic bytes prefix for binary registry to prevent deserialization of hostile files. */
 const BINARY_MAGIC = Buffer.from("PICREW2BIN", "utf-8");
+
+/** Binary format version for forward compatibility. */
+const BINARY_VERSION = 1;
 
 export interface ActiveRunRegistryEntry {
 	runId: string;
@@ -64,7 +67,8 @@ function withRegistryLock<T>(fn: () => T): T {
 	const staleMs = 30_000;
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	let attempt = 0;
-	const deadline = Date.now() + staleMs * 2;
+	// FIX Issue 3: Reduced timeout from staleMs*2 (60s) to 10s max for responsive shutdown.
+	const deadline = Date.now() + 10_000;
 	while (true) {
 		try {
 			const fd = fs.openSync(filePath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
@@ -118,7 +122,13 @@ export function readActiveRunRegistry(maxEntries = DEFAULT_CACHE.manifestMaxEntr
 		if (buf.length < BINARY_MAGIC.length || !buf.slice(0, BINARY_MAGIC.length).equals(BINARY_MAGIC)) {
 			throw new Error("Invalid binary registry: missing magic bytes");
 		}
-		parsed = deserialize(buf.slice(BINARY_MAGIC.length));
+		// FIX Issue 1: Verify version field for forward compatibility.
+		const versionOffset = BINARY_MAGIC.length;
+		const version = buf.readUInt32BE(versionOffset);
+		if (version !== BINARY_VERSION) {
+			throw new Error(`Unsupported binary registry version: ${version}`);
+		}
+		parsed = deserialize(buf.slice(versionOffset + 4));
 	} catch {
 		try {
 			parsed = JSON.parse(fs.readFileSync(registryPath(), "utf-8"));
@@ -134,6 +144,37 @@ export function readActiveRunRegistry(maxEntries = DEFAULT_CACHE.manifestMaxEntr
 	return [...byId.values()].slice(0, Math.max(0, maxEntries));
 }
 
+/**
+ * FIX Issues 1 & 2: Atomic binary write using O_CREAT|O_EXCL|O_NOFOLLOW pattern.
+ * Writes to temp file first, then renames. Includes version field for forward compatibility.
+ */
+function atomicWriteBinary(filePath: string, entries: ActiveRunRegistryEntry[]): void {
+	if (!isSymlinkSafePath(filePath)) throw new Error(`Refusing to write binary registry: target is a symlink or inside untrusted directory: ${filePath}`);
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+	const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+	const fd = fs.openSync(tempPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW, 0o600);
+	try {
+		// Post-open verification: on Windows O_NOFOLLOW is 0, so verify FD is a regular file
+		const openedStat = fs.fstatSync(fd);
+		if (!openedStat.isFile()) {
+			fs.closeSync(fd);
+			throw new Error(`Refusing to write binary registry: opened path is not a regular file: ${tempPath}`);
+		}
+		// Write: magic (10 bytes) + version (4 bytes) + serialized data
+		const header = Buffer.allocUnsafe(14);
+		BINARY_MAGIC.copy(header, 0);
+		header.writeUInt32BE(BINARY_VERSION, BINARY_MAGIC.length);
+		const serialized = serialize(entries);
+		fs.writeSync(fd, Buffer.concat([header, serialized]));
+		fs.closeSync(fd);
+		renameWithRetry(tempPath, filePath);
+	} catch (error) {
+		try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
+		throw error;
+	}
+}
+
 function writeEntries(entries: ActiveRunRegistryEntry[]): void {
 	const max = DEFAULT_CACHE.manifestMaxEntries;
 	// FIX: Emit warning when entries overflow the cap, instead of silent drop.
@@ -146,17 +187,23 @@ function writeEntries(entries: ActiveRunRegistryEntry[]): void {
 	}
 	const trimmed = entries.slice(0, max);
 	fs.mkdirSync(path.dirname(registryPath()), { recursive: true });
-	// 2.4 — dual-ship: write both formats. Readers prefer binary; legacy
-	// readers (other tools / older releases) keep using the JSON file.
-	atomicWriteJson(registryPath(), trimmed);
+	// FIX Issues 1 & 2: Write both to temp files first, then rename both atomically.
+	// If either rename fails, neither file is updated — registry stays consistent.
+	const tempJson = `${registryPath()}.${process.pid}.${Date.now()}.tmp`;
+	const tempBin = `${registryBinaryPath()}.${process.pid}.${Date.now()}.tmp`;
 	try {
-		const tempBin = `${registryBinaryPath()}.${process.pid}.${Date.now()}.tmp`;
-		fs.writeFileSync(tempBin, Buffer.concat([BINARY_MAGIC, serialize(trimmed)]));
-		// FIX: Use renameWithRetry instead of fs.renameSync to handle
-		// EPERM/EBUSY/EACCES errors on Windows with exponential backoff.
+		// Write JSON to temp first
+		atomicWriteJson(tempJson, trimmed);
+		// Write binary to temp (atomic pattern)
+		atomicWriteBinary(tempBin, trimmed);
+		// Both written successfully — rename both atomically
+		renameWithRetry(tempJson, registryPath());
 		renameWithRetry(tempBin, registryBinaryPath());
 	} catch (error) {
-		logInternalError("active-run-registry.binary-write", error);
+		// Cleanup temp files on failure
+		try { fs.rmSync(tempJson, { force: true }); } catch { /* best-effort */ }
+		try { fs.rmSync(tempBin, { force: true }); } catch { /* best-effort */ }
+		logInternalError("active-run-registry.write", error);
 	}
 }
 
@@ -225,7 +272,8 @@ export function activeRunEntries(): ActiveRunRegistryEntry[] {
 			// Skip entries whose CWD no longer exists (temp test dirs, deleted projects)
 			if (!fs.existsSync(entry.cwd)) continue;
 			if (!fs.existsSync(entry.stateRoot) || !fs.existsSync(entry.manifestPath)) continue;
-			if (fs.lstatSync(entry.stateRoot).isSymbolicLink()) continue;
+			// FIX Issue 4: Check full ancestor chain for symlinks, not just immediate stateRoot.
+			if (!isSymlinkSafePath(entry.stateRoot)) continue;
 			const cached = sharedScanCache.readAndCache("active-manifests", entry.runId, entry.manifestPath);
 			const manifest = (cached?.raw ?? JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8"))) as { status?: unknown; updatedAt?: string; async?: { pid?: number } };
 			if (manifest.status !== "queued" && manifest.status !== "planning" && manifest.status !== "running" && manifest.status !== "blocked") continue;

@@ -23,13 +23,49 @@ export function resolveContainedPath(baseDir: string, targetPath: string): strin
 
 export function resolveRealContainedPath(baseDir: string, targetPath: string): string {
 	const resolved = resolveContainedPath(baseDir, targetPath);
+	// Walk the full ancestor chain of baseDir and verify none are symlinks.
+	// This must be done BEFORE realpathSync to prevent TOCTOU attacks where
+	// an attacker replaces a directory with a symlink between our realpath calls.
+	const absoluteBase = path.resolve(baseDir);
+	const baseParts = absoluteBase.split(path.sep);
+	let accumulated = "";
+	if (baseParts[0] === "") accumulated = "/"; // Unix root
+	for (let i = 1; i < baseParts.length; i++) {
+		if (baseParts[i] === "") continue;
+		accumulated = path.join(accumulated, baseParts[i]);
+		try {
+			const stat = fs.lstatSync(accumulated);
+			if (stat.isSymbolicLink()) throw new Error("Refusing to resolve: baseDir ancestor is a symlink: " + accumulated);
+		} catch (e) {
+			if (e instanceof Error && e.message.includes("symlink")) throw e;
+			// Component doesn't exist yet — OK, but stop walking
+			break;
+		}
+	}
 	let realBase: string;
-	let realTarget: string;
 	try {
 		realBase = fs.realpathSync.native(baseDir);
 	} catch (baseError) {
 		throw new Error(`Cannot resolve real path of base directory ${baseDir}: ${baseError instanceof Error ? baseError.message : String(baseError)}`);
 	}
+	// Now walk the full ancestor chain of the resolved target path and verify
+	// none are symlinks before calling realpathSync on the target.
+	const resolvedParts = resolved.split(path.sep);
+	let resolvedAccumulated = "";
+	if (resolvedParts[0] === "") resolvedAccumulated = "/"; // Unix root
+	for (let i = 1; i < resolvedParts.length; i++) {
+		if (resolvedParts[i] === "") continue;
+		resolvedAccumulated = path.join(resolvedAccumulated, resolvedParts[i]);
+		try {
+			const stat = fs.lstatSync(resolvedAccumulated);
+			if (stat.isSymbolicLink()) throw new Error("Refusing to resolve: target path ancestor is a symlink: " + resolvedAccumulated);
+		} catch (e) {
+			if (e instanceof Error && e.message.includes("symlink")) throw e;
+			// Component doesn't exist — OK, but stop walking
+			break;
+		}
+	}
+	let realTarget: string;
 	try {
 		realTarget = fs.realpathSync.native(resolved);
 	} catch (targetError) {

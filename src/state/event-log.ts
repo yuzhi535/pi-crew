@@ -282,24 +282,35 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 		// Overflow handling: same logic as sync path
 		const isTerminal = TERMINAL_EVENT_TYPES.has(fullEvent.type);
 		let skippedDueToSize = false;
-		if (!isTerminal && fs.existsSync(eventsPath)) {
-			const stat = fs.statSync(eventsPath);
+		let fileStat: fs.Stats | undefined;
+		try {
+			fileStat = await fs.promises.stat(eventsPath).catch(() => undefined);
+		} catch { /* file does not exist */ }
+		if (!isTerminal && fileStat) {
+			const stat = fileStat;
 			if (stat.size > MAX_EVENTS_BYTES) {
 				try {
 					compactEventLog(eventsPath);
 				} catch (error) {
 					logInternalError("event-log.immediate-compact", error, `eventsPath=${eventsPath}`);
 				}
-				if (fs.existsSync(eventsPath)) {
-					const afterCompact = fs.statSync(eventsPath);
-					if (afterCompact.size > MAX_EVENTS_BYTES) {
+				let afterCompactStat: fs.Stats | undefined;
+				try {
+					afterCompactStat = await fs.promises.stat(eventsPath).catch(() => undefined);
+				} catch { /* file does not exist */ }
+				if (afterCompactStat) {
+					if (afterCompactStat.size > MAX_EVENTS_BYTES) {
 						rotateEventLog(eventsPath);
 					}
 				}
 			}
 		}
+		let sizeCheckStat: fs.Stats | undefined;
 		try {
-			if (fs.existsSync(eventsPath) && fs.statSync(eventsPath).size > MAX_EVENTS_BYTES) {
+			sizeCheckStat = await fs.promises.stat(eventsPath).catch(() => undefined);
+		} catch { /* file does not exist */ }
+		try {
+			if (sizeCheckStat && sizeCheckStat.size > MAX_EVENTS_BYTES) {
 				logInternalError("event-log.size-limit", new Error(`events file ${eventsPath} exceeds ${MAX_EVENTS_BYTES} bytes after compaction`), `eventsPath=${eventsPath}`);
 				skippedDueToSize = true;
 			}
@@ -322,11 +333,16 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 		// Only update the cache here (the sidecar persist is already done).
 		const finalSeq = fullEvent.metadata?.seq ?? 0;
 		try {
-			const stat = fs.statSync(eventsPath);
-			if (sequenceCache.size >= MAX_SEQUENCE_CACHE_ENTRIES) {
-				evictOldestSequenceCacheEntries();
+			let statResult: fs.Stats | undefined;
+			try {
+				statResult = await fs.promises.stat(eventsPath).catch(() => undefined);
+			} catch { /* file may not exist */ }
+			if (statResult) {
+				if (sequenceCache.size >= MAX_SEQUENCE_CACHE_ENTRIES) {
+					evictOldestSequenceCacheEntries();
+				}
+				sequenceCache.set(eventsPath, { size: statResult.size, mtimeMs: statResult.mtimeMs, seq: finalSeq });
 			}
-			sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: finalSeq });
 			// Note: persistSequence is NOT called here again - it was already called
 			// before the append to ensure the sidecar is current before the event is written.
 		} catch (error) {
@@ -408,7 +424,11 @@ function appendEventInsideLock(eventsPath: string, event: AppendTeamEvent): Team
 	} catch (error) {
 		logInternalError("event-log.size-check", error, `eventsPath=${eventsPath}`);
 	}
+	const seq = fullEvent.metadata?.seq ?? 0;
 	if (!skippedDueToSize) {
+		// FIX: Persist sequence BEFORE the event append to prevent sequence reuse
+		// on crash. The async path already does this (line 256).
+		persistSequence(eventsPath, seq);
 		fs.appendFileSync(eventsPath, `${JSON.stringify(redactSecrets(fullEvent))}\n`, "utf-8");
 	}
 	appendCounter++;
@@ -416,14 +436,13 @@ function appendEventInsideLock(eventsPath: string, event: AppendTeamEvent): Team
 		try { compactEventLog(eventsPath); } catch (error) { logInternalError("event-log.rotation", error, `eventsPath=${eventsPath}`); }
 	}
 	try { emitFromTeamEvent(fullEvent); } catch (error) { logInternalError("event-log.emit", error); }
-	const seq = fullEvent.metadata?.seq ?? 0;
 	try {
 		const stat = fs.statSync(eventsPath);
 		if (sequenceCache.size >= MAX_SEQUENCE_CACHE_ENTRIES) {
 			evictOldestSequenceCacheEntries();
 		}
 		sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq });
-		persistSequence(eventsPath, seq);
+		// Note: persistSequence already called before append above
 	} catch (error) {
 		logInternalError("event-log.persist-sequence", error, `eventsPath=${eventsPath}`);
 	}
@@ -472,25 +491,31 @@ function flushOneEventLogBuffer(eventsPath: string): void {
 	bufferedQueues.delete(eventsPath);
 	const timer = bufferedTimers.get(eventsPath);
 	if (timer) clearTimeout(timer);
-	// MEDIUM-13: Delete timer entry only after successful flush (in finally block)
-	bufferedTimers.delete(eventsPath);
-	if (!queue || queue.length === 0) return;
-
-	// FIX (Round 14, H3): When truncating the queue, explicitly reject the
-	// dropped entries' promises. Previously `queue.splice()` silently
-	// discarded the oldest items, and their associated Promises were never
-	// resolved or rejected — causing callers to await forever and leaking
-	// memory. We now reject with a clear error so callers can fall back.
-	if (queue.length > 1000) {
-		const dropped = queue.splice(0, queue.length - 500);
-		for (const item of dropped) {
-			item.reject(new Error(
-				`Event log buffer overflow: ${queue.length + dropped.length} entries > 1000 cap; oldest ${dropped.length} dropped to keep memory bounded`,
-			));
-		}
-	}
-	
+	// FIX (Issue 7): Move timer deletion to finally block after flush completes.
+	// If flush throws before completion, the timer entry stays so cleanup can retry.
+	// New events for this path will create a new timer via bufferedQueues.delete above.
 	try {
+		if (!queue || queue.length === 0) return;
+
+		// FIX (Round 14, H3): When truncating the queue, explicitly reject the
+		// dropped entries' promises. Previously `queue.splice()` silently
+		// discarded the oldest items, and their associated Promises were never
+		// resolved or rejected — causing callers to await forever and leaking
+		// memory. We now reject with a clear error so callers can fall back.
+		if (queue.length > 1000) {
+			const dropped = queue.splice(0, queue.length - 500);
+			logInternalError(
+				"event-log.buffer-overflow",
+				new Error(`Buffer overflow: ${dropped.length} events dropped for ${eventsPath}`),
+				`${eventsPath}: ${queue.length + dropped.length} entries > 1000 cap`,
+			);
+			for (const item of dropped) {
+				item.reject(new Error(
+					`Event log buffer overflow: ${queue.length + dropped.length} entries > 1000 cap; oldest ${dropped.length} dropped to keep memory bounded`,
+				));
+			}
+		}
+
 		withEventLogLockSync(eventsPath, () => {
 			for (const item of queue) {
 				try {
@@ -503,7 +528,9 @@ function flushOneEventLogBuffer(eventsPath: string): void {
 		});
 	} catch (error) {
 		// Lock acquire failed — fail every queued item so callers can fall back.
-		for (const item of queue) item.reject(error);
+		if (queue) for (const item of queue) item.reject(error);
+	} finally {
+		bufferedTimers.delete(eventsPath);
 	}
 }
 

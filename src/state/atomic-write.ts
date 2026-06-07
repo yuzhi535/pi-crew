@@ -10,27 +10,28 @@ const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
  * Returns true if the path is safe to write, false if it's a symlink or
  * inside a symlinked directory owned by another user.
  *
- * Note: This only checks the immediate parent directory, not the full
- * ancestor chain. The full ancestor chain check is done in createSafeTempDir
- * (pi-args.ts) before mkdtemp. Here we rely on O_NOFOLLOW + post-open
- * fstat verification for symlink protection, plus path containment
- * validation done by callers via resolveRealContainedPath.
+ * This walks the full ancestor chain to detect any symlinks in the path,
+ * preventing attacks where an intermediate ancestor is a symlink.
  */
-function isSymlinkSafePath(filePath: string): boolean {
+export function isSymlinkSafePath(filePath: string): boolean {
 	try {
-		const dir = path.dirname(filePath);
-		// Check if parent directory is a symlink
-		try {
-			const dirStat = fs.lstatSync(dir);
-			if (dirStat.isSymbolicLink()) {
-				// Resolve and verify ownership on Unix
-				const realDir = fs.realpathSync(dir);
-				const realStat = fs.statSync(realDir);
-				if (!realStat.isDirectory()) return false;
-				if (typeof process.getuid === "function" && realStat.uid !== process.getuid()) return false;
+		// Walk the full ancestor chain to detect any symlinks
+		let currentPath = filePath;
+		while (currentPath !== path.dirname(currentPath)) {
+			const dir = path.dirname(currentPath);
+			try {
+				const dirStat = fs.lstatSync(dir);
+				if (dirStat.isSymbolicLink()) {
+					// Resolve and verify ownership on Unix
+					const realDir = fs.realpathSync(dir);
+					const realStat = fs.statSync(realDir);
+					if (!realStat.isDirectory()) return false;
+					if (typeof process.getuid === "function" && realStat.uid !== process.getuid()) return false;
+				}
+			} catch {
+				// Directory doesn't exist yet — that's OK, mkdirSync will create it
 			}
-		} catch {
-			// Directory doesn't exist yet — that's OK, mkdirSync will create it
+			currentPath = dir;
 		}
 
 		// Check if target file itself is a symlink
@@ -139,6 +140,11 @@ export function atomicWriteFile(filePath: string, content: string): void {
 			}
 			// Fallback: if rename fails (Windows EPERM/EBUSY), try direct write.
 			// This is less atomic but avoids data loss when concurrent writers contend.
+			// Re-check symlink safety before fallback to prevent TOCTOU attack.
+			if (!isSymlinkSafePath(filePath)) {
+				try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
+				throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
+			}
 			try {
 				fs.writeFileSync(filePath, content, "utf-8");
 			} catch {
@@ -147,12 +153,16 @@ export function atomicWriteFile(filePath: string, content: string): void {
 			try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
 		}
 	} catch (error) {
+		// Issue 2 fix: wrap content-match read in nested try-catch that always
+		// cleans up the temp file before re-throwing, preventing orphaned temps.
 		let matches = false;
 		try {
 			const existing = fs.readFileSync(filePath, "utf-8");
 			matches = existing === content;
-		} catch {
-			/* ignore */
+		} catch (readError) {
+			// Clean up temp file before re-throwing, then re-throw the original error
+			try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
+			throw error;
 		}
 		if (matches) {
 			try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
@@ -242,6 +252,9 @@ interface CoalescedAtomicWrite {
 const pendingAtomicWrites = new Map<string, CoalescedAtomicWrite>();
 const DEFAULT_ATOMIC_COALESCE_MS = 50;
 
+// Issue 5 fix: guard against concurrent flushes
+let flushInProgress = false;
+
 export function atomicWriteJsonCoalesced<T>(filePath: string, value: T, coalesceMs = DEFAULT_ATOMIC_COALESCE_MS): void {
 	const content = `${JSON.stringify(value, null, 2)}\n`;
 	const previous = pendingAtomicWrites.get(filePath);
@@ -265,7 +278,13 @@ function flushOnePendingAtomicWrite(filePath: string): void {
 
 /** Flush every queued coalesced write synchronously. Safe to call any time. */
 export function flushPendingAtomicWrites(): void {
-	for (const filePath of [...pendingAtomicWrites.keys()]) flushOnePendingAtomicWrite(filePath);
+	if (flushInProgress) return;
+	flushInProgress = true;
+	try {
+		for (const filePath of [...pendingAtomicWrites.keys()]) flushOnePendingAtomicWrite(filePath);
+	} finally {
+		flushInProgress = false;
+	}
 }
 
 // Defense-in-depth: signal handlers must return immediately.

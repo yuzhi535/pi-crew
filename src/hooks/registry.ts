@@ -35,13 +35,20 @@ export async function executeHook(name: HookName, ctx: HookContext): Promise<Hoo
 	// environments, all hooks should set workspaceId to prevent cross-workspace access.
 	const scopedHooks = hooks.filter((h) => !h.workspaceId || h.workspaceId === ctx.workspaceId);
 	if (scopedHooks.length === 0) return { hookName: name, outcome: "allow", durationMs: 0 };
-	const POLLUTED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+	const POLLUTED_KEYS = new Set(["__proto__", "constructor", "prototype", "hasOwnProperty", "toString", "valueOf", "isPrototypeOf", "propertyIsEnumerable", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"]);
 	function sanitizeMergeData(data: Record<string, unknown>): Record<string, unknown> {
 		const clean: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(data)) {
 			if (!POLLUTED_KEYS.has(k)) clean[k] = v;
 		}
 		return clean;
+	}
+	function sanitizeErrorMessage(message: string): string {
+		// Remove file paths, environment variable references, and other potentially sensitive data
+		return message
+			.replace(/\/[^:\s]+/g, "[path]")
+			.replace(/\b[A-Z_0-9]+\s*=/g, "[env]")
+			.replace(/\b\d+\.\d+\.\d+\.\d+\b/g, "[ip]");
 	}
 	const start = Date.now();
 	const diagnostics: string[] = [];
@@ -57,7 +64,7 @@ export async function executeHook(name: HookName, ctx: HookContext): Promise<Hoo
 				capturedModifications = { ...result.data };
 			}
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
 			if (hook.mode === "blocking") {
 				return { hookName: name, outcome: "block", durationMs: Date.now() - start, reason: `Hook error: ${message}` };
 			}

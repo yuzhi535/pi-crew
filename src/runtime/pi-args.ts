@@ -68,7 +68,15 @@ export function resolveCrewMaxDepth(inputMaxDepth?: number, env: NodeJS.ProcessE
 	const raw = env.PI_CREW_MAX_DEPTH ?? env.PI_TEAMS_MAX_DEPTH;
 	const envDepth = raw !== undefined ? Number(raw) : NaN;
 	if (Number.isInteger(envDepth) && envDepth >= 1 && envDepth <= 10) return envDepth;
+	if (Number.isInteger(envDepth) && envDepth > 10) {
+		console.warn(`PI_CREW_MAX_DEPTH=${envDepth} exceeds cap of 10, clamping to 10. Set 10 or lower to avoid this warning.`);
+		return 10;
+	}
 	if (Number.isInteger(inputMaxDepth) && inputMaxDepth !== undefined && inputMaxDepth >= 1 && inputMaxDepth <= 10) return inputMaxDepth;
+	if (Number.isInteger(inputMaxDepth) && inputMaxDepth !== undefined && inputMaxDepth > 10) {
+		console.warn(`maxDepth=${inputMaxDepth} exceeds cap of 10, clamping to 10. Set 10 or lower to avoid this warning.`);
+		return 10;
+	}
 	return DEFAULT_MAX_CREW_DEPTH;
 }
 
@@ -118,6 +126,24 @@ export function createSafeTempDir(base: string, prefix: string): string {
 	if (baseStat.isSymbolicLink()) throw new Error("Refusing to create temp dir in symlinked base: " + base);
 	// Resolve base to canonical path before joining
 	const resolvedBase = fs.realpathSync(base);
+	// Verify resolved path has no symlink ancestors. realpathSync follows
+	// symlinks, so if any ancestor is a symlink the resolved path will be
+	// inside the attacker's target. Catch that by walking the resolved path.
+	const resolvedParts = resolvedBase.split(path.sep);
+	let resolvedAccumulated = "";
+	if (resolvedParts[0] === "") resolvedAccumulated = "/"; // Unix root
+	for (let i = 1; i < resolvedParts.length; i++) {
+		if (resolvedParts[i] === "") continue;
+		resolvedAccumulated = path.join(resolvedAccumulated, resolvedParts[i]);
+		try {
+			const stat = fs.lstatSync(resolvedAccumulated);
+			if (stat.isSymbolicLink()) throw new Error("Refusing to create temp dir: resolved path contains symlink ancestor: " + resolvedAccumulated);
+		} catch (e) {
+			if (e instanceof Error && e.message.includes("symlink")) throw e;
+			// Component doesn't exist — OK
+			break;
+		}
+	}
 	const rawTempDir = fs.mkdtempSync(path.join(resolvedBase, prefix));
 	try {
 		const stat = fs.lstatSync(rawTempDir);

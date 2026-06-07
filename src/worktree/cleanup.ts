@@ -17,6 +17,10 @@ export interface WorktreeCleanupResult {
 
 const GIT_SAFE_ENV = { ...sanitizeEnvSecrets(process.env, { allowList: ["PATH", "HOME", "USER", "USERPROFILE", "SHELL", "TERM", "LANG", "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "NVM_BIN", "NVM_DIR", "NODE_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "PI_*", "PI_CREW_*"] }), LANG: "C", LC_ALL: "C" };
 
+function sanitizeBranchPart(value: string): string {
+	return value.toLowerCase().replace(/[^a-z0-9._/-]+/g, "-").replace(/^-+|-+$/g, "") || "task";
+}
+
 function git(cwd: string, args: string[]): string {
 	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: GIT_SAFE_ENV, windowsHide: true }).trim();
 }
@@ -57,7 +61,7 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 			continue;
 		}
 		const dirty = isDirty(worktreePath);
-		const branchName = `pi-crew/${manifest.runId}/${entry.name}`;
+		const branchName = `pi-crew/${manifest.runId}/${sanitizeBranchPart(entry.name)}`;
 		if (dirty) {
 			// Commit changes to a branch instead of just preserving the worktree
 			try {
@@ -95,7 +99,7 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 			} catch (error) {
 				// Fallback to preserving dirty worktree
 				// FIX: entry is a DirEnt object, must use entry.name
-				const safeFallbackName = entry.name.slice(0, 200).replace(/[\r\n]+/g, " ");
+				const safeFallbackName = entry.name.slice(0, 200).replace(/[\x00-\x1f\x7f-\x9f]+/g, " ");
 				const artifact = writeArtifact(manifest.artifactsRoot, {
 					kind: "diff",
 					relativePath: `cleanup/${safeFallbackName}.diff`,

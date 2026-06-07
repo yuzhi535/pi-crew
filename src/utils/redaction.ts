@@ -7,8 +7,13 @@
 export const PEM_PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]+?-----END [A-Z ]+PRIVATE KEY-----/g;
 
 // Linear-time secret key detection
+// IMPORTANT: This function must maintain linear-time guarantees.
+// The fast-path regex uses simple string alternatives with anchors only (no quantifiers),
+// and the linear scan iterates through characters once. If either path is replaced with
+// a more complex regex, catastrophic backtracking (ReDoS) could result.
+// Any modifications must preserve O(n) complexity where n = keyName.length.
 export function isSecretKey(keyName: string): boolean {
-	// Fast path: common secret key names
+	// Fast path: common secret key names (safe anchored regex, no backtracking)
 	const lower = keyName.toLowerCase();
 	if (/^(token|apikey|api_key|password|secret|credential|authorization|privatekey|private_key)$/.test(lower)) {
 		return true;

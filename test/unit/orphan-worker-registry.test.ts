@@ -170,21 +170,19 @@ test("cleanupOrphanWorkers keeps current session's workers (concurrent session s
 test("cleanupOrphanWorkers uses SIGKILL (not SIGTERM) on stale workers", async () => {
 	const tmp = mkdtemp("pi-crew-sigtest-");
 	try {
-		// Spawn a process that traps SIGTERM but dies on SIGKILL.
-		// The "background-runner" string in the script makes the
-		// cmdline-based verification pass on Linux.
-		const { spawn } = await import("node:child_process");
-		const child = spawn(
-			process.execPath,
-			[
-				"-e",
-				`// background-runner test fixture
-				process.on("SIGTERM", () => { /* ignore */ });
-				setInterval(() => {}, 1000);
-			`,
-			],
-			{ stdio: ["ignore", "pipe", "pipe"] },
+		// Write a script to a file named background-runner.ts so the
+		// verifyIsBackgroundWorker check passes (requires arg ending in .ts).
+		// The script traps SIGTERM but dies on SIGKILL.
+		const scriptPath = path.join(tmp, "background-runner.ts");
+		fs.writeFileSync(
+			scriptPath,
+			`process.on("SIGTERM", () => { /* ignore */ });
+setInterval(() => {}, 1000);`,
 		);
+		const { spawn } = await import("node:child_process");
+		const child = spawn(process.execPath, [scriptPath], {
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 		const livePid = child.pid!;
 
 		// Register with dead parent (so it gets killed) and old timestamp.
