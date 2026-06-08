@@ -127,6 +127,7 @@ function shouldMergeTaskUpdate(current: TeamTaskState, updated: TeamTaskState): 
 	// Parallel workers receive the same input snapshot. A later result may still
 	// contain stale queued/running copies of tasks that another worker already
 	// completed. Never let those stale snapshots regress durable task state.
+	if (current.status === "waiting" && updated.status === "running") return false;
 	if (!isNonTerminalTaskStatus(current.status) && isNonTerminalTaskStatus(updated.status)) return false;
 	// Prevent a stale completed task from overwriting a fresher one.
 	if (current.finishedAt && updated.finishedAt) {
@@ -138,7 +139,7 @@ function shouldMergeTaskUpdate(current: TeamTaskState, updated: TeamTaskState): 
 			console.warn(`[team-runner] Task ${current.id} has malformed finishedAt, treating as invalid state: ${current.finishedAt}`);
 		}
 		const currentTime = Number.isNaN(currentFinished) ? Infinity : currentFinished;
-		const updatedTime = Number.isNaN(updatedFinished) ? Infinity : updatedFinished;
+		const updatedTime = Number.isNaN(updatedFinished) ? -Infinity : updatedFinished;
 		if (updatedTime < currentTime) return false;
 	}
 	// FIX: An update with no completion time should not overwrite one that has a
@@ -151,11 +152,14 @@ const hasMeaningfulUpdate =
   updated.status !== current.status ||
   updated.finishedAt !== current.finishedAt ||
   updated.startedAt !== current.startedAt ||
-  Boolean(updated.resultArtifact) ||
+  Boolean(updated.resultArtifact) && updated.resultArtifact !== current.resultArtifact ||
   Boolean(updated.error) ||
   Boolean(updated.modelAttempts?.length) ||
   Boolean(updated.usage) ||
-  Boolean(updated.attempts?.length);
+  Boolean(updated.attempts?.length) ||
+  updated.heartbeat?.lastSeenAt !== current.heartbeat?.lastSeenAt ||
+  updated.jsonEvents !== current.jsonEvents ||
+  updated.agentProgress?.lastActivityAt !== current.agentProgress?.lastActivityAt;
 return hasMeaningfulUpdate;
 }
 
@@ -643,7 +647,12 @@ async function executeTeamRunCore(
 // snapshots, so artifact writes by task-runner (which individually save manifest
 // after writing artifacts) are safely persisted. The in-memory manifest is only
 // used for the next batch iteration's orchestration — actual persistence is safe.
-manifest = { ...validResults.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...validResults.map((item) => item.manifest.artifacts)].flat()) };
+// Use updateRunStatus to recompute manifest status from merged tasks rather than
+// relying on the last result's manifest (which is arbitrary due to mapConcurrent
+// returning results in arbitrary order).
+const mergedManifestBase = validResults.at(-1)!.manifest;
+const mergedArtifacts = mergeArtifacts([manifest.artifacts, ...validResults.map((item) => item.manifest.artifacts)].flat());
+manifest = updateRunStatus({ ...mergedManifestBase, artifacts: mergedArtifacts }, "running", "Merged task updates from parallel batch.");
 		tasks = mergeTaskUpdatesPreservingTerminal(tasks, validResults);
 		// Build a synthetic manifest that reflects the merged task state.
 		// The last result's manifest contains stale task state from that worker's

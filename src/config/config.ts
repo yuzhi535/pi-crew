@@ -483,12 +483,12 @@ function mergeConfig(
 		if (Object.keys(merged.otlp.headers ?? {}).length === 0)
 			delete merged.otlp.headers;
 		// Validate OTLP headers for injection attacks:
-		// - Check keys for dangerous prototype pollution patterns
+		// - Check top-level keys for dangerous prototype pollution patterns
 		// - Block all control characters (except tab=0x09, newline=0x0A) to prevent
 		//   header injection via CR/LF/zero-byte/etc.
 		const invalidHeaders: string[] = [];
 		for (const [k, v] of Object.entries(merged.otlp.headers ?? {})) {
-			// Recursively check all keys (including nested objects) for dangerous names
+			// Check top-level key for dangerous names (only top-level keys are checked)
 			const checkKey = (key: string): boolean => {
 				const lowerKey = key.toLowerCase();
 				if (DANGEROUS_OBJECT_KEYS.has(lowerKey)) return true;
@@ -1296,7 +1296,7 @@ export function loadConfig(cwd?: string): LoadedPiTeamsConfig {
 		const projectPath = projectConfigPath(cwd);
 		const projectConfig = readOptionalConfig(projectPath);
 		// SECURITY FIX: Merge project config FIRST, then user config on top.
-		// This ensures user preferences always take precedence over project settings.
+		// Precedence formula: merge(projectConfig, userConfig) = userConfig wins.
 		// Sensitive fields have already been sanitized by sanitizeProjectConfig.
 		let effectiveConfig = {};
 		if (projectConfig.exists) {
@@ -1309,6 +1309,7 @@ export function loadConfig(cwd?: string): LoadedPiTeamsConfig {
 				...projectConfig.warnings,
 				...projectSafeConfig.warnings,
 			);
+			// merge(base=projectConfig, override=userConfig) → override wins
 			effectiveConfig = mergeConfig(effectiveConfig, projectSafeConfig.config);
 		}
 		// User config always takes precedence over project config

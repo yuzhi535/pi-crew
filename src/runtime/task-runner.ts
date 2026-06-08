@@ -386,6 +386,14 @@ export async function runTeamTask(
 			let lastRunProgressSummary: ProgressEventSummary | undefined;
 			const persistHeartbeat = (force = false): void => {
 				const now = Date.now();
+				// Always update in-memory heartbeat so in-memory state is always fresh,
+				// even when skipping the disk write to throttle I/O.
+				task = {
+					...task,
+					heartbeat: touchWorkerHeartbeat(
+						task.heartbeat ?? createWorkerHeartbeat(task.id),
+					),
+				};
 				if (!force && now - lastHeartbeatPersistedAt < 1000) return;
 				// Write task state BEFORE updating in-memory heartbeat so a crash
 				// never produces a fresher in-memory heartbeat than what's persisted.
@@ -393,13 +401,6 @@ export async function runTeamTask(
 				// paired with stale task state (which could cause false zombie detection).
 				// Write task state first.
 				tasks = persistSingleTaskUpdate(manifest, tasks, task);
-				// Then update in-memory heartbeat.
-				task = {
-					...task,
-					heartbeat: touchWorkerHeartbeat(
-						task.heartbeat ?? createWorkerHeartbeat(task.id),
-					),
-				};
 				lastHeartbeatPersistedAt = now;
 			};
 			const persistChildProgress = (

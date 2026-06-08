@@ -251,8 +251,21 @@ export function overlaySeedPaths(repoRoot: string, worktreePath: string, seedPat
 		const sourcePath = path.join(repoRoot, seedPath);
 		const destinationPath = path.join(worktreePath, seedPath);
 
-		if (!fs.existsSync(sourcePath)) {
+		let sourceStat: fs.Stats;
+		try {
+			sourceStat = fs.lstatSync(sourcePath);
+		} catch {
 			logInternalError("worktree.seedPaths.missing", new Error(`Seed path does not exist: ${seedPath}`));
+			continue;
+		}
+		// Reject symlinks to prevent TOCTOU attacks (source could be replaced with symlink
+		// between check and copy, even though repoRoot is validated by assertCleanLeader).
+		if (sourceStat.isSymbolicLink()) {
+			logInternalError("worktree.seedPaths.symlink", new Error(`Seed path is a symlink — rejected: ${seedPath}`));
+			continue;
+		}
+		if (!sourceStat.isFile() && !sourceStat.isDirectory()) {
+			logInternalError("worktree.seedPaths.invalid", new Error(`Seed path is neither file nor directory: ${seedPath}`));
 			continue;
 		}
 
@@ -292,6 +305,8 @@ export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskSt
 		if (mergedReused.length > 0) {
 			overlaySeedPaths(repoRoot, worktreePath, mergedReused);
 		}
+		// Re-validate leader is still clean before reusing — leader state may have changed since first preparation
+		assertCleanLeader(repoRoot);
 		return { cwd: worktreePath, worktreePath, branch, reused: true };
 	}
 	pruneStaleWorktrees(repoRoot);

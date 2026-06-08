@@ -52,8 +52,11 @@ function isLockHolderAlive(filePath: string): boolean {
 			return true; // Signal 0 succeeded — process is alive
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
-			// EPERM: process exists but we don't have permission to signal it
-			return code === "EPERM";
+			// EPERM: process exists but we don't have permission to signal it.
+			// Since we cannot verify liveness, treat the holder as potentially
+			// stale so the lock can be stolen rather than blocking indefinitely.
+			// Other errors (ESRCH — process doesn't exist) also mean holder is dead.
+			return false;
 		}
 	} catch {
 		return true; // Can't read — assume alive to be safe

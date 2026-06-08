@@ -118,7 +118,6 @@ function resolveInside(baseDir: string, relativePath: string): string {
 export function writeArtifact(artifactsRoot: string, options: ArtifactWriteOptions): ArtifactDescriptor {
 	const filePath = resolveInside(artifactsRoot, options.relativePath);
 	fs.mkdirSync(artifactsRoot, { recursive: true });
-	resolveRealContainedPath(path.dirname(artifactsRoot), path.basename(artifactsRoot));
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	resolveRealContainedPath(artifactsRoot, path.dirname(filePath));
 	const content = redactSecretString(options.content);

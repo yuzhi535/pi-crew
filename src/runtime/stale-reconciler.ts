@@ -174,86 +174,55 @@ function hasRecentActiveEvidence(tasks: TeamTaskState[], now: number): boolean {
 }
 
 /**
- * For no-PID runs: check if ALL running tasks have heartbeats stale beyond
- * the no-PID heartbeat threshold. This detects zombie tasks where the worker
- * process died but no PID was recorded (e.g. live-session /tmp/ workspaces).
- * Tasks with no heartbeat AND no agent progress are considered NOT stale
- * (they may be newly spawned and haven't reported yet).
+ * Check if a single task is stale (heartbeat AND activity both stale beyond
+ * NO_PID_HEARTBEAT_STALE_MS). Tasks with no heartbeat AND no agent progress
+ * are considered NOT stale (they may be newly spawned and haven't reported yet).
  */
-function allRunningTasksHeartbeatStale(
-	tasks: TeamTaskState[],
-	now: number,
-): boolean {
-	const runningTasks = tasks.filter(
-		(t) => t.status === "running" || t.status === "waiting",
-	);
-	if (runningTasks.length === 0) return false;
-	return runningTasks.every((task) => {
-		const heartbeatAt = task.heartbeat?.lastSeenAt
-			? new Date(task.heartbeat.lastSeenAt).getTime()
-			: Number.NaN;
-		const activityAt = task.agentProgress?.lastActivityAt
-			? new Date(task.agentProgress.lastActivityAt).getTime()
-			: Number.NaN;
-		// If no heartbeat AND no activity, we can't determine staleness — assume not stale
-		if (!Number.isFinite(heartbeatAt) && !Number.isFinite(activityAt))
-			return false;
-		// If heartbeat is recent enough, not stale
-		if (
-			Number.isFinite(heartbeatAt) &&
-			now - heartbeatAt <= NO_PID_HEARTBEAT_STALE_MS
-		)
-			return false;
-		// If agent progress is recent enough, not stale
-		if (
-			Number.isFinite(activityAt) &&
-			now - activityAt <= NO_PID_HEARTBEAT_STALE_MS
-		)
-			return false;
-		// Both present and both stale → this task is stale
-		return true;
-	});
+function isTaskHeartbeatStale(task: TeamTaskState, now: number): boolean {
+	const heartbeatAt = task.heartbeat?.lastSeenAt
+		? new Date(task.heartbeat.lastSeenAt).getTime()
+		: Number.NaN;
+	const activityAt = task.agentProgress?.lastActivityAt
+		? new Date(task.agentProgress.lastActivityAt).getTime()
+		: Number.NaN;
+	// If no heartbeat AND no activity, we can't determine staleness — not stale
+	if (!Number.isFinite(heartbeatAt) && !Number.isFinite(activityAt))
+		return false;
+	// Compute elapsed from both sources and use the fresher (minimum) one,
+	// mirroring heartbeat-watcher logic: if either source has recent activity,
+	// the task is not stale even if the other is stale.
+	const heartbeatAge = Number.isFinite(heartbeatAt) ? now - heartbeatAt : Infinity;
+	const activityAge = Number.isFinite(activityAt) ? now - activityAt : Infinity;
+	const elapsed = Math.min(heartbeatAge, activityAge);
+	return elapsed > NO_PID_HEARTBEAT_STALE_MS;
 }
 
 /**
- * FIX: Find individually stale tasks even when not ALL tasks are stale.
- * This complements allRunningTasksHeartbeatStale by detecting zombie tasks
- * that have one or more healthy siblings. A task is individually stale if
- * it has no heartbeat AND no agent progress (we can't determine staleness)
- * OR if both heartbeat and activity are stale beyond NO_PID_HEARTBEAT_STALE_MS.
+ * For no-PID runs: check if ALL running tasks have heartbeats stale beyond
+ * the no-PID heartbeat threshold, and return the list of individually stale
+ * task IDs. This detects zombie tasks where the worker process died but no
+ * PID was recorded (e.g. live-session /tmp/ workspaces).
+ * Merged from the former allRunningTasksHeartbeatStale and
+ * findIndividuallyStaleTaskIds to avoid redundant duplicate checks.
  */
-function findIndividuallyStaleTaskIds(
+function getRunningTaskStaleness(
 	tasks: TeamTaskState[],
 	now: number,
-): string[] {
-	return tasks
-		.filter((task) => task.status === "running" || task.status === "waiting")
-		.filter((task) => {
-			const heartbeatAt = task.heartbeat?.lastSeenAt
-				? new Date(task.heartbeat.lastSeenAt).getTime()
-				: Number.NaN;
-			const activityAt = task.agentProgress?.lastActivityAt
-				? new Date(task.agentProgress.lastActivityAt).getTime()
-				: Number.NaN;
-			// If no heartbeat AND no activity, we can't determine staleness — skip
-			if (!Number.isFinite(heartbeatAt) && !Number.isFinite(activityAt))
-				return false;
-			// If heartbeat is recent enough, not stale
-			if (
-				Number.isFinite(heartbeatAt) &&
-				now - heartbeatAt <= NO_PID_HEARTBEAT_STALE_MS
-			)
-				return false;
-			// If agent progress is recent enough, not stale
-			if (
-				Number.isFinite(activityAt) &&
-				now - activityAt <= NO_PID_HEARTBEAT_STALE_MS
-			)
-				return false;
-			// Both present and both stale → this task is individually stale
-			return true;
-		})
-		.map((task) => task.id);
+): { allStale: boolean; staleTaskIds: string[] } {
+	const runningTasks = tasks.filter(
+		(t) => t.status === "running" || t.status === "waiting",
+	);
+	if (runningTasks.length === 0) return { allStale: false, staleTaskIds: [] };
+	const staleTaskIds: string[] = [];
+	for (const task of runningTasks) {
+		if (isTaskHeartbeatStale(task, now)) {
+			staleTaskIds.push(task.id);
+		}
+	}
+	return {
+		allStale: staleTaskIds.length === runningTasks.length,
+		staleTaskIds,
+	};
 }
 
 /**
@@ -345,7 +314,9 @@ export function reconcileStaleRun(
 		// (beyond NO_PID_HEARTBEAT_STALE_MS = 5min), repair immediately — the worker
 		// process is dead but we have no PID to check. This handles /tmp/ live-session
 		// workspaces where agents exit without calling submit_result.
-		if (allRunningTasksHeartbeatStale(tasks, now)) {
+		// Merged with individual stale task check to avoid redundant duplicate checks.
+		const { allStale, staleTaskIds } = getRunningTaskStaleness(tasks, now);
+		if (allStale) {
 			const repaired = repairStaleRun(
 				manifest,
 				tasks,
@@ -359,10 +330,9 @@ export function reconcileStaleRun(
 				repairedTasks: repaired,
 			};
 		}
-		// FIX: Check for individually stale tasks even when not all are stale.
+		// Check for individually stale tasks even when not all are stale.
 		// This handles the case where task A is healthy but task B is a zombie.
 		// We repair only the zombie tasks, not the whole run.
-		const staleTaskIds = findIndividuallyStaleTaskIds(tasks, now);
 		if (staleTaskIds.length > 0) {
 			const repaired = repairStaleRun(manifest, tasks, "no_pid_individual_stale_task");
 			// Only return the individually repaired tasks in detail
@@ -558,14 +528,23 @@ export function reconcileOrphanedTempWorkspaces(
 			// transitioned from 'running' to 'completed' between the main loop
 			// and this re-scan).
 			//
-			// KNOWN BENIGN RACE: Between the re-scan completing and the cleanup
-			// decision being acted upon, a new run could be created in that
-			// workspace (e.g., a concurrent process starts a new run while we
-			// are deciding whether to delete the dir). This is acceptable for
-			// /tmp cleanup because: (a) the consequence is at most leaving an
-			// extra dir that will be cleaned on the next tick, and (b) the
-			// 1-hour age threshold provides a safety margin.
+			// TOCTOU fix: Create a sentinel file before the re-scan. New run
+			// creation should check for this sentinel and refuse/wait if present.
+			// Additionally, do a final check right before cleanup to catch any
+			// new runs created between the re-scan and the cleanup decision.
+			const sentinelPath = path.join(workspaceDir, ".cleanup-in-progress");
 			let canCleanup = !hasRunning;
+			if (canCleanup) {
+				// Create sentinel file before re-scan to signal cleanup in progress
+				try {
+					fs.writeFileSync(sentinelPath, JSON.stringify({ startedAt: now }), {
+						flag: "wx",
+					});
+				} catch {
+					// Sentinel already exists (another cleanup in progress) — skip
+					canCleanup = false;
+				}
+			}
 			if (canCleanup) {
 				if (fs.existsSync(stateRunsDir)) {
 					try {
@@ -607,14 +586,58 @@ export function reconcileOrphanedTempWorkspaces(
 					const stat = fs.statSync(workspaceDir);
 					const dirAge = now - stat.mtimeMs;
 					if (dirAge > ORPHAN_TEMP_DIR_AGE_THRESHOLD_MS) {
-						fs.rmSync(workspaceDir, {
-							recursive: true,
-							force: true,
-						});
-						cleanedDirs++;
+						// Final check: re-verify no running manifests appeared since re-scan
+						// (handles TOCTOU race where a new run was created between re-scan and now)
+						let stillClean = true;
+						if (fs.existsSync(stateRunsDir)) {
+							try {
+								for (const runDir of fs.readdirSync(stateRunsDir)) {
+									const manifestPath = path.join(
+										stateRunsDir,
+										runDir,
+										"manifest.json",
+									);
+									if (!fs.existsSync(manifestPath)) continue;
+									try {
+										const manifest: TeamRunManifest = JSON.parse(
+											fs.readFileSync(manifestPath, "utf-8"),
+										);
+										if (manifest.status === "running") {
+											stillClean = false;
+											break;
+										}
+									} catch {
+										/* skip on parse error */
+									}
+								}
+							} catch {
+								stillClean = false;
+							}
+						}
+						if (stillClean) {
+							fs.rmSync(workspaceDir, {
+								recursive: true,
+								force: true,
+							});
+							cleanedDirs++;
+						}
 					}
 				} catch {
 					/* skip if stat or rm fails */
+				} finally {
+					// Clean up sentinel file regardless of outcome
+					try {
+						fs.unlinkSync(sentinelPath);
+					} catch {
+						/* ignore if already gone */
+					}
+				}
+			} else {
+				// Clean up sentinel if we bailed out early
+				try {
+					fs.unlinkSync(sentinelPath);
+				} catch {
+					/* ignore if already gone */
 				}
 			}
 		}

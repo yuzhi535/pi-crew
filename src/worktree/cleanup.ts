@@ -53,18 +53,12 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 	if (!fs.existsSync(worktreeRoot)) return result;
 
 	// M3 fix: use withFileTypes to avoid race between readdirSync and statSync.
+	// Rely on Dirent.isDirectory() instead of a separate statSync to eliminate TOCTOU window.
 	const withFileTypes = fs.readdirSync(worktreeRoot, { withFileTypes: true });
 	for (const entry of withFileTypes) {
 		if (options.signal?.aborted) break;
 		if (!entry.isDirectory()) continue;
 		const worktreePath = path.join(worktreeRoot, entry.name);
-		try {
-			const stat = fs.statSync(worktreePath);
-			if (!stat.isDirectory()) continue;
-		} catch {
-			// Entry deleted between readdir and stat — skip safely.
-			continue;
-		}
 		const dirty = isDirty(worktreePath);
 		const branchName = `pi-crew/${manifest.runId}/${sanitizeBranchPart(entry.name)}`;
 		if (dirty) {

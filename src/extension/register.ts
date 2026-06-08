@@ -508,13 +508,15 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				);
 		}
 	};
-	const autoRecoveryLast = new Map<string, number>();
+	const autoRecoveryLast = new Map<string, { insertedAt: number; lastAccessAt: number }>();
 	// FIX (Round 22, defensive cap): Bound the cooldown-gate Map. Each run
 	// contributes up to 4 keys (one per maybeNotifyHealth kind). Without a cap,
 	// a long-running pi session that runs thousands of teams accumulates
-	// thousands of entries. Eviction: oldest insertion first — matches the
-	// 5-minute cooldown gate semantics, since once the gate has expired the
-	// entry is irrelevant.
+	// thousands of entries. Eviction: oldest lastAccessAt first — uses LRU-like
+	// semantics so entries that are still being actively accessed (re-accessed
+	// before eviction) survive longer. This is fairer than insertion-order
+	// eviction under high churn where many entries expire naturally before
+	// being re-accessed.
 	const AUTO_RECOVERY_LAST_MAX_ENTRIES = 1000;
 	const configureDeliveryCoordinator = (): void => {
 		deliveryCoordinator?.dispose();
@@ -853,7 +855,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 						error instanceof Error ? error.message : String(error);
 					if (runId) {
 						try {
-							const loaded = loadRunManifestById(ctx.cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency
+							const loaded = loadRunManifestById(ctx.cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency. Post-run status updates tolerate slight staleness.
 							if (
 								loaded &&
 								loaded.manifest.status !== "completed" &&
@@ -907,7 +909,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 						}
 					}
 					if (ownerCurrent && runId) {
-						const loaded = loadRunManifestById(ctx.cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency
+						const loaded = loadRunManifestById(ctx.cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency. Post-run status updates tolerate slight staleness.
 						const status = loaded?.manifest.status ?? "finished";
 						const level =
 							status === "failed" || status === "blocked"
@@ -1612,18 +1614,26 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 						const previous = autoRecoveryLast.get(key);
 						if (
 							previous !== undefined &&
-							now - previous < 5 * 60_000
+							now - previous.lastAccessAt < 5 * 60_000
 						)
 							return;
-						// Defensive cap: evict oldest entries before inserting
-						// when size exceeds the limit. Map's natural insertion
-						// order means the first key is the oldest.
+						// Defensive cap: evict entry with oldest lastAccessAt before
+						// inserting/updating when size exceeds the limit. Uses LRU
+						// semantics so entries that are still being actively
+						// accessed survive longer than insertion-order eviction.
 						while (autoRecoveryLast.size >= AUTO_RECOVERY_LAST_MAX_ENTRIES) {
-							const oldest = autoRecoveryLast.keys().next().value;
-							if (oldest === undefined) break;
-							autoRecoveryLast.delete(oldest);
+							let oldestKey: string | undefined;
+							let oldestAccess = Infinity;
+							for (const [k, v] of autoRecoveryLast) {
+								if (v.lastAccessAt < oldestAccess) {
+									oldestAccess = v.lastAccessAt;
+									oldestKey = k;
+								}
+							}
+							if (oldestKey === undefined) break;
+							autoRecoveryLast.delete(oldestKey);
 						}
-						autoRecoveryLast.set(key, now);
+						autoRecoveryLast.set(key, { insertedAt: now, lastAccessAt: now });
 						notifyOperator({
 							id: key,
 							severity: "warning",

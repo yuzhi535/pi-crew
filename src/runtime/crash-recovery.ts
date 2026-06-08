@@ -4,7 +4,7 @@ import type { MetricRegistry } from "../observability/metric-registry.ts";
 import { appendEvent, scanSequence } from "../state/event-log.ts";
 import { recordFromTask, upsertCrewAgent } from "./crew-agent-records.ts";
 import { withRunLockSync } from "../state/locks.ts";
-import { loadRunManifestById, saveRunTasks, updateRunStatus } from "../state/state-store.ts";
+import { loadRunManifestById, saveRunManifest, saveRunTasks, updateRunStatus } from "../state/state-store.ts";
 import type { TeamTaskState } from "../state/types.ts";
 import { isWorkerHeartbeatStale } from "./worker-heartbeat.ts";
 import type { ManifestCache } from "./manifest-cache.ts";
@@ -275,6 +275,7 @@ export function purgeStaleActiveRunIndex(staleThresholdMs = 300_000, now = Date.
 							saveRunTasks(fullLoaded.manifest, repairedTasks);
 							for (const task of repairedTasks) { try { upsertCrewAgent(fullLoaded.manifest, recordFromTask(fullLoaded.manifest, task, "scaffold")); } catch { /* non-critical */ } }
 							updateRunStatus(fullLoaded.manifest, "cancelled", "Orphaned run: worker process dead and no recent activity");
+							saveRunManifest(fullLoaded.manifest);
 							void terminateLiveAgentsForRun(fullLoaded.manifest.runId, "cancelled", appendEvent, fullLoaded.manifest.eventsPath).catch((error) => logInternalError("crash-recovery.pid-dead.terminate", error, `runId=${fullLoaded.manifest.runId}`));
 						}
 					} catch {
@@ -306,6 +307,7 @@ export function purgeStaleActiveRunIndex(staleThresholdMs = 300_000, now = Date.
 						saveRunTasks(fullLoaded.manifest, repairedTasks);
 						for (const task of repairedTasks) { try { upsertCrewAgent(fullLoaded.manifest, recordFromTask(fullLoaded.manifest, task, "scaffold")); } catch { /* non-critical */ } }
 						updateRunStatus(fullLoaded.manifest, "cancelled", "Orphaned run: no async worker and no manifest update in over " + Math.round(staleThresholdMs / 60000) + " minutes");
+						saveRunManifest(fullLoaded.manifest);
 						void terminateLiveAgentsForRun(fullLoaded.manifest.runId, "cancelled", appendEvent, fullLoaded.manifest.eventsPath).catch((error) => logInternalError("crash-recovery.pid-dead.terminate", error, `runId=${fullLoaded.manifest.runId}`));
 					}
 				} catch {
@@ -326,14 +328,17 @@ export function purgeStaleActiveRunIndex(staleThresholdMs = 300_000, now = Date.
 
 export function reconcileAllStaleRuns(cwd: string, manifestCache: ManifestCache, now = Date.now()): ReconcileResult[] {
 	const results: ReconcileResult[] = [];
-	for (const manifest of manifestCache.list(50)) {
-		if (manifest.status !== "running" && manifest.status !== "blocked") continue;
-		const loaded = loadRunManifestById(cwd, manifest.runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency
+	// Capture runIds to reconcile BEFORE acquiring locks — avoids TOCTOU between cache iteration and lock acquisition.
+	const runIds = manifestCache.list(50).filter((m) => m.status === "running" || m.status === "blocked").map((m) => m.runId);
+	for (const runId of runIds) {
+		const cached = manifestCache.get(runId);
+		if (!cached) continue;
+		const loaded = loadRunManifestById(cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency
 		if (!loaded) continue;
 		// Use lock to prevent race with cancel/status handlers modifying the same run
 		withRunLockSync(loaded.manifest, () => {
 			// Re-read inside lock to get freshest data
-			const fresh = loadRunManifestById(cwd, manifest.runId); // NOTE: inside withRunLockSync - consistent read
+			const fresh = loadRunManifestById(cwd, runId); // NOTE: inside withRunLockSync - consistent read
 			if (!fresh || (fresh.manifest.status !== "running" && fresh.manifest.status !== "blocked")) return;
 			const result = reconcileStaleRun(fresh.manifest, fresh.tasks, now);
 			if (result.repaired || result.verdict === "result_exists") {
@@ -343,7 +348,7 @@ export function reconcileAllStaleRuns(cwd: string, manifestCache: ManifestCache,
 			}
 				updateRunStatus(fresh.manifest, "failed", `Stale run reconciled: ${result.detail}`);
 				void terminateLiveAgentsForRun(fresh.manifest.runId, "failed", appendEvent, fresh.manifest.eventsPath).catch((error) => logInternalError("crash-recovery.reconcile.terminate", error, `runId=${fresh.manifest.runId}`));
-				appendEvent(fresh.manifest.eventsPath, { type: "crew.run.reconciled_stale", runId: manifest.runId, message: result.detail, data: { verdict: result.verdict } });
+				appendEvent(fresh.manifest.eventsPath, { type: "crew.run.reconciled_stale", runId, message: result.detail, data: { verdict: result.verdict } });
 			}
 			if (result.verdict !== "healthy") {
 				results.push(result);

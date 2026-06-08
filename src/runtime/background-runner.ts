@@ -104,6 +104,10 @@ function startInterruptGuard(
 		manifest.stateRoot,
 		"foreground-control.json",
 	);
+	// FIX: Made configurable via PI_CREW_INTERRUPT_GUARD_INTERVAL_MS env var.
+	// Default 250ms balances fast SIGINT response against filesystem overhead.
+	const interruptGuardInterval =
+		Number(process.env.PI_CREW_INTERRUPT_GUARD_INTERVAL_MS) || 250;
 	const interval = setInterval(() => {
 		try {
 			if (!fs.existsSync(controlPath)) return;
@@ -137,7 +141,7 @@ function startInterruptGuard(
 		} catch {
 			/* ignore read/parse errors */
 		}
-	}, 500); // FIX: Reduced from 3000ms to 500ms for faster cancel response
+	}, interruptGuardInterval);
 	interval.unref();
 	return () => clearInterval(interval);
 }

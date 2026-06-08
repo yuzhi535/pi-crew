@@ -33,7 +33,7 @@ export async function executeHook(name: HookName, ctx: HookContext): Promise<Hoo
 	// SECURITY: Hooks without workspaceId match ALL workspaces. This is intentional
 	// for globally-applicable hooks (e.g., logging, metrics). For multi-tenant
 	// environments, all hooks should set workspaceId to prevent cross-workspace access.
-	const scopedHooks = hooks.filter((h) => !h.workspaceId || h.workspaceId === ctx.workspaceId);
+	const scopedHooks = hooks.filter((h) => h.workspaceId === undefined || h.workspaceId === null || h.workspaceId === ctx.workspaceId);
 	if (scopedHooks.length === 0) return { hookName: name, outcome: "allow", durationMs: 0 };
 	const POLLUTED_KEYS = new Set(["__proto__", "constructor", "prototype", "hasOwnProperty", "toString", "valueOf", "isPrototypeOf", "propertyIsEnumerable", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"]);
 	function sanitizeMergeData(data: Record<string, unknown>): Record<string, unknown> {

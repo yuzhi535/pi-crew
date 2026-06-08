@@ -49,29 +49,6 @@ export interface OrphanWorkerEntry {
 }
 
 /**
- * Verify that a PID is actually one of our background-runner processes.
- * Guards against PID reuse attacks: after a worker dies, OS may reuse
- * the same PID for an unrelated process. Without verification, we'd
- * kill that unrelated process.
- *
- * Strategy: read /proc/<pid>/cmdline (Linux) and verify:
- *   1. First arg is node (or wrapped node like bun/pm2)
- *   2. One of the args ends with "background-runner.ts"
- *
- * This is stronger than a simple substring match because it verifies
- * the actual script being executed, not just a string that happens to
- * appear somewhere in the command line.
- *
- * NOTE: PID reuse protection via cmdline verification is Linux-only.
- * On non-Linux platforms (macOS, Windows), /proc is unavailable,
- * so this function falls back to trusting the registry. This means
- * a malicious process could win a PID race and be incorrectly
- * identified as a background-runner, or a legitimate worker could
- * be killed if its PID is reused by an attacker. Consider
- * alternative verification methods (e.g., process name via psutil)
- * for non-Linux platforms.
- */
-/**
  * Get process start time in milliseconds since boot from /proc/<pid>/stat.
  * Returns undefined if the process is gone or /proc is unavailable.
  *
@@ -103,28 +80,6 @@ function getProcessStartTime(pid: number): number | undefined {
 	}
 }
 
-function verifyIsBackgroundWorker(pid: number): boolean {
-	try {
-		const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8");
-		// cmdline is NUL-separated; empty string after final NUL is normal
-		const args = cmdline.split("\0").filter((a) => a.length > 0);
-		if (args.length === 0) return false;
-
-		// Verify first arg is a node runtime (node, bun, deno, etc.)
-		// We only want to verify node-based workers, not random processes
-		const exe = path.basename(args[0]);
-		if (!["node", "bun", "deno"].some((r) => exe.includes(r))) {
-			return false;
-		}
-
-		// Check if any arg ends with background-runner.ts (the actual script)
-		// This is the actual verification — the script must be our background-runner
-		return args.some((arg) => arg.endsWith("background-runner.ts"));
-	} catch {
-		// /proc not available (macOS, Windows) or PID gone — trust registry
-		return true;
-	}
-}
 
 let REGISTRY_PATH = path.join(userPiRoot(), "state", "orphan-workers.json");
 
@@ -274,24 +229,21 @@ export function cleanupOrphanWorkers(
 						// Parent is dead — proceed to verify it's actually our worker
 					}
 				}
-				// Verify it's actually a background-runner, not a reused PID
-				if (!verifyIsBackgroundWorker(entry.pid)) {
-					// PID reused by another process — prune, don't kill
-					pruned++;
-					continue;
-				}
 				// Verify PID hasn't been recycled by checking start time matches.
+				// Capture startTime for re-verification before kill to close TOCTOU window.
 				// Between the kill(0) check and the actual SIGKILL below, the OS
 				// may have reused this PID for a new process. If the start time
 				// has changed, this is a different process and we must not kill it.
 				const currentStartTime = getProcessStartTime(entry.pid);
-				if (currentStartTime !== undefined && entry.startTime !== 0 && currentStartTime !== entry.startTime) {
+				if (currentStartTime === undefined || entry.startTime === 0) {
+					// Can't verify startTime (macOS/Windows or stale entry) — trust registry
+				} else if (currentStartTime !== entry.startTime) {
 					// PID was recycled — different process now, prune without killing
 					pruned++;
 					continue;
 				}
 				// Re-verify start time immediately before SIGKILL to close the
-				// TOCTOU window between the earlier check (line 286) and here.
+				// TOCTOU window.
 				const preKillStartTime = getProcessStartTime(entry.pid);
 				if (preKillStartTime !== undefined && entry.startTime !== 0 && preKillStartTime !== entry.startTime) {
 					// PID was recycled — different process now, prune without killing
