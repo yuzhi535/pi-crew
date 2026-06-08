@@ -217,3 +217,40 @@ export function readBlobMetadata(artifactsRoot: string, hash: string): BlobMetad
 		return undefined;
 	}
 }
+/**
+ * Cleanup orphaned blobs - blobs without corresponding metadata entries.
+ * Called periodically to reclaim storage from blobs that were written but whose
+ * metadata write failed (e.g., crash between content and metadata write).
+ * Returns the number of orphaned blobs cleaned up.
+ */
+export function cleanupOrphanedBlobs(artifactsRoot: string): number {
+	const blobDir = path.join(artifactsRoot, BLOBS_DIR, SHA256_PREFIX);
+	const metaDir = path.join(artifactsRoot, BLOB_META_DIR);
+
+	let cleaned = 0;
+	try {
+		const blobFiles = fs.readdirSync(blobDir);
+		for (const blobFile of blobFiles) {
+			// Skip non-hash files (e.g., temp files from atomicWriteBuffer)
+			if (!SHA256_HEX.test(blobFile)) continue;
+
+			const metaPath = path.join(metaDir, `${blobFile}.json`);
+			try {
+				fs.statSync(metaPath);
+				// Metadata exists - blob is not orphaned
+			} catch {
+				// Metadata does not exist - blob is orphaned, delete it
+				const blobPath = path.join(blobDir, blobFile);
+				try {
+					fs.rmSync(blobPath, { force: true });
+					cleaned++;
+				} catch {
+					// Best-effort cleanup - continue to next blob
+				}
+			}
+		}
+	} catch {
+		// Blobs directory doesn't exist or inaccessible - nothing to clean
+	}
+	return cleaned;
+}

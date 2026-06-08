@@ -22,10 +22,14 @@ const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
  * available on Unix-like platforms (Linux, macOS). On Windows or other
  * platforms where getuid is unavailable, the ownership check is skipped
  * and only symlink detection is performed. This means symlink safety
- * verification is weaker on non-Unix platforms.
+ * verification is weaker on non-Unix platforms. Consider using
+ * platform-specific ownership verification (e.g., icacls on Windows)
+ * for stronger guarantees on those platforms.
  */
 export function isSymlinkSafePath(filePath: string): boolean {
 	try {
+		// Issue 3 fix: track the original baseDir for boundary verification after symlink resolution
+		const baseDir = path.dirname(filePath);
 		// Walk the full ancestor chain to detect any symlinks
 		let currentPath = filePath;
 		while (currentPath !== path.dirname(currentPath)) {
@@ -35,6 +39,8 @@ export function isSymlinkSafePath(filePath: string): boolean {
 				if (dirStat.isSymbolicLink()) {
 					// Resolve and verify ownership on Unix
 					const realDir = fs.realpathSync(dir);
+					// Issue 3 fix: verify resolved path stays within the original baseDir boundary
+					if (!realDir.startsWith(baseDir + path.sep) && realDir !== baseDir) return false;
 					const realStat = fs.statSync(realDir);
 					if (!realStat.isDirectory()) return false;
 					if (typeof process.getuid === "function" && realStat.uid !== process.getuid()) return false;
@@ -162,33 +168,12 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 					throw checkError;
 				}
 			}
-			// Fallback: if rename fails (Windows EPERM/EBUSY), try direct write.
-			// NOTE: This fallback path does NOT provide atomicity guarantees.
-			// Concurrent writes may interleave content. The content-match check
-			// below is a best-effort detection mechanism, not a guarantee — a
-			// concurrent writer could modify the file between the fallback write
-			// and the read. Prefer failing over falling back when rename fails
-			// repeatedly under contention.
-			// Issue 1 fix: isSymlinkSafePath check is now immediately before writeFileSync
-			// to minimize the TOCTOU window between the check and the actual write.
-			try {
-				if (!isSymlinkSafePath(filePath)) {
-					try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
-					throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
-				}
-				fs.writeFileSync(filePath, content, "utf-8");
-			} catch (writeError) {
-				// Issue 1 fix: clean up temp file before re-throwing, matching
-				// atomicWriteBuffer and atomicWriteFileAsync patterns.
-				try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
-				throw renameError;
-			}
-			// Note: Hash verification is intentionally omitted in the fallback path.
-			// The fallback is non-atomic, so a hash check after writeFileSync cannot
-			// distinguish between a TOCTOU attack and a legitimate concurrent write.
-			// The post-write hash check (lines 187-195) detects but does not prevent
-			// the race, so we rely on the pre-write isSymlinkSafePath check instead.
+			// Issue 2 fix: do NOT fall back to non-atomic writeFileSync.
+			// The rename failed after retries — throw the error rather than
+			// risking data corruption via a non-atomic write. Callers should
+			// handle this error or use a different strategy for contended files.
 			try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
+			throw renameError;
 		}
 	} catch (error) {
 		// Issue 2 fix: wrap content-match read in nested try-catch that always
@@ -295,8 +280,8 @@ interface CoalescedAtomicWrite {
 const pendingAtomicWrites = new Map<string, CoalescedAtomicWrite>();
 const DEFAULT_ATOMIC_COALESCE_MS = 50;
 
-// Issue 5 fix: guard against concurrent flushes
-let flushInProgress = false;
+// Issue 1 fix: guard against concurrent AND re-entrant flushes using depth counter
+let flushInProgress = 0;
 
 export function atomicWriteJsonCoalesced<T>(filePath: string, value: T, coalesceMs = DEFAULT_ATOMIC_COALESCE_MS): void {
 	const content = `${JSON.stringify(value, null, 2)}\n`;
@@ -332,12 +317,12 @@ function flushOnePendingAtomicWrite(filePath: string): void {
 
 /** Flush every queued coalesced write synchronously. Safe to call any time. */
 export function flushPendingAtomicWrites(): void {
-	if (flushInProgress) return;
-	flushInProgress = true;
+	if (flushInProgress > 0) return;
+	flushInProgress++;
 	try {
 		for (const filePath of [...pendingAtomicWrites.keys()]) flushOnePendingAtomicWrite(filePath);
 	} finally {
-		flushInProgress = false;
+		flushInProgress--;
 	}
 }
 

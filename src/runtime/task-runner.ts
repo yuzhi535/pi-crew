@@ -395,11 +395,11 @@ export async function runTeamTask(
 					),
 				};
 				if (!force && now - lastHeartbeatPersistedAt < 1000) return;
-				// Write task state BEFORE updating in-memory heartbeat so a crash
-				// never produces a fresher in-memory heartbeat than what's persisted.
-				// This prevents the stale reconciler from seeing a live heartbeat
-				// paired with stale task state (which could cause false zombie detection).
-				// Write task state first.
+				// Update in-memory heartbeat first, then write to disk.
+				// In-memory state is always >= persisted state, so a crash never produces
+				// a fresher in-memory heartbeat than what's on disk. This prevents the
+				// stale reconciler from seeing a live heartbeat paired with stale task state
+				// (which could cause false zombie detection).
 				tasks = persistSingleTaskUpdate(manifest, tasks, task);
 				lastHeartbeatPersistedAt = now;
 			};
@@ -889,6 +889,8 @@ export async function runTeamTask(
 			} else {
 				resultArtifact = live.resultArtifact;
 			}
+			// Sync task.resultArtifact with the re-written artifact (if liveText was truthy)
+			task = { ...task, resultArtifact };
 			logArtifact = live.logArtifact;
 			transcriptArtifact = live.transcriptArtifact;
 		} else {

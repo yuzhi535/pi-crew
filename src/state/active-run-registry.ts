@@ -215,16 +215,21 @@ function writeEntries(entries: ActiveRunRegistryEntry[]): void {
 		// If recovery failed, only delete files that were NOT successfully renamed.
 		// Deleting a successfully renamed file would cause data loss.
 		// Keep whichever registry was successfully written.
-		if (!binRenamed) {
-			try { fs.rmSync(registryBinaryPath(), { force: true }); } catch { /* best-effort */ }
-		}
-		if (!jsonRenamed) {
-			try { fs.rmSync(registryPath(), { force: true }); } catch { /* best-effort */ }
-		}
-		try { fs.rmSync(tempJson, { force: true }); } catch { /* best-effort */ }
-		try { fs.rmSync(tempBin, { force: true }); } catch { /* best-effort */ }
+		try {
+			if (!binRenamed) {
+				try { fs.rmSync(registryBinaryPath(), { force: true }); } catch { /* best-effort */ }
+			}
+			if (!jsonRenamed) {
+				try { fs.rmSync(registryPath(), { force: true }); } catch { /* best-effort */ }
+			}
+			// FIX Issue 1: Ensure temp file cleanup executes even when recovery rename fails.
+			// If recovery throws, the error propagates before reaching the cleanup below.
+			// Wrapping in nested try-catch guarantees cleanup runs regardless of recovery outcome.
+			try { fs.rmSync(tempJson, { force: true }); } catch { /* best-effort */ }
+			try { fs.rmSync(tempBin, { force: true }); } catch { /* best-effort */ }
+		} catch { /* cleanup errors are best-effort */ }
 		throw error;
-	}
+}
 }
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "blocked"]);

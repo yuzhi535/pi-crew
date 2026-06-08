@@ -60,6 +60,7 @@ const MAX_EVENTS_BYTES = 50 * 1024 * 1024;
 const sequenceCache = new Map<string, { size: number; mtimeMs: number; seq: number; lastAccessMs: number }>();
 const MAX_SEQUENCE_CACHE_ENTRIES = 256;
 let appendCounter = 0;
+let overflowCounter = 0;
 
 /** Simple cross-process lock for an eventsPath to prevent JSONL interleave on concurrent append.
  *  Detects stale locks by checking the owner PID written inside the lock directory.
@@ -252,6 +253,15 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 		// FIX: Compute sequence INSIDE the promise chain and persist BEFORE append.
 		// This ensures the sidecar is updated before the event is written, preventing
 		// sequence reuse if the process crashes after append but before persist.
+		//
+		// NOTE: Sequence gaps are expected behavior on crash, not corruption.
+		// If the process crashes after persistSequence (line ~262) but before the
+		// fs.promises.appendFile call (line ~328), the sidecar will have sequence N
+		// recorded but no corresponding event written. This creates a "gap" in the
+		// sequence number space. This is preferable to the alternative (sequence
+		// reuse causing event overwrite on recovery), but can confuse audit/debugging
+		// when analyzing event sequences. Consider adding a startup check that warns
+		// if sequence gaps are detected in the future.
 		const baseMetadata = event.metadata;
 		let seq: number;
 		if (baseMetadata?.seq !== undefined) {
@@ -524,9 +534,10 @@ function flushOneEventLogBuffer(eventsPath: string): void {
 		// memory. We now reject with a clear error so callers can fall back.
 		if (queue.length > 1000) {
 			const dropped = queue.splice(0, queue.length - 500);
+			overflowCounter++;
 			logInternalError(
 				"event-log.buffer-overflow",
-				new Error(`Buffer overflow: ${dropped.length} events dropped for ${eventsPath}`),
+				new Error(`Buffer overflow #${overflowCounter}: ${dropped.length} events dropped for ${eventsPath}`),
 				`${eventsPath}: ${queue.length + dropped.length} entries > 1000 cap`,
 			);
 			for (const item of dropped) {

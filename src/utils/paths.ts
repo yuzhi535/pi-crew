@@ -9,7 +9,27 @@ export function packageRoot(): string {
 
 export function userPiRoot(): string {
 	const home = process.env.PI_TEAMS_HOME?.trim() || os.homedir();
-	return path.join(home, ".pi", "agent");
+	const resolved = path.join(home, ".pi", "agent");
+
+	// Validate that the resolved path is owned by the current user
+	// to ensure security assumptions about file permissions (0o600/0o700) hold.
+	// Skip check if the directory does not exist yet.
+	try {
+		const stats = fs.statSync(resolved);
+		if (stats.uid !== os.userInfo().uid) {
+			throw new Error(
+				`userPiRoot: PI_TEAMS_HOME path "${resolved}" is not owned by the current user (uid=${os.userInfo().uid}, found uid=${stats.uid}). ` +
+				"This violates security assumptions about file permissions. Set PI_TEAMS_HOME to a path owned by the current user, or unset it to use the default.",
+			);
+		}
+	} catch (err: unknown) {
+		if (err instanceof Error && "code" in err && err.code !== "ENOENT") {
+			throw err;
+		}
+		// ENOENT is acceptable — the directory may not exist yet.
+	}
+
+	return resolved;
 }
 
 const PROJECT_DIR_MARKERS = [".git", ".pi", ".crew", ".hg", ".svn", ".factory", ".omc"];

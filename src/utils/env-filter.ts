@@ -16,9 +16,10 @@ export function sanitizeEnvSecrets(env: NodeJS.ProcessEnv, options?: SanitizeEnv
 	if (options?.allowList && options.allowList.length > 0) {
 		const matchers = options.allowList.map((p) => {
 			if (p.endsWith("*")) {
-				// Glob pattern: matches any key that starts with the prefix and has
-				// additional characters (i.e., prefix itself is not a full match).
+				// Glob pattern: matches keys that start with the prefix AND have
+				// at least one additional character (distinguishes "PI_CREW_*" from "PI_CREW_").
 				// For example, "PI_CREW_*" matches "PI_CREW_DEPTH" but not "PI_CREW_".
+				// This ensures trailing glob patterns require extra chars, not exact-prefix-only matches.
 				const prefix = p.slice(0, -1);
 				return (k: string) => k.startsWith(prefix) && k.length > prefix.length;
 			}

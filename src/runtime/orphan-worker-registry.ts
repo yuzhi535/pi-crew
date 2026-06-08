@@ -26,6 +26,7 @@ import * as path from "node:path";
 import { userPiRoot } from "../utils/paths.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import { withFileLockSync } from "../state/locks.ts";
+import { isSymlinkSafePath } from "../state/atomic-write.ts";
 
 const STALE_REGISTRATION_MS = 60 * 60 * 1000; // 1 hour
 // Grace period before a fresh worker can be cleaned up when parent is dead.
@@ -41,6 +42,11 @@ export interface OrphanWorkerEntry {
 	/** Parent PID (the pi process that spawned this worker). Used to verify
 	 * the owning session is actually dead before killing the worker. */
 	parentPid: number;
+	/** Parent process start time in milliseconds since boot (from /proc/<pid>/stat).
+	 * Used to detect PID reuse of the parent process. If the OS recycles the
+	 * parent PID for a new process, the start time will differ and we won't
+	 * incorrectly believe the parent is still alive. */
+	parentPidStartTime: number;
 	registeredAt: number; // epoch ms
 	/** Process start time in milliseconds since boot (from /proc/<pid>/stat).
 	 * Used to detect PID reuse: if the OS recycles this PID for a new process,
@@ -51,6 +57,13 @@ export interface OrphanWorkerEntry {
 /**
  * Get process start time in milliseconds since boot from /proc/<pid>/stat.
  * Returns undefined if the process is gone or /proc is unavailable.
+ *
+ * Platform limitation: This implementation relies on Linux's /proc filesystem
+ * and does not work on macOS (which uses sysctl) or Windows (which uses Windows
+ * API). On those platforms, startTime will be undefined and PID reuse detection
+ * is weaker — relying primarily on parentPid verification and the grace period
+ * checks in cleanupOrphanWorkers. Consider adding platform-specific PID reuse
+ * detection (e.g., sysctl on macOS, Windows API on Windows) for full coverage.
  *
  * The start time is in the 22nd field (index 21) of /proc/<pid>/stat.
  * We parse after the closing parenthesis of comm to handle spaces in comm.
@@ -92,6 +105,13 @@ function getRegistryPath(): string {
 	return REGISTRY_PATH;
 }
 
+/** Issue 3 fix: Validate sessionId and runId to prevent path traversal attacks. */
+function isValidId(id: string): boolean {
+	if (!id || typeof id !== "string") return false;
+	if (id.includes("..") || id.includes("/") || id.includes("\\") || id.includes("\0")) return false;
+	return true;
+}
+
 function readRegistry(): OrphanWorkerEntry[] {
 	const p = getRegistryPath();
 	try {
@@ -110,23 +130,43 @@ function readRegistry(): OrphanWorkerEntry[] {
 				typeof (e as { parentPid?: unknown }).parentPid === "number" &&
 				typeof (e as { startTime?: unknown }).startTime === "number",
 		);
-	} catch {
+	} catch (error) {
+		// Silent failure is deliberate for robustness (registry read failures
+		// shouldn't crash the process), but log at debug level to aid troubleshooting.
+		console.debug(`[orphan-worker-registry] readRegistry failed: ${error}`);
 		return [];
 	}
 }
 
 function writeRegistry(entries: OrphanWorkerEntry[]): void {
 	const p = getRegistryPath();
-	try {
-		fs.mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
-		fs.writeFileSync(p, JSON.stringify(entries, null, 2), { mode: 0o600 });
-	} catch (error) {
-		logInternalError(
-			"orphan-worker-registry.write",
-			error,
-			`path=${p} entries=${entries.length}`,
-		);
+	// Ensure parent directory exists before acquiring lock.
+	// The lock serializes writes, but mkdir outside the lock could race with
+	// another process creating the same directory simultaneously. By ensuring
+	// the directory exists here first (with recursive: true), we minimize the
+	// window for TOCTOU between directory creation and file write.
+	const dir = path.dirname(p);
+	if (!fs.existsSync(dir)) {
+		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	}
+	withFileLockSync(getRegistryPath(), () => {
+		// Issue 2 fix: Guard against symlink attacks on the registry file.
+		// isSymlinkSafePath walks the ancestor chain to detect any symlinks,
+		// preventing attacks where an intermediate ancestor is a symlink.
+		if (!isSymlinkSafePath(p)) {
+			logInternalError("orphan-worker-registry.write", new Error("Refusing to write: target is a symlink or inside untrusted directory"), `path=${p}`);
+			return;
+		}
+		try {
+			fs.writeFileSync(p, JSON.stringify(entries, null, 2), { mode: 0o600 });
+		} catch (error) {
+			logInternalError(
+				"orphan-worker-registry.write",
+				error,
+				`path=${p} entries=${entries.length}`,
+			);
+		}
+	});
 }
 
 /**
@@ -143,7 +183,12 @@ export function registerWorker(
 	parentPid: number,
 ): void {
 	if (!Number.isFinite(pid) || pid <= 0) return;
+	// Issue 3 fix: Validate sessionId and runId to prevent path traversal attacks.
+	if (!isValidId(sessionId) || !isValidId(runId)) return;
 	const startTime = getProcessStartTime(pid) ?? 0;
+	const parentPidStartTime = Number.isFinite(parentPid) && parentPid > 0
+		? (getProcessStartTime(parentPid) ?? 0)
+		: 0;
 	withFileLockSync(getRegistryPath(), () => {
 		const entries = readRegistry();
 		// Dedupe by PID
@@ -153,6 +198,7 @@ export function registerWorker(
 			sessionId,
 			runId,
 			parentPid: Number.isFinite(parentPid) ? parentPid : 0,
+			parentPidStartTime,
 			registeredAt: Date.now(),
 			startTime,
 		});
@@ -220,13 +266,26 @@ export function cleanupOrphanWorkers(
 				// If parent is alive, this is a concurrent session's worker
 				// (or the same session that was misidentified). Keep it.
 				if (entry.parentPid > 0) {
-					try {
-						process.kill(entry.parentPid, 0);
-						// Parent is alive — concurrent session, keep worker
-						kept.push(entry);
-						continue;
-					} catch {
-						// Parent is dead — proceed to verify it's actually our worker
+					// Verify parent hasn't been recycled before checking liveness.
+					// If the parent PID was reused by a different process, the start
+					// time will differ and we shouldn't trust the parentPid liveness check.
+					const currentParentStartTime = getProcessStartTime(entry.parentPid);
+					if (
+						currentParentStartTime !== undefined &&
+						entry.parentPidStartTime !== 0 &&
+						currentParentStartTime !== entry.parentPidStartTime
+					) {
+						// Parent PID was recycled — this is a different process,
+						// treat as if parent is dead so we may clean up the worker.
+					} else {
+						try {
+							process.kill(entry.parentPid, 0);
+							// Parent is alive — concurrent session, keep worker
+							kept.push(entry);
+							continue;
+						} catch {
+							// Parent is dead — proceed to verify it's actually our worker
+						}
 					}
 				}
 				// Verify PID hasn't been recycled by checking start time matches.
@@ -246,15 +305,18 @@ export function cleanupOrphanWorkers(
 				// TOCTOU window.
 				//
 				// KNOWN RESIDUAL RACE: Even with this re-check, a microsecond-level
-				// window exists between the preKillStartTime read (line 247) and the
-				// actual process.kill(entry.pid, "SIGKILL") call (line 257). The OS
+				// window exists between the preKillStartTime read (line 311) and the
+				// actual process.kill(entry.pid, "SIGKILL") call (line 321). The OS
 				// could theoretically recycle the PID and allocate it to a new process
 				// within that window. This is an inherent limitation of userspace PID
 				// verification against kernel PID allocation — the race cannot be fully
 				// eliminated without kernel-level process naming or a process descriptor
-				// that we do not have. The consequence of killing a wrong process is
-				// severe (SIGKILL of an unrelated process), so this re-check is the
-				// best possible mitigation given the kernel's PID allocation semantics.
+				// that we do not have. As alternative mitigations, consider using
+				// process groups (killpg) for worker identification instead of raw PIDs,
+				// or kernel-level process descriptors if available on the platform.
+				// The consequence of killing a wrong process is severe (SIGKILL of an
+				// unrelated process), so this re-check is the best possible mitigation
+				// given the kernel's PID allocation semantics.
 				const preKillStartTime = getProcessStartTime(entry.pid);
 				if (preKillStartTime !== undefined && entry.startTime !== 0 && preKillStartTime !== entry.startTime) {
 					// PID was recycled — different process now, prune without killing

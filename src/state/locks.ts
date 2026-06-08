@@ -117,6 +117,15 @@ function timingSafeTokenMatch(a: string, b: string): boolean {
 }
 
 function releaseLock(filePath: string, token: string): void {
+	// FIX: Do not delete a symlink — it may have been planted by an attacker
+	// after our lock was released. A legitimate lock file should never be a
+	// symlink since writeLockFile uses O_CREAT|O_EXCL which fails on symlinks.
+	let isSymlink = false;
+	try {
+		isSymlink = fs.lstatSync(filePath).isSymbolicLink();
+	} catch { /* file doesn't exist — that's fine, we'll handle ENOENT below */ }
+	if (isSymlink) return;
+
 	const stored = readLockToken(filePath);
 	if (stored === undefined || timingSafeTokenMatch(stored, token)) {
 		try {
@@ -258,6 +267,16 @@ export function withFileLockSync<T>(filePath: string, fn: () => T, options: RunL
 	const lockFile = `${filePath}.lock`;
 	const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
 	fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+	// FIX: Validate that the target file still exists. If it was deleted and
+	// recreated since the last lock cycle, the old .lock file may be orphaned
+	// and should not block the new cycle. Clean it up if the target is missing.
+	try {
+		fs.statSync(filePath);
+	} catch {
+		// Target file doesn't exist — clean up any stale .lock file and proceed.
+		// The lock will be acquired fresh for the new file (if fn creates it).
+		try { fs.rmSync(lockFile, { force: true }); } catch { /* ignore */ }
+	}
 	const token = acquireLockWithRetry(lockFile, staleMs, "file");
 	try {
 		return fn();

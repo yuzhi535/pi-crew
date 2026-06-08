@@ -277,3 +277,52 @@ test("cleanupOrphanWorkers prunes registry entries that no longer match the sche
 	assert.ok(result.scanned >= 1, "at least the valid entry scanned");
 	assert.ok(result.pruned >= 1, "invalid entry pruned");
 });
+
+test("cleanupOrphanWorkers prunes (not kills) when startTime mismatches (PID recycling detection)", async () => {
+	const tmp = mkdtemp("pi-crew-recycle-");
+	try {
+		// Spawn a long-running process so the PID stays alive during cleanup.
+		const { spawn } = await import("node:child_process");
+		const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], {
+			detached: false,
+			stdio: "ignore",
+		});
+		const livePid = child.pid!;
+
+		// Write a registry entry with a startTime that is guaranteed NOT to match
+		// the real process startTime. This simulates PID recycling: the OS gave
+		// this PID to a new process after our entry was written.
+		const past = Date.now() - 25 * 60 * 60 * 1000; // 25h ago (stale)
+		const entries = [
+			{
+				pid: livePid,
+				sessionId: "session-OTHER",
+				runId: "run-1",
+				parentPid: 999_998, // dead parent
+				registeredAt: past,
+				startTime: 999999999, // Clearly fake — won't match the real startTime
+			},
+		];
+		fs.writeFileSync(REGISTRY_FILE, JSON.stringify(entries));
+
+		const result = cleanupOrphanWorkers("session-MINE");
+
+		// PID is alive but startTime doesn't match → prune (not kill).
+		// The mismatch signals PID recycling, so we remove the entry without
+		// sending SIGKILL to avoid killing the wrong process.
+		assert.equal(result.scanned, 1);
+		assert.equal(result.pruned, 1, "mismatched startTime → prune (not kill)");
+		assert.equal(result.killed, 0, "PID recycling detected — did not kill");
+
+		// Verify the process is still alive (we pruned the entry, not the process).
+		let stillAlive = true;
+		try {
+			process.kill(livePid, 0);
+		} catch {
+			stillAlive = false;
+		}
+		assert.equal(stillAlive, true, "process should still be running");
+	} finally {
+		rmrf(tmp);
+	}
+});

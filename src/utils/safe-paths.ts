@@ -57,6 +57,12 @@ export function resolveContainedPath(baseDir: string, targetPath: string): strin
  *
  * Returns the resolved real path on success, or the resolved (but not
  * realpathed) path when the target does not exist yet.
+ *
+ * NOTE: There is a race condition window between validation and use where an
+ * attacker could create a directory component after validation but before the
+ * file is created. Callers should ideally create parent directories atomically
+ * (e.g., mkdirSync with { recursive: true }) or use O_CREAT with O_NOFOLLOW
+ * flags in the actual file operation to minimize this window.
  */
 export function resolveRealContainedPath(baseDir: string, targetPath: string): string {
 	if (targetPath.includes('\0')) {
@@ -129,6 +135,8 @@ export function resolveContainedRelativePath(baseDir: string, relativePath: stri
 		throw new Error(`Security: path contains null byte: ${kind}`);
 	}
 	const normalized = relativePath.replaceAll("\\", "/").replace(/^\.\/+/, "");
+	// Detect Windows absolute paths (C:\, \\server\share) that path.isAbsolute may miss after normalization
+	if (/^[A-Za-z]:/.test(normalized)) throw new Error(`Invalid ${kind}: ${relativePath}`);
 	if (!normalized || normalized.split("/").some((segment) => segment === "..") || path.isAbsolute(normalized)) throw new Error(`Invalid ${kind}: ${relativePath}`);
 	return resolveContainedPath(baseDir, path.resolve(baseDir, normalized));
 }

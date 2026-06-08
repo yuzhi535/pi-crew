@@ -128,6 +128,7 @@ function shouldMergeTaskUpdate(current: TeamTaskState, updated: TeamTaskState): 
 	// contain stale queued/running copies of tasks that another worker already
 	// completed. Never let those stale snapshots regress durable task state.
 	if (current.status === "waiting" && updated.status === "running") return false;
+	if (current.status === "queued" && updated.status === "running") return false;
 	if (!isNonTerminalTaskStatus(current.status) && isNonTerminalTaskStatus(updated.status)) return false;
 	// Explicitly block failed→completed resurrection. Both statuses are terminal,
 	// but completed is the success terminal state and should not be reachable from
@@ -141,6 +142,8 @@ function shouldMergeTaskUpdate(current: TeamTaskState, updated: TeamTaskState): 
 		// invalid state that should be replaced rather than persisting corruption.
 		if (Number.isNaN(currentFinished)) {
 			console.warn(`[team-runner] Task ${current.id} has malformed finishedAt, treating as invalid state: ${current.finishedAt}`);
+			// FIX: If current is NaN but updated is valid, always accept the update
+			if (!Number.isNaN(updatedFinished)) return true;
 		}
 		const currentTime = Number.isNaN(currentFinished) ? Infinity : currentFinished;
 		const updatedTime = Number.isNaN(updatedFinished) ? -Infinity : updatedFinished;

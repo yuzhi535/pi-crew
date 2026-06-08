@@ -91,6 +91,7 @@ function selfTerminate(parentPid: number): never {
 export function startParentGuard(parentPid: number): void {
 	if (!parentPid || !Number.isFinite(parentPid) || parentPid <= 0) return;
 
+	if (guardInterval) clearInterval(guardInterval);
 	guardInterval = setInterval(() => {
 		// Immediate check on every tick — detects parent death within one poll
 		// interval (max POLL_INTERVAL_MS latency, default 500ms).

@@ -502,13 +502,34 @@ export function reconcileOrphanedTempWorkspaces(
 							}
 							repaired++;
 						}
-						// If still running after reconciliation attempt, mark for dir-preserving
-						if (
-							result.verdict === "healthy" ||
-							(result.verdict === "no_status" && !result.repaired)
-						) {
-							hasRunning = true;
-						}
+						// Persist result_exists manifest status update
+							if (result.verdict === "result_exists") {
+								// checkResultFile already updated manifest.status = 'completed'
+								// but caller never persisted it — fix that now
+								fs.writeFileSync(
+									manifestPath,
+									JSON.stringify(manifest, null, 2),
+								);
+								// Sync agent records (checkResultFile also does this but
+								// we persist manifest first so agents are consistent)
+								for (const task of tasks) {
+									try {
+										upsertCrewAgent(
+											manifest,
+											recordFromTask(manifest, task, "scaffold"),
+										);
+									} catch {
+										/* non-critical */
+									}
+								}
+							}
+							// If still running after reconciliation attempt, mark for dir-preserving
+							if (
+								result.verdict === "healthy" ||
+								(result.verdict === "no_status" && !result.repaired)
+							) {
+								hasRunning = true;
+							}
 					} catch (err) {
 						// Log warning when skipping a directory due to error.
 						// Note: manifestPath here refers to the variable defined in the
@@ -650,11 +671,42 @@ export function reconcileOrphanedTempWorkspaces(
 					}
 				}
 			} else {
-				// Clean up sentinel if we bailed out early
-				try {
-					fs.unlinkSync(sentinelPath);
-				} catch {
-					/* ignore if already gone */
+				// Sentinel already existed — another cleanup attempt is in progress.
+				// Perform a simplified TOCTOU check: if any manifest is 'running',
+				// do NOT remove the sentinel (let the first attempt finish its scan).
+				let hasRunningManifest = false;
+				if (fs.existsSync(stateRunsDir)) {
+					try {
+						for (const runDir of fs.readdirSync(stateRunsDir)) {
+							const manifestPath = path.join(
+								stateRunsDir,
+								runDir,
+								"manifest.json",
+							);
+							if (!fs.existsSync(manifestPath)) continue;
+							try {
+								const m = JSON.parse(
+									fs.readFileSync(manifestPath, "utf-8"),
+								) as TeamRunManifest;
+								if (m.status === "running") {
+									hasRunningManifest = true;
+									break;
+								}
+							} catch {
+								/* skip on parse error */
+							}
+						}
+					} catch {
+						/* skip if runs dir unreadable */
+					}
+				}
+				// Only clean up sentinel if no running manifests exist
+				if (!hasRunningManifest) {
+					try {
+						fs.unlinkSync(sentinelPath);
+					} catch {
+						/* ignore if already gone */
+					}
 				}
 			}
 		}

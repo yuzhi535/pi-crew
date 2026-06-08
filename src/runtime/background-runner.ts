@@ -346,7 +346,7 @@ async function main(): Promise<void> {
 	const abortController = new AbortController();
 
 	process.on("SIGTERM", () => {
-		// BUG #17 FIX: Ignore SIGTERM to prevent io_uring corruption.
+		// BUG #17 FIX: Handle SIGTERM for graceful shutdown. Real I/O (appendEvent) flushes io_uring state before abort to prevent corruption..
 		// IMPORTANT: Perform real I/O here to flush io_uring state after EINTR.
 		// Without I/O, io_uring can enter corrupted state and cause silent crash.
 		// FIX Issue #3: Trigger graceful shutdown via abortController signal,
@@ -424,14 +424,9 @@ async function main(): Promise<void> {
 		return origExit(code);
 	}) as typeof process.exit;
 
-	// Start parent guard FIRST — if parent is already dead, exit immediately
-	const parentPid = Number(process.env.PI_CREW_PARENT_PID);
-	if (parentPid > 0) startParentGuard(parentPid);
-	// NOTE: intentionally no unref() — the guard keeps the event loop alive
-	// to prevent premature worker exit. See parent-guard.ts:86 for rationale.
-
-	// Setup unhandled rejection guard EARLY — must be before any async operations
-	// that might produce unhandled rejections during cleanup.
+	// Setup unhandled rejection guard FIRST — must be before any async operations
+	// that might produce unhandled rejections during cleanup. Without this, any unhandled
+	// rejection would crash the worker BEFORE async.failed events are written.
 	const rejectionGuardState = {
 		cwd,
 		runId,
@@ -444,6 +439,12 @@ async function main(): Promise<void> {
 		exitDueToRejection = true;
 	};
 	setupUnhandledRejectionGuard(rejectionGuardState, abortController, setExitFlag);
+
+	// Start parent guard — if parent is already dead, exit immediately
+	const parentPid = Number(process.env.PI_CREW_PARENT_PID);
+	if (parentPid > 0) startParentGuard(parentPid);
+	// NOTE: intentionally no unref() — the guard keeps the event loop alive
+	// to prevent premature worker exit. See parent-guard.ts:86 for rationale.
 
 	appendEvent(manifest.eventsPath, {
 		type: "async.started",

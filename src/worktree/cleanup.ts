@@ -87,7 +87,7 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 					} catch (err2) {
 						// Both branch attempts failed — accumulate error for outer catch
 						const err2_msg = err2 instanceof Error ? err2.message : String(err2);
-						throw new Error(`branch creation failed: ${branchError.message}; fallback branch also failed: ${err2_msg}`);
+						throw new Error(`branch creation failed (${branchName} already exists): ${branchError.message}; fallback branch also failed: ${err2_msg}`);
 					}
 				}
 				result.committedBranches.push(branchName);
@@ -98,15 +98,29 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 				//   git branch -D <branchName>   (to clean up the branch)
 				//   rm -rf <worktreePath>        (to clean up the orphaned directory)
 				const removeArgs = ["worktree", "remove", "--force", worktreePath];
-				git(manifest.cwd, removeArgs);
-				result.removed.push(worktreePath);
+				try {
+					git(manifest.cwd, removeArgs);
+					result.removed.push(worktreePath);
+				} catch (removeError) {
+					// Commit succeeded but worktree remove failed — directory is orphaned
+					result.preserved.push({ path: worktreePath, reason: `commit succeeded but worktree remove failed: ${removeError instanceof Error ? removeError.message : String(removeError)}` });
+					const safeBranchName = sanitizeBranchPart(entry.name);
+					const artifact = writeArtifact(manifest.artifactsRoot, {
+						kind: "metadata",
+						relativePath: `metadata/worktree-branch-${safeBranchName}.json`,
+						content: JSON.stringify({ worktreePath, branch: branchName, committedAt: new Date().toISOString(), mergeCommand: `git merge ${branchName}`, gitStatusAtCommit: git(worktreePath, ["status", "--porcelain"]) }, null, 2),
+						producer: "worktree-cleanup",
+					});
+					result.artifactPaths.push(artifact.path);
+					continue;
+				}
 				// FIX: entry is a DirEnt object, must use entry.name for the path.
 				// Also apply same newline stripping as safeDesc for consistency.
-				const safeBranchName = sanitizeFilename(entry.name);
+				const safeBranchName = sanitizeBranchPart(entry.name);
 				const artifact = writeArtifact(manifest.artifactsRoot, {
 					kind: "metadata",
 					relativePath: `metadata/worktree-branch-${safeBranchName}.json`,
-					content: JSON.stringify({ worktreePath, branch: branchName, committedAt: new Date().toISOString(), mergeCommand: `git merge ${branchName}` }, null, 2),
+					content: JSON.stringify({ worktreePath, branch: branchName, committedAt: new Date().toISOString(), mergeCommand: `git merge ${branchName}`, gitStatusAtCommit: git(worktreePath, ["status", "--porcelain"]) }, null, 2),
 					producer: "worktree-cleanup",
 				});
 				result.artifactPaths.push(artifact.path);

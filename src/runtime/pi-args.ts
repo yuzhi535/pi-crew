@@ -127,6 +127,23 @@ export function createSafeTempDir(base: string, prefix: string): string {
 	if (baseStat.isSymbolicLink()) throw new Error("Refusing to create temp dir in symlinked base: " + base);
 	// Create base dir only AFTER all ancestor symlink checks pass.
 	if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
+	// Issue #1 fix: re-validate the FULL ancestor chain immediately after
+	// mkdirSync to close the TOCTOU window between initial validation
+	// (lines 111-122) and directory creation. An attacker could have
+	// deleted a validated ancestor and recreated it as a symlink in that
+	// window.
+	for (let i = 1; i < parts.length; i++) {
+		if (parts[i] === "") continue;
+		accumulated = path.join(accumulated, parts[i]);
+		try {
+			const stat = fs.lstatSync(accumulated);
+			if (stat.isSymbolicLink()) throw new Error("Refusing to create temp dir: ancestor is a symlink (post-mkdir): " + accumulated);
+		} catch (e) {
+			if (e instanceof Error && e.message.includes("symlink")) throw e;
+			// Component doesn't exist — OK
+			break;
+		}
+	}
 	// Resolve base to canonical path before joining
 	const resolvedBase = fs.realpathSync(base);
 	// Issue #2 fix: verify resolvedBase itself is not a symlink (TOCTOU
@@ -396,7 +413,10 @@ export function cleanupOrphanTempDirs(
 					continue;
 				}
 				if (!preRmlstat || preRmlstat.isSymbolicLink()) continue;
-				const stat = fs.lstatSync(dir);
+				// Reuse lstat (captured at line 375) — already verified non-symlink at line 380.
+				// Avoid calling lstatSync again to eliminate the TOCTOU window between
+				// preRmlstat lstatSync (line 393) and this stat lstatSync (old line 399).
+				const stat = lstat;
 				if (now - stat.mtimeMs > ORPHAN_TEMP_MAX_AGE_MS) {
 					fs.rmSync(dir, { recursive: true, force: true });
 					createdTempDirs.delete(dir);
@@ -479,7 +499,10 @@ export function cleanupLegacyOrphanTempDirs(
 					continue;
 				}
 				if (preRmlstat.isSymbolicLink()) continue;
-				const stat = fs.lstatSync(dir);
+				// Reuse lstat (captured at line 455) — already verified non-symlink at line 460.
+				// Avoid calling lstatSync again to eliminate the TOCTOU window between
+				// preRmlstat lstatSync (line 476) and this stat lstatSync (old line 482).
+				const stat = lstat;
 				if (now - stat.mtimeMs > ORPHAN_TEMP_MAX_AGE_MS) {
 					fs.rmSync(dir, { recursive: true, force: true });
 					cleaned++;

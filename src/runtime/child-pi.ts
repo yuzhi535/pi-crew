@@ -278,6 +278,25 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 	});
 	// FIX: Removed delete workarounds — with explicit allowlist, these vars
 	// are no longer auto-leaked. The wildcard approach was fragile.
+
+	// SECURITY FIX (Issue #1): Validate NODE_PATH to ensure it only contains standard
+	// system locations. NODE_PATH can reveal user environment information (e.g., NVM paths
+	// under $HOME) and could theoretically be exploited if it contains untrusted entries.
+	// Only allow paths under standard system directories like /usr, /opt, /lib.
+	if (filteredEnv.NODE_PATH) {
+		const validPrefixes = ["/usr/", "/opt/", "/lib/", "/share/"];
+		const validPaths = filteredEnv.NODE_PATH.split(":").filter((p) => {
+			return validPrefixes.some((prefix) => p.startsWith(prefix));
+		});
+		if (validPaths.length > 0) {
+			filteredEnv.NODE_PATH = validPaths.join(":");
+		} else {
+			// No standard paths found — remove NODE_PATH entirely to avoid
+			// passing user-specific paths that could reveal environment info.
+			delete filteredEnv.NODE_PATH;
+		}
+	}
+
 	return {
 		cwd: validatedCwd,
 		env: { ...filteredEnv, PI_CREW_PARENT_PID: String(process.pid) },

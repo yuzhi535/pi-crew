@@ -16,7 +16,7 @@ export function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks
 			saveRunTasks(manifest, merged);
 		} catch (err) {
 			logInternalError("persistSingleTaskUpdate", err);
-			return merged;
+			throw err;
 		}
 		return merged;
 	});
@@ -26,6 +26,10 @@ export function checkpointTask(manifest: TeamRunManifest, tasks: TeamTaskState[]
 	const checkpoint: TaskCheckpointState = { phase, updatedAt: new Date().toISOString(), ...(childPid ? { childPid } : task.checkpoint?.childPid ? { childPid: task.checkpoint.childPid } : {}) };
 	const nextTask = { ...task, checkpoint };
 	const nextTasks = persistSingleTaskUpdate(manifest, updateTask(tasks, nextTask), nextTask);
-	upsertCrewAgent(manifest, recordFromTask(manifest, nextTask, "child-process"));
+	try {
+		upsertCrewAgent(manifest, recordFromTask(manifest, nextTask, "child-process"));
+	} catch (err) {
+		logInternalError("checkpointTask", err);
+	}
 	return { task: nextTask, tasks: nextTasks };
 }
