@@ -129,7 +129,7 @@ export const __test__renameWithRetryAsync = renameWithRetryAsync;
 export function atomicWriteFile(filePath: string, content: string, expectedHash?: string): void {
 	if (!isSymlinkSafePath(filePath)) throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+	const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;
 	// Write temp with restrictive permissions
 	const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
 	try {
@@ -227,7 +227,7 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 export async function atomicWriteFileAsync(filePath: string, content: string): Promise<void> {
 	if (!isSymlinkSafePath(filePath)) throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
 	await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+	const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;
 	try {
 		const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
 		const fd = await fs.promises.open(tempPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW, 0o600);

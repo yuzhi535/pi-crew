@@ -331,6 +331,20 @@ async function main(): Promise<void> {
 			} catch {}
 		});
 	}
+
+	// FIX Issue #1: Load manifest and create abortController BEFORE signal handlers
+	// are installed, since the handlers reference manifest.eventsPath and abortController.
+	const cwd = argValue("--cwd");
+	const runId = argValue("--run-id");
+	if (!cwd || !runId)
+		throw new Error(
+			"Usage: background-runner.ts --cwd <cwd> --run-id <runId>",
+		);
+	const loaded = loadRunManifestById(cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency;
+	if (!loaded) throw new Error(`Run '${runId}' not found.`);
+	let { manifest, tasks } = loaded;
+	const abortController = new AbortController();
+
 	process.on("SIGTERM", () => {
 		// BUG #17 FIX: Ignore SIGTERM to prevent io_uring corruption.
 		// IMPORTANT: Perform real I/O here to flush io_uring state after EINTR.
@@ -413,42 +427,16 @@ async function main(): Promise<void> {
 	// Start parent guard FIRST — if parent is already dead, exit immediately
 	const parentPid = Number(process.env.PI_CREW_PARENT_PID);
 	if (parentPid > 0) startParentGuard(parentPid);
-
-	const cwd = argValue("--cwd");
-	const runId = argValue("--run-id");
-	if (!cwd || !runId)
-		throw new Error(
-			"Usage: background-runner.ts --cwd <cwd> --run-id <runId>",
-		);
-
-	// Log PGID and SID for debugging process group isolation
-	try {
-		const stat = fs.readFileSync("/proc/self/stat", "utf8").split(" ");
-		console.log(
-			`[background-runner] DEBUG: pid=${process.pid} ppid=${process.ppid} pgid=${stat[4]} sid=${stat[5]} cwd=${cwd} runId=${runId}`,
-		);
-	} catch {
-		console.log(
-			`[background-runner] DEBUG: pid=${process.pid} ppid=${process.ppid} cwd=${cwd} runId=${runId}`,
-		);
-	}
-
-	const loaded = loadRunManifestById(cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency;
-	if (!loaded) throw new Error(`Run '${runId}' not found.`);
-	let { manifest, tasks } = loaded;
-
-	console.log(
-		`[background-runner] DEBUG: manifest loaded, eventsPath=${manifest.eventsPath}`,
-	);
+	// NOTE: intentionally no unref() — the guard keeps the event loop alive
+	// to prevent premature worker exit. See parent-guard.ts:86 for rationale.
 
 	// Setup unhandled rejection guard EARLY — must be before any async operations
 	// that might produce unhandled rejections during cleanup.
 	const rejectionGuardState = {
 		cwd,
 		runId,
-		eventsPath: loaded.manifest.eventsPath,
+		eventsPath: manifest.eventsPath,
 	};
-	const abortController = new AbortController();
 	// FIX Issues #2& #4: Flag to signal that an unhandled rejection occurred.
 	// When set, runCleanup() will ensure process.exit(1) is called after cleanup.
 	let exitDueToRejection = false;

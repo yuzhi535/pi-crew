@@ -25,7 +25,9 @@ export interface WorktreeDiffStat {
 }
 
 function git(cwd: string, args: string[]): string {
-	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...sanitizeEnvSecrets(process.env, { allowList: ["PATH", "HOME", "USER", "USERPROFILE", "SHELL", "TERM", "LANG", "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "NVM_BIN", "NVM_DIR", "NODE_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "PI_*", "PI_CREW_*"] }), LANG: "C", LC_ALL: "C" }, windowsHide: true }).trim();
+	// SECURITY: PI_* and PI_CREW_* wildcards removed — they could match secret vars like PI_PASSWORD.
+// Git operations do not need PI_CREW_* execution-control vars.
+return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...sanitizeEnvSecrets(process.env, { allowList: ["PATH", "HOME", "USER", "USERPROFILE", "SHELL", "TERM", "LANG", "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "NVM_BIN", "NVM_DIR", "NODE_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"] }), LANG: "C", LC_ALL: "C" }, windowsHide: true }).trim();
 }
 
 // Note: Dots are allowed in branch names (git supports them), but if branch names
@@ -132,8 +134,14 @@ function runSetupHook(manifest: TeamRunManifest, task: TeamTaskState, repoRoot: 
 		logInternalError("worktree.setupHook.contained", new Error("hook path escapes repoRoot after realpath resolution: " + hookPath), `repoRoot=${repoRoot}`);
 		return [];
 	}
-	if (!fs.existsSync(hookPath) || fs.statSync(hookPath).isDirectory()) {
-		logInternalError("worktree.setupHook.missing", new Error("hook not found or is directory: " + hookPath), `cwd=${manifest.cwd}`);
+	try {
+		const hookStat = fs.lstatSync(hookPath);
+		if (!hookStat.isFile()) {
+			logInternalError("worktree.setupHook.missing", new Error("hook not found or is directory: " + hookPath), `cwd=${manifest.cwd}`);
+			return [];
+		}
+	} catch {
+		logInternalError("worktree.setupHook.missing", new Error("hook not found: " + hookPath), `cwd=${manifest.cwd}`);
 		return [];
 	}
 	const nodeHook = hookPath.endsWith(".js") || hookPath.endsWith(".cjs") || hookPath.endsWith(".mjs");
@@ -258,8 +266,7 @@ export function overlaySeedPaths(repoRoot: string, worktreePath: string, seedPat
 			logInternalError("worktree.seedPaths.missing", new Error(`Seed path does not exist: ${seedPath}`));
 			continue;
 		}
-		// Reject symlinks to prevent TOCTOU attacks (source could be replaced with symlink
-		// between check and copy, even though repoRoot is validated by assertCleanLeader).
+		// Reject symlinks in seed paths to prevent copying symlinks into worktree (which could point outside repoRoot).
 		if (sourceStat.isSymbolicLink()) {
 			logInternalError("worktree.seedPaths.symlink", new Error(`Seed path is a symlink — rejected: ${seedPath}`));
 			continue;
@@ -272,7 +279,7 @@ export function overlaySeedPaths(repoRoot: string, worktreePath: string, seedPat
 		fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
 		fs.rmSync(destinationPath, { force: true, recursive: true });
 		fs.cpSync(sourcePath, destinationPath, {
-			dereference: false,
+			dereference: true,
 			force: true,
 			preserveTimestamps: true,
 			recursive: true,
@@ -285,7 +292,8 @@ export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskSt
 	const repoRoot = findGitRoot(manifest.cwd);
 	const loadedConfig = loadConfig(manifest.cwd);
 	if (loadedConfig.config.requireCleanWorktreeLeader !== false) assertCleanLeader(repoRoot);
-	const worktreeRoot = path.join(projectCrewRoot(manifest.cwd), DEFAULT_PATHS.state.worktreesSubdir, manifest.runId);
+	const sanitizedRunId = manifest.runId.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^-+|-+$/g, "") || "run";
+	const worktreeRoot = path.join(projectCrewRoot(manifest.cwd), DEFAULT_PATHS.state.worktreesSubdir, sanitizedRunId);
 	fs.mkdirSync(worktreeRoot, { recursive: true });
 	const worktreePath = path.join(worktreeRoot, task.id);
 	const branch = `pi-crew/${sanitizeBranchPart(manifest.runId)}/${sanitizeBranchPart(task.id)}`;

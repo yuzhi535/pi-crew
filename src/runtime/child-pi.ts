@@ -11,6 +11,7 @@ import { attachPostExitStdioGuard, trySignalChild } from "./post-exit-stdio-guar
 import { redactJsonLine } from "../utils/redaction.ts";
 import { sanitizeEnvSecrets } from "../utils/env-filter.ts";
 import { registerChildProcess, unregisterChildProcess } from "../extension/crew-cleanup.ts";
+import { resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 const POST_EXIT_STDIO_GUARD_MS = DEFAULT_CHILD_PI.postExitStdioGuardMs;
 const FINAL_DRAIN_MS = DEFAULT_CHILD_PI.finalDrainMs;
@@ -159,6 +160,8 @@ export interface ChildPiRunInput {
 	agentId?: string;
 	/** Role for tool restrictions (from role-tools.ts) */
 	role?: string;
+	/** Root directory for artifacts (used to validate transcriptPath). */
+	artifactsRoot?: string;
 }
 
 export interface ChildPiRunResult {
@@ -281,14 +284,43 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 		stdio: ["ignore", "pipe", "pipe"], // stdin=ignore: child doesn't wait for input; task comes via CLI args
 		detached: process.platform !== "win32",
 		setsid: true,
+		// NOTE: setsid creates a new session; the child process becomes the session leader
+		// and its parent becomes that session leader (still the team-runner in the same
+		// process group). PI_CREW_PARENT_PID is set before spawn using process.pid (team-runner).
+		// The parent-guard in the child checks direct parent liveness via process.kill(pid, 0) —
+		// it does NOT follow the lineage beyond the direct parent. If the team-runner's parent
+		// (the original pi session) dies, the team-runner becomes an orphan but the child still
+		// sees its direct parent (team-runner) as alive. This is correct for the parent-guard model.
 		windowsHide: true,
 	} as SpawnOptions;
 }
 
 function appendTranscript(input: ChildPiRunInput, line: string): void {
 	if (!input.transcriptPath) return;
-	fs.mkdirSync(path.dirname(input.transcriptPath), { recursive: true });
-	fs.appendFileSync(input.transcriptPath, `${redactJsonLine(line)}\n`, "utf-8");
+	// SECURITY FIX (Issue #1): Validate transcriptPath against artifactsRoot to prevent
+	// arbitrary file writes and symlink traversal attacks. An attacker who can influence
+	// the task graph could set transcriptPath to /etc/passwd or similar, and mkdirSync
+	// with recursive:true would create parent directories. Additionally, appendFileSync
+	// follows symlinks, potentially writing to sensitive files.
+	let safePath: string;
+	try {
+		const artifactsRoot = input.artifactsRoot ?? input.cwd;
+		safePath = resolveRealContainedPath(artifactsRoot, input.transcriptPath);
+	} catch (error) {
+		logInternalError("child-pi.transcript-path-rejected", error as Error, `transcriptPath=${input.transcriptPath}`);
+		return;
+	}
+	// Create parent directory of the validated path (not the original input.transcriptPath).
+	fs.mkdirSync(path.dirname(safePath), { recursive: true });
+	// Use O_NOFOLLOW | O_APPEND to safely open the file for appending without following symlinks.
+	// This prevents an attacker from creating a symlink at transcriptPath pointing to a
+	// sensitive file (e.g., /etc/passwd) and having us append to it.
+	const fd = fs.openSync(safePath, fs.constants.O_NOFOLLOW | fs.constants.O_APPEND | fs.constants.O_CREAT, 0o644);
+	try {
+		fs.writeSync(fd, `${redactJsonLine(line)}\n`, undefined, "utf-8");
+	} finally {
+		fs.closeSync(fd);
+	}
 }
 
 function compactString(value: string, maxChars = MAX_COMPACT_CONTENT_CHARS): string {

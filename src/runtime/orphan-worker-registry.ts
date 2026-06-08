@@ -244,6 +244,17 @@ export function cleanupOrphanWorkers(
 				}
 				// Re-verify start time immediately before SIGKILL to close the
 				// TOCTOU window.
+				//
+				// KNOWN RESIDUAL RACE: Even with this re-check, a microsecond-level
+				// window exists between the preKillStartTime read (line 247) and the
+				// actual process.kill(entry.pid, "SIGKILL") call (line 257). The OS
+				// could theoretically recycle the PID and allocate it to a new process
+				// within that window. This is an inherent limitation of userspace PID
+				// verification against kernel PID allocation — the race cannot be fully
+				// eliminated without kernel-level process naming or a process descriptor
+				// that we do not have. The consequence of killing a wrong process is
+				// severe (SIGKILL of an unrelated process), so this re-check is the
+				// best possible mitigation given the kernel's PID allocation semantics.
 				const preKillStartTime = getProcessStartTime(entry.pid);
 				if (preKillStartTime !== undefined && entry.startTime !== 0 && preKillStartTime !== entry.startTime) {
 					// PID was recycled — different process now, prune without killing

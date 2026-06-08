@@ -38,8 +38,8 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 			if (stat.isSymbolicLink()) throw new Error("Refusing to resolve: baseDir ancestor is a symlink: " + accumulated);
 		} catch (e) {
 			if (e instanceof Error && e.message.includes("symlink")) throw e;
-			// Component doesn't exist yet — OK, but stop walking
-			break;
+			// Component doesn't exist — cannot validate ancestor chain safely
+			throw new Error(`Cannot validate path safety: ancestor does not exist: ${accumulated}`);
 		}
 	}
 	let realBase: string;
@@ -61,8 +61,8 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 			if (stat.isSymbolicLink()) throw new Error("Refusing to resolve: target path ancestor is a symlink: " + resolvedAccumulated);
 		} catch (e) {
 			if (e instanceof Error && e.message.includes("symlink")) throw e;
-			// Component doesn't exist — OK, but stop walking
-			break;
+			// Component doesn't exist — cannot validate ancestor chain safely
+			throw new Error(`Cannot validate path safety: ancestor does not exist: ${resolvedAccumulated}`);
 		}
 	}
 	let realTarget: string;

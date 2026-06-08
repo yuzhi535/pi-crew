@@ -333,6 +333,11 @@ export function reconcileStaleRun(
 		// Check for individually stale tasks even when not all are stale.
 		// This handles the case where task A is healthy but task B is a zombie.
 		// We repair only the zombie tasks, not the whole run.
+		// NOTE: Individual stale task repair (this branch) is intentionally
+		// separate from run-level repair (the allStale branch above). Both
+		// paths can coexist — the allStale path cancels the entire run when
+		// ALL tasks are zombies, while this path repairs only the zombie
+		// subset when some tasks are still healthy.
 		if (staleTaskIds.length > 0) {
 			const repaired = repairStaleRun(manifest, tasks, "no_pid_individual_stale_task");
 			// Only return the individually repaired tasks in detail
@@ -505,9 +510,12 @@ export function reconcileOrphanedTempWorkspaces(
 							hasRunning = true;
 						}
 					} catch (err) {
-						// Log warning when skipping a directory due to error
+						// Log warning when skipping a directory due to error.
+						// Note: manifestPath here refers to the variable defined in the
+						// for loop at line 442 (outer scope of this catch block).
+						const scanManifestPath = manifestPath;
 						console.warn(
-							`[stale-reconciler] Skipping manifest due to parse error: ${manifestPath}: ${err}`,
+							`[stale-reconciler] Skipping manifest due to parse error: ${scanManifestPath}: ${err}`,
 						);
 					}
 				}
@@ -586,8 +594,17 @@ export function reconcileOrphanedTempWorkspaces(
 					const stat = fs.statSync(workspaceDir);
 					const dirAge = now - stat.mtimeMs;
 					if (dirAge > ORPHAN_TEMP_DIR_AGE_THRESHOLD_MS) {
-						// Final check: re-verify no running manifests appeared since re-scan
-						// (handles TOCTOU race where a new run was created between re-scan and now)
+						// Final check: re-verify no running manifests appeared since re-scan.
+						// KNOWN ACCEPTABLE RACE: There is a small TOCTOU window between the
+						// re-scan completing and the rmSync call below. A new run could be
+						// created and marked 'running' during this window. The consequence
+						// (deleting a workspace with a newly-created run) is mitigated by:
+						// 1. The sentinel file prevents NEW cleanup from starting concurrently
+						// 2. The re-scan at line 591-616 catches most cases
+						// 3. force:true on rmSync means the directory is only removed if it
+						//    truly has no running manifests at the moment of deletion
+						// For stronger guarantees, a dedicated lock file mechanism or
+						// cleanup marker checked by run creation code would be needed.
 						let stillClean = true;
 						if (fs.existsSync(stateRunsDir)) {
 							try {

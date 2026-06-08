@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { projectCrewRoot } from "../utils/paths.ts";
 import { assertSafePathId } from "../utils/safe-paths.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 export interface Checkpoint {
 	runId: string;
@@ -60,7 +61,11 @@ export class FileCheckpointStore implements CheckpointStore {
 		assertSafePathId("taskId", checkpoint.taskId);
 		this.ensureDir();
 		const p = this.checkpointPath(checkpoint.taskId);
-		fs.writeFileSync(p, JSON.stringify(checkpoint, null, 2), "utf-8");
+		// Atomic write: write to temp file first, then rename. This guarantees
+		// either the old file or the new file, never a partial write.
+		const tmp = path.join(this.checkpointDir(), ".tmp.checkpoint");
+		fs.writeFileSync(tmp, JSON.stringify(checkpoint, null, 2), "utf-8");
+		fs.renameSync(tmp, p);
 	}
 
 	load(runId: string, taskId: string): Checkpoint | null {
@@ -74,6 +79,13 @@ export class FileCheckpointStore implements CheckpointStore {
 			if (data.runId !== runId) return null;
 			return data;
 		} catch {
+			// File existed but JSON was corrupt — log and rename for later inspection
+			logInternalError("checkpoint-load", new Error("JSON parse failed"), `file=${p}`);
+			try {
+				fs.renameSync(p, `${p}.corrupt.${Date.now()}`);
+			} catch {
+				// Best effort — ignore rename failure
+			}
 			return null;
 		}
 	}

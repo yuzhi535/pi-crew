@@ -479,6 +479,7 @@ export async function runTeamTask(
 					role: task.role,
 					runId: manifest.runId,
 					agentId: task.id,
+					artifactsRoot: manifest.artifactsRoot,
 					onSpawn: (pid) => {
 						try {
 							({ task, tasks } = checkpointTask(

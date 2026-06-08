@@ -58,7 +58,7 @@ function startTeamRunHeartbeat(stateRoot: string, runId: string): () => void {
 				at: Date.now(),
 				runId,
 				kind: "team-runner",
-			}), "utf-8");
+			}), { encoding: "utf-8", mode: 0o600 });
 		} catch {
 			// best-effort
 		}
@@ -129,6 +129,10 @@ function shouldMergeTaskUpdate(current: TeamTaskState, updated: TeamTaskState): 
 	// completed. Never let those stale snapshots regress durable task state.
 	if (current.status === "waiting" && updated.status === "running") return false;
 	if (!isNonTerminalTaskStatus(current.status) && isNonTerminalTaskStatus(updated.status)) return false;
+	// Explicitly block failed→completed resurrection. Both statuses are terminal,
+	// but completed is the success terminal state and should not be reachable from
+	// failed via a stale merge. The check above only guards non-terminal→terminal.
+	if (current.status === "failed" && updated.status === "completed") return false;
 	// Prevent a stale completed task from overwriting a fresher one.
 	if (current.finishedAt && updated.finishedAt) {
 		const currentFinished = new Date(current.finishedAt).getTime();
@@ -170,7 +174,19 @@ export function mergeTaskUpdatesPreservingTerminal(base: TeamTaskState[], result
 	for (const result of results) {
 		for (const updated of result.tasks) {
 			const current = merged.find((task) => task.id === updated.id);
-			if (!current || !shouldMergeTaskUpdate(current, updated)) continue;
+			if (!current) continue;
+			if (!shouldMergeTaskUpdate(current, updated)) {
+				// Log skipped merges for visibility into rejected parallel updates.
+				// In distributed systems with parallel workers, rejected merges may
+				// indicate bugs (wrong status, timestamp corruption) if they accumulate.
+				console.debug("[team-runner] Skipping stale merge for task", updated.id, {
+					currentStatus: current.status,
+					updatedStatus: updated.status,
+					currentFinishedAt: current.finishedAt,
+					updatedFinishedAt: updated.finishedAt,
+				});
+				continue;
+			}
 			merged = merged.map((task) => task.id === updated.id ? updated : task);
 		}
 	}

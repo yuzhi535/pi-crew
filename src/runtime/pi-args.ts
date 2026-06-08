@@ -120,13 +120,26 @@ export function createSafeTempDir(base: string, prefix: string): string {
 			break;
 		}
 	}
-	// Verify base dir itself is not a symlink
+	// Verify base dir itself is not a symlink before realpathSync.
+	// Issue #1 fix: if baseDir itself is a symlink, realpathSync would
+	// resolve to an attacker-controlled location.
 	const baseStat = fs.lstatSync(base);
 	if (baseStat.isSymbolicLink()) throw new Error("Refusing to create temp dir in symlinked base: " + base);
 	// Create base dir only AFTER all ancestor symlink checks pass.
 	if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
 	// Resolve base to canonical path before joining
 	const resolvedBase = fs.realpathSync(base);
+	// Issue #2 fix: verify resolvedBase itself is not a symlink (TOCTOU
+	// between realpathSync and the ancestor walk). If a symlink was
+	// created at the base path after realpathSync returned, catch it.
+	let resolvedBaseStat: fs.Stats;
+	try {
+		resolvedBaseStat = fs.lstatSync(resolvedBase);
+		if (resolvedBaseStat.isSymbolicLink()) throw new Error("Refusing to create temp dir: resolved base is a symlink: " + resolvedBase);
+	} catch (e) {
+		if (e instanceof Error && e.message.includes("symlink")) throw e;
+		// resolvedBase doesn't exist yet — OK
+	}
 	// Verify resolved path has no symlink ancestors. realpathSync follows
 	// symlinks, so if any ancestor is a symlink the resolved path will be
 	// inside the attacker's target. Catch that by walking the resolved path.
