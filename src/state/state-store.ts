@@ -434,9 +434,9 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 	}
 	// FIX: After 3 attempts with no convergence, perform a final consistency check.
 	// If manifest mtime > tasks mtime, the manifest is newer and likely inconsistent.
-	// Throw an error to allow caller to retry with lock for strict consistency.
+	// Return undefined - caller should retry with lock for strict consistency if needed.
 	if (manifest && tasksStat && manifestStat.mtimeMs > (tasksStat.mtimeMs ?? 0)) {
-		throw new Error(`Inconsistent run state detected: manifest (${manifestStat.mtimeMs}) is newer than tasks (${tasksStat.mtimeMs}). Retry with lock for strict consistency.`);
+		return undefined;
 	}
 	if (!manifest || !validateRunManifestPaths(cwd, runId, manifest, stateRoot, tasksPath)) return undefined;
 	setManifestCache(stateRoot, {
@@ -503,9 +503,9 @@ export async function loadRunManifestByIdAsync(cwd: string, runId: string): Prom
 	}
 	// FIX: After 3 attempts with no convergence, perform a final consistency check.
 	// If manifest mtime > tasks mtime, the manifest is newer and likely inconsistent.
-	// Throw an error to allow caller to retry with lock for strict consistency.
+	// Return undefined - caller should retry with lock for strict consistency if needed.
 	if (manifest && tasksStat && manifestStat.mtimeMs > (tasksStat.mtimeMs ?? 0)) {
-		throw new Error(`Inconsistent run state detected: manifest (${manifestStat.mtimeMs}) is newer than tasks (${tasksStat.mtimeMs}). Retry with lock for strict consistency.`);
+		return undefined;
 	}
 
 	if (!manifest || !validateRunManifestPaths(cwd, runId, manifest, stateRoot, tasksPath)) return undefined;
