@@ -2,21 +2,24 @@ import type { TaskCheckpointState, TeamRunManifest, TeamTaskState } from "../../
 import { loadRunManifestById, saveRunTasks } from "../../state/state-store.ts";
 import { recordFromTask, upsertCrewAgent } from "../crew-agent-records.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
+import { withRunLockSync } from "../../state/locks.ts";
 
 export function updateTask(tasks: TeamTaskState[], updated: TeamTaskState): TeamTaskState[] {
 	return tasks.map((task) => task.id === updated.id ? updated : task);
 }
 
 export function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks: TeamTaskState[], updated: TeamTaskState): TeamTaskState[] {
-	const latest = loadRunManifestById(manifest.cwd, manifest.runId)?.tasks ?? fallbackTasks; // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency
-	const merged = updateTask(latest, updated);
-	try {
-		saveRunTasks(manifest, merged);
-	} catch (err) {
-		logInternalError("persistSingleTaskUpdate", err);
+	return withRunLockSync(manifest, () => {
+		const latest = loadRunManifestById(manifest.cwd, manifest.runId)?.tasks ?? fallbackTasks;
+		const merged = updateTask(latest, updated);
+		try {
+			saveRunTasks(manifest, merged);
+		} catch (err) {
+			logInternalError("persistSingleTaskUpdate", err);
+			return merged;
+		}
 		return merged;
-	}
-	return merged;
+	});
 }
 
 export function checkpointTask(manifest: TeamRunManifest, tasks: TeamTaskState[], task: TeamTaskState, phase: TaskCheckpointState["phase"], childPid?: number): { task: TeamTaskState; tasks: TeamTaskState[] } {

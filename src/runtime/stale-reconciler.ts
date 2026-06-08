@@ -59,6 +59,8 @@ function checkResultFile(
 				t.status === "needs_attention",
 		);
 	if (allTerminal) {
+		// All tasks are terminal but manifest status was not updated — repair it.
+		manifest.status = "completed";
 		// Sync agent records even when tasks are already terminal
 		// (e.g., a previous reconcile fixed tasks but crashed before updating agents)
 		for (const task of tasks) {
@@ -540,6 +542,9 @@ export function reconcileOrphanedTempWorkspaces(
 					}
 				}
 			} catch (err) {
+				// Cannot determine running state — treat as if running to prevent
+				// premature cleanup of a potentially active workspace.
+				hasRunning = true;
 				console.warn(
 					`[stale-reconciler] Skipping unreadable runs dir: ${stateRunsDir}: ${err}`,
 				);

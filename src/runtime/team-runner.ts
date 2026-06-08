@@ -64,6 +64,10 @@ function startTeamRunHeartbeat(stateRoot: string, runId: string): () => void {
 		}
 	};
 	writeHeartbeat();
+	// NOTE: This interval is deliberately NOT unref'd. Unlike background-runner's
+	// heartbeat and interrupt guard (both unref'd), the team heartbeat must keep
+	// the event loop alive so the stale reconciler does not cancel long-running
+	// team runs (>5 min) as "stale" while they are actively executing.
 	const interval = setInterval(writeHeartbeat, 30_000);
 	return () => clearInterval(interval);
 }
@@ -140,7 +144,19 @@ function shouldMergeTaskUpdate(current: TeamTaskState, updated: TeamTaskState): 
 	// FIX: An update with no completion time should not overwrite one that has a
 	// completion time. NaN comparisons always return false, so guard explicitly.
 	if (!updated.finishedAt) return false;
-	return updated.status !== current.status || updated.finishedAt !== current.finishedAt || updated.startedAt !== current.startedAt || Boolean(updated.resultArtifact) || Boolean(updated.error) || Boolean(updated.modelAttempts?.length) || Boolean(updated.usage) || Boolean(updated.attempts?.length);
+	// Explicitly enumerate all fields that constitute a meaningful update so that
+// adding a new important field requires updating this list (rather than silently
+// losing data if a field is forgotten in the boolean OR chain below).
+const hasMeaningfulUpdate =
+  updated.status !== current.status ||
+  updated.finishedAt !== current.finishedAt ||
+  updated.startedAt !== current.startedAt ||
+  Boolean(updated.resultArtifact) ||
+  Boolean(updated.error) ||
+  Boolean(updated.modelAttempts?.length) ||
+  Boolean(updated.usage) ||
+  Boolean(updated.attempts?.length);
+return hasMeaningfulUpdate;
 }
 
 // H4 fix: rename to descriptive name. Kept __test__ as alias for backward
@@ -616,7 +632,18 @@ async function executeTeamRunCore(
 		// before one threw. Results may be partial - some tasks in-flight at error
 		// time will not have entries in the results array.
 		const validResults = results.filter((item): item is NonNullable<typeof item> => item !== undefined);
-		manifest = { ...validResults.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...validResults.map((item) => item.manifest.artifacts)].flat()) };
+		// Guard: if ALL parallel workers threw before returning, validResults is empty.
+		// at(-1)! would crash. Mark the run failed rather than crashing.
+		if (validResults.length === 0) {
+			manifest = updateRunStatus(manifest, "failed", "All parallel tasks failed catastrophically.");
+			return { manifest, tasks };
+		}
+		// Reconstruct manifest from the last worker's snapshot. The .artifacts field
+// is re-merged from both the team-runner's in-memory state and all workers'
+// snapshots, so artifact writes by task-runner (which individually save manifest
+// after writing artifacts) are safely persisted. The in-memory manifest is only
+// used for the next batch iteration's orchestration — actual persistence is safe.
+manifest = { ...validResults.at(-1)!.manifest, artifacts: mergeArtifacts([manifest.artifacts, ...validResults.map((item) => item.manifest.artifacts)].flat()) };
 		tasks = mergeTaskUpdatesPreservingTerminal(tasks, validResults);
 		// Build a synthetic manifest that reflects the merged task state.
 		// The last result's manifest contains stale task state from that worker's

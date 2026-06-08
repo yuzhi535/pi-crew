@@ -39,8 +39,14 @@ export function isSymlinkSafePath(filePath: string): boolean {
 					if (!realStat.isDirectory()) return false;
 					if (typeof process.getuid === "function" && realStat.uid !== process.getuid()) return false;
 				}
-			} catch {
-				// Directory doesn't exist yet — that's OK, mkdirSync will create it
+			} catch (err) {
+				// Directory doesn't exist yet — that's OK, mkdirSync will create it.
+				// Surface unexpected errors (not ENOENT) since they may indicate
+				// permission or filesystem issues that compromise the safety check.
+				const code = (err as NodeJS.ErrnoException).code;
+				if (code !== "ENOENT") {
+					logInternalError("isSymlinkSafePath.lstat", err, `dir=${dir}`);
+				}
 			}
 			currentPath = dir;
 		}
@@ -150,7 +156,12 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 				}
 			}
 			// Fallback: if rename fails (Windows EPERM/EBUSY), try direct write.
-			// This is less atomic but avoids data loss when concurrent writers contend.
+			// NOTE: This fallback path does NOT provide atomicity guarantees.
+			// Concurrent writes may interleave content. The content-match check
+			// below is a best-effort detection mechanism, not a guarantee — a
+			// concurrent writer could modify the file between the fallback write
+			// and the read. Prefer failing over falling back when rename fails
+			// repeatedly under contention.
 			// Re-check symlink safety before fallback to prevent TOCTOU attack.
 			if (!isSymlinkSafePath(filePath)) {
 				try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
@@ -178,6 +189,11 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 	} catch (error) {
 		// Issue 2 fix: wrap content-match read in nested try-catch that always
 		// cleans up the temp file before re-throwing, preventing orphaned temps.
+		//
+		// Content-match fallback: best-effort only — if a concurrent writer
+		// modified the file between the fallback write and this read, the
+		// comparison may not reflect what was actually written. Treat this as
+		// a hint rather than a guarantee of atomicity.
 		let matches = false;
 		try {
 			const existing = fs.readFileSync(filePath, "utf-8");

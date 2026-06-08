@@ -114,9 +114,30 @@ export function writeBlob(artifactsRoot: string, input: {
 	// concurrent writes to the same hash are safe. Metadata (mime, retention, etc.)
 	// is written atomically via atomicWriteFile to prevent race conditions between
 	// concurrent writers that might have different metadata values.
-	// Issue 2 fix: wrap both writes in a transaction so orphaned blobs are cleaned up.
+	// Issue 1 fix: detect concurrent metadata writes with different values by checking
+	// existing metadata before writing. If metadata exists and differs (except createdAt),
+	// throw an error to prevent silent corruption.
 	let blobWritten = false;
 	try {
+		// Check for concurrent metadata write conflict before writing
+		try {
+			const existingMeta = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as BlobMetadata;
+			// Compare fields that indicate concurrent write with different metadata
+			if (existingMeta.mime !== metadata.mime ||
+				existingMeta.retention !== metadata.retention ||
+				existingMeta.producer !== metadata.producer ||
+				existingMeta.originalPath !== metadata.originalPath) {
+				throw new Error(`Concurrent metadata write conflict for blob ${hash}: different metadata values detected. Existing: ${JSON.stringify(existingMeta)}, New: ${JSON.stringify(metadata)}`);
+			}
+		} catch (err) {
+			// If file doesn't exist, that's fine - we'll create it
+			if (err instanceof Error && err.message.includes("ENOENT")) {
+				// OK - metadata doesn't exist yet
+			} else {
+				throw err;
+			}
+		}
+
 		atomicWriteBuffer(blobPath, Buffer.isBuffer(content) ? content : Buffer.from(content, "utf-8"));
 		blobWritten = true;
 		// Use atomicWriteFile for metadata - prevents partial metadata on crash.
@@ -131,7 +152,10 @@ export function writeBlob(artifactsRoot: string, input: {
 		throw error;
 	}
 
-	return { hash, algorithm, blobPath: resolveRealContainedPath(artifactsRoot, blobPath), metadataPath: resolveRealContainedPath(artifactsRoot, metadataPath), sizeBytes: metadata.sizeBytes };
+	// Issue 2 fix: resolve paths before writes and return cached values
+	const resolvedBlobPath = resolveRealContainedPath(artifactsRoot, blobPath);
+	const resolvedMetadataPath = resolveRealContainedPath(artifactsRoot, metadataPath);
+	return { hash, algorithm, blobPath: resolvedBlobPath, metadataPath: resolvedMetadataPath, sizeBytes: metadata.sizeBytes };
 }
 
 /**

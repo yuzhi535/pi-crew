@@ -144,7 +144,12 @@ export function cancelOrphanedRuns(
 		let cancelledRun = false;
 		withRunLockSync(loaded.manifest, () => {
 			const fresh = loadRunManifestById(cwd, manifest.runId); // NOTE: inside withRunLockSync - consistent read
-			if (!fresh || (fresh.manifest.status !== "running" && fresh.manifest.status !== "blocked")) return;
+			if (!fresh) return;
+			if (fresh.manifest.status !== "running" && fresh.manifest.status !== "blocked") {
+				// Status changed between initial check (line 109) and acquiring the lock — normal concurrent update, not an orphan
+				appendEvent(loaded.manifest.eventsPath, { type: "crew.run.orphan_skip", runId: manifest.runId, message: `Skipped orphan cancellation: status is '${fresh.manifest.status}' (was 'running'/'blocked' at initial scan)`, data: { currentStatus: fresh.manifest.status } });
+				return;
+			}
 
 			const now_iso = new Date(now).toISOString();
 			const repairedTasks = fresh.tasks.map((task) => {

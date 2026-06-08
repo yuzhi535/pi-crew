@@ -1317,19 +1317,20 @@ export function loadConfig(cwd?: string): LoadedPiTeamsConfig {
 
 
 		// `.pi/pi-crew.json` is the project-owned config file.
-		// SECURITY FIX: User config takes precedence over project-level `.pi/pi-crew.json`.
-		// This prevents malicious project configs from overriding user preferences.
+		// Merge project config FIRST (base), then user config on top (override).
+		// This ensures user preferences always take precedence over project settings.
+		// Sensitive fields have already been sanitized by sanitizeProjectConfig.
 		const piCrewJsonPath = projectPiCrewJsonPath(cwd);
 		const piCrewJsonConfig = readOptionalConfig(piCrewJsonPath);
 		if (piCrewJsonConfig.exists) {
 			warnings.push(...piCrewJsonConfig.warnings);
-			// Merge project config first, then user config on top
 			const projectPart = sanitizeProjectConfig(
 				piCrewJsonPath,
 				config,
 				piCrewJsonConfig.config,
 			);
 			warnings.push(...projectPart.warnings);
+			// base=project config, override=user config → user wins
 			const mergedProject = mergeConfig(projectPart.config, config);
 			config = mergedProject;
 			paths.push(piCrewJsonPath);

@@ -22,9 +22,17 @@
  * Default: 500ms. A parent killed by SIGKILL is detected within one poll
  * interval (max 500ms latency).
  *
+ * For latency-sensitive workloads (e.g., preventing orphaned workers from
+ * running with a dead supervisor), you can tune this lower by setting the
+ * PI_CREW_PARENT_GUARD_INTERVAL_MS environment variable.
+ *
  * WARNING: Values below 100ms significantly increase overhead for large
  * numbers of parallel workers, since each poll issues a process.kill(pid, 0)
  * syscall per worker. Only tune this if immediate detection is critical.
+ *
+ * FUTURE: An event-based SIGCHLD handler could supplement or replace this
+ * polling approach for near-instantaneous parent-death detection on Unix
+ * systems, avoiding the polling overhead entirely.
  */
 const POLL_INTERVAL_MS = Number(process.env.PI_CREW_PARENT_GUARD_INTERVAL_MS) || 500;
 

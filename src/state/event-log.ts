@@ -57,7 +57,7 @@ export type AppendTeamEvent = Omit<TeamEvent, "time" | "metadata"> & { metadata?
 const TERMINAL_EVENT_TYPES = new Set<string>(DEFAULT_EVENT_LOG.terminalEventTypes);
 const MAX_EVENTS_BYTES = 50 * 1024 * 1024;
 
-const sequenceCache = new Map<string, { size: number; mtimeMs: number; seq: number }>();
+const sequenceCache = new Map<string, { size: number; mtimeMs: number; seq: number; lastAccessMs: number }>();
 const MAX_SEQUENCE_CACHE_ENTRIES = 256;
 let appendCounter = 0;
 
@@ -68,7 +68,7 @@ let appendCounter = 0;
  *  uses `sleepSync` which blocks the event loop and prevents AbortSignal handlers from firing.
  *
  *  SECURITY WARNING: This function uses `sleepSync` in its lock-acquire retry loop, which
- *  blocks the Node.js event loop for up to 120s. During that time, AbortSignal handlers
+ *  blocks the Node.js event loop for up to 5s. During that time, AbortSignal handlers
  *  cannot fire, SIGTERM handlers are delayed, and the process appears unresponsive to
  *  orchestrator health checks. Known callers include `appendEvent` (sync path),
  *  `flushOneEventLogBuffer`, and `state/mailbox.ts`. Prefer the async alternative
@@ -133,13 +133,14 @@ export function withEventLogLockSync<T>(eventsPath: string, fn: () => T): T {
 }
 
 function evictOldestSequenceCacheEntries(): void {
-	// Batch evict oldest 50% of entries when cache is full
+	// FIX: Evict by lastAccessMs (access time), not insertion order.
+	// Frequently accessed entries should be retained even if older.
 	const toEvict = Math.ceil(MAX_SEQUENCE_CACHE_ENTRIES / 2);
-	let evicted = 0;
-	for (const key of sequenceCache.keys()) {
-		if (evicted >= toEvict) break;
-		sequenceCache.delete(key);
-		evicted++;
+	// Sort entries by lastAccessMs ascending (oldest first)
+	const entries = [...sequenceCache.entries()].sort((a, b) => a[1].lastAccessMs - b[1].lastAccessMs);
+	// Evict the oldest half
+	for (let i = 0; i < toEvict && i < entries.length; i++) {
+		sequenceCache.delete(entries[i][0]);
 	}
 }
 
@@ -187,14 +188,16 @@ function nextSequence(eventsPath: string): number {
 		return cached.seq + 1;
 	}
 	// FIX: Trust the sidecar seq file if it exists and the file is non-empty.
-	// Only fall back to O(n) scan if sidecar is missing or file shrunk unexpectedly.
+	// Explicitly check for file shrinkage (stat.size < cached.size) to trigger
+	// re-scan when rotation or compaction has occurred.
 	const stored = readStoredSequence(eventsPath);
-	if (stored !== undefined && (!cached || stat.size >= cached.size)) {
-		sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: stored });
+	const fileShrunk = cached && stat.size < cached.size;
+	if (stored !== undefined && !fileShrunk) {
+		sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: stored, lastAccessMs: Date.now() });
 		return stored + 1;
 	}
 	const current = scanSequence(eventsPath);
-	sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: current });
+	sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq: current, lastAccessMs: Date.now() });
 	persistSequence(eventsPath, current);
 	return current + 1;
 }
@@ -250,12 +253,14 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 		// This ensures the sidecar is updated before the event is written, preventing
 		// sequence reuse if the process crashes after append but before persist.
 		const baseMetadata = event.metadata;
-		const seq = baseMetadata?.seq ?? (() => {
-			const s = nextSequence(eventsPath);
+		let seq: number;
+		if (baseMetadata?.seq !== undefined) {
+			seq = baseMetadata.seq;
+		} else {
+			seq = nextSequence(eventsPath);
 			// Persist immediately BEFORE the append so sidecar is always current
-			persistSequence(eventsPath, s);
-			return s;
-		})();
+			persistSequence(eventsPath, seq);
+		}
 		let metadata: TeamEventMetadata = {
 			seq,
 			provenance: baseMetadata?.provenance ?? "team_runner",
@@ -341,7 +346,7 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 				if (sequenceCache.size >= MAX_SEQUENCE_CACHE_ENTRIES) {
 					evictOldestSequenceCacheEntries();
 				}
-				sequenceCache.set(eventsPath, { size: statResult.size, mtimeMs: statResult.mtimeMs, seq: finalSeq });
+				sequenceCache.set(eventsPath, { size: statResult.size, mtimeMs: statResult.mtimeMs, seq: finalSeq, lastAccessMs: Date.now() });
 			}
 			// Note: persistSequence is NOT called here again - it was already called
 			// before the append to ensure the sidecar is current before the event is written.
@@ -353,7 +358,13 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 	asyncQueues.set(queueKey, next.then(
 		() => { asyncQueues.delete(queueKey); },
 		(error) => {
-			logInternalError("event-log.async-queue", error, eventsPath);
+			// FIX: Wrap error handler in try-catch to ensure asyncQueues.delete
+			// always runs, even if logging itself throws.
+			try {
+				logInternalError("event-log.async-queue", error, eventsPath);
+			} catch {
+				// logging failed — ensure queue is still cleaned up
+			}
 			asyncQueues.delete(queueKey);
 		},
 	));
@@ -438,7 +449,7 @@ function appendEventInsideLock(eventsPath: string, event: AppendTeamEvent): Team
 			if (sequenceCache.size >= MAX_SEQUENCE_CACHE_ENTRIES) {
 				evictOldestSequenceCacheEntries();
 			}
-			sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq });
+			sequenceCache.set(eventsPath, { size: stat.size, mtimeMs: stat.mtimeMs, seq, lastAccessMs: Date.now() });
 		} catch (error) {
 			logInternalError("event-log.persist-sequence", error, `eventsPath=${eventsPath}`);
 		}
@@ -473,6 +484,13 @@ export function appendEventBuffered(eventsPath: string, event: AppendTeamEvent, 
 	// FIX: Terminal events must bypass buffer to ensure they're written immediately.
 	// Previously, terminal events like task.failed could be lost on process crash.
 	if (TERMINAL_EVENT_TYPES.has(event.type)) {
+		// FIX: Flush any pending buffered events before writing terminal event
+		// to ensure durability of events that precede the terminal event in the
+		// same flush cycle. Without this, a kill -9 after terminal event write
+		// but before buffer flush would lose the buffered events.
+		if (bufferedQueues.has(eventsPath)) {
+			flushOneEventLogBuffer(eventsPath);
+		}
 		// For terminal events, write synchronously to ensure durability
 		return Promise.resolve(appendEvent(eventsPath, event));
 	}

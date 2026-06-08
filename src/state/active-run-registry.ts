@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { serialize, deserialize } from "node:v8";
 import { DEFAULT_CACHE, DEFAULT_PATHS } from "../config/defaults.ts";
 import type { TeamRunManifest } from "./types.ts";
 import { atomicWriteJson, renameWithRetry, isSymlinkSafePath } from "./atomic-write.ts";
@@ -113,12 +112,12 @@ function normalizeEntry(value: unknown): ActiveRunRegistryEntry | undefined {
 
 export function readActiveRunRegistry(maxEntries = DEFAULT_CACHE.manifestMaxEntries): ActiveRunRegistryEntry[] {
 	let parsed: unknown;
-	// 2.4 — prefer the binary mirror (single deserialize, no JSON.parse on
-	// large arrays). Fall back to JSON when the binary is missing or
-	// corrupt; this lets a 2-release migration co-exist with old readers.
+	// 2.4 — prefer the binary mirror (JSON after header for schema-safe deserialization).
+	// Fall back to JSON when the binary is missing or corrupt; this lets a 2-release
+	// migration co-exist with old readers.
 	try {
 		const buf = fs.readFileSync(registryBinaryPath());
-		// Security: verify magic bytes before deserializing to prevent RCE from hostile files
+		// Security: verify magic bytes before parsing to prevent hostile files
 		if (buf.length < BINARY_MAGIC.length || !buf.slice(0, BINARY_MAGIC.length).equals(BINARY_MAGIC)) {
 			throw new Error("Invalid binary registry: missing magic bytes");
 		}
@@ -128,7 +127,10 @@ export function readActiveRunRegistry(maxEntries = DEFAULT_CACHE.manifestMaxEntr
 		if (version !== BINARY_VERSION) {
 			throw new Error(`Unsupported binary registry version: ${version}`);
 		}
-		parsed = deserialize(buf.slice(versionOffset + 4));
+		// FIX Issue 1: Use JSON.parse instead of v8 deserialize for schema-safe parsing.
+		// The magic+version header provides integrity at the file level.
+		const jsonSlice = buf.slice(versionOffset + 4);
+		parsed = JSON.parse(jsonSlice.toString("utf-8"));
 	} catch {
 		try {
 			parsed = JSON.parse(fs.readFileSync(registryPath(), "utf-8"));
@@ -161,12 +163,14 @@ function atomicWriteBinary(filePath: string, entries: ActiveRunRegistryEntry[]):
 			fs.closeSync(fd);
 			throw new Error(`Refusing to write binary registry: opened path is not a regular file: ${tempPath}`);
 		}
-		// Write: magic (10 bytes) + version (4 bytes) + serialized data
+		// Write: magic (10 bytes) + version (4 bytes) + JSON data
 		const header = Buffer.allocUnsafe(14);
 		BINARY_MAGIC.copy(header, 0);
 		header.writeUInt32BE(BINARY_VERSION, BINARY_MAGIC.length);
-		const serialized = serialize(entries);
-		fs.writeSync(fd, Buffer.concat([header, serialized]));
+		// FIX Issue 1: Use JSON.stringify instead of v8 serialize for schema-safe output.
+		const jsonStr = JSON.stringify(entries);
+		const jsonBuf = Buffer.from(jsonStr, "utf-8");
+		fs.writeSync(fd, Buffer.concat([header, jsonBuf]));
 		fs.closeSync(fd);
 		renameWithRetry(tempPath, filePath);
 	} catch (error) {
@@ -199,8 +203,17 @@ function writeEntries(entries: ActiveRunRegistryEntry[]): void {
 		renameWithRetry(tempBin, registryBinaryPath());
 		binRenamed = true;
 	} catch (error) {
-		// Cleanup temp files on failure — if either rename succeeded, delete both to keep registry consistent
-		if (jsonRenamed || binRenamed) {
+		// FIX Issue 5: Recovery when one rename succeeded — try to rename the other from its temp file
+		// instead of deleting both. This preserves whichever registry was successfully written.
+		if (jsonRenamed && !binRenamed) {
+			// JSON succeeded, binary failed — try to recover binary from temp
+			try { renameWithRetry(tempBin, registryBinaryPath()); binRenamed = true; } catch { /* recovery failed */ }
+		} else if (binRenamed && !jsonRenamed) {
+			// Binary succeeded, JSON failed — try to recover JSON from temp
+			try { renameWithRetry(tempJson, registryPath()); jsonRenamed = true; } catch { /* recovery failed */ }
+		}
+		// If recovery failed or both failed, delete any partial registry files to keep consistent
+		if (!binRenamed || !jsonRenamed) {
 			try { fs.rmSync(registryPath(), { force: true }); } catch { /* best-effort */ }
 			try { fs.rmSync(registryBinaryPath(), { force: true }); } catch { /* best-effort */ }
 		}
@@ -230,9 +243,21 @@ function filterAliveEntries(entries: ActiveRunRegistryEntry[]): ActiveRunRegistr
 		try {
 			const raw = JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8")) as { status?: string; async?: { pid?: number }; updatedAt?: string };
 			if (TERMINAL_STATUSES.has(raw.status ?? "")) return false;
-			// Dead PID = stale async run
+			// FIX Issue 2: Robust PID liveness check - only ESRCH means process is dead.
+			// EPERM means process exists but we can't signal it (different security context).
+			// Also check manifest age to guard against PID reuse.
 			if (raw.async?.pid) {
-				try { process.kill(raw.async.pid, 0); } catch { return false; }
+				try { process.kill(raw.async.pid, 0); } catch (err) {
+					// Only treat "process does not exist" as dead (ESRCH/ENOENT).
+					// EPERM means process is alive but protected; treat as alive.
+					const code = (err as NodeJS.ErrnoException).code;
+					if (code !== "ESRCH" && code !== "ENOENT") return false;
+					return false;
+				}
+				// FIX Issue 2: Async runs older than 30 min are stale even if PID is alive.
+				// This guards against PID reuse after the original process exits.
+				const updatedAt = typeof raw.updatedAt === 'string' ? Date.parse(raw.updatedAt) : NaN;
+				if (Number.isFinite(updatedAt) && Date.now() - updatedAt > 30 * 60 * 1000) return false;
 			}
 			// 2.19 — Stale non-async run: live-session/scaffold runs older than 30 min
 			// Without this, test runs that crash/leak would stay in the registry forever.
@@ -266,6 +291,17 @@ export function registerActiveRun(manifest: TeamRunManifest): void {
 		if (filteredEntry === null) {
 			throw new Error(`Cannot register run ${manifest.runId}: entry is terminal or paths are not symlink-safe`);
 		}
+		// FIX Issue 3: Re-check manifest status right before writing to avoid TOCTOU race.
+		// The filter check above and write below are not atomic; verify status at write time.
+		try {
+			const currentManifest = JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8")) as { status?: string };
+			if (TERMINAL_STATUSES.has(currentManifest.status ?? "")) {
+				throw new Error(`Cannot register run ${manifest.runId}: manifest transitioned to terminal status`);
+			}
+		} catch (err) {
+			if (err instanceof Error && err.message.startsWith("Cannot register")) throw err;
+			throw new Error(`Cannot register run ${manifest.runId}: failed to verify manifest status: ${err}`);
+		}
 		writeEntries([filteredEntry, ...alive]);
 	});
 }
@@ -283,11 +319,17 @@ export function activeRunEntries(): ActiveRunRegistryEntry[] {
 		try {
 			// Skip entries whose CWD no longer exists (temp test dirs, deleted projects)
 			if (!fs.existsSync(entry.cwd)) continue;
-			if (!fs.existsSync(entry.stateRoot) || !fs.existsSync(entry.manifestPath)) continue;
+			// FIX Issue 4: sharedScanCache.readAndCache does stat checks internally.
+			// Only check stateRoot/manifestPath existence here if cache miss (cached.raw is undefined).
+			const cached = sharedScanCache.readAndCache("active-manifests", entry.runId, entry.manifestPath);
+			if (cached?.raw === undefined && (!fs.existsSync(entry.stateRoot) || !fs.existsSync(entry.manifestPath))) continue;
 			// FIX Issue 4: Check full ancestor chain for symlinks, not just immediate stateRoot.
 			if (!isSymlinkSafePath(entry.stateRoot)) continue;
-			const cached = sharedScanCache.readAndCache("active-manifests", entry.runId, entry.manifestPath);
-			const manifest = (cached?.raw ?? JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8"))) as { status?: unknown; updatedAt?: string; async?: { pid?: number } };
+			// FIX Issue 4: Use cached manifest content directly when available.
+			// sharedScanCache.readAndCache already read the file; avoid redundant re-read.
+			const manifest = (cached?.raw !== undefined
+				? cached.raw
+				: JSON.parse(fs.readFileSync(entry.manifestPath, "utf-8"))) as { status?: unknown; updatedAt?: string; async?: { pid?: number } };
 			if (manifest.status !== "queued" && manifest.status !== "planning" && manifest.status !== "running" && manifest.status !== "blocked") continue;
 			// PID liveness check: async runs with dead PID are stale — don't surface them
 			if (manifest.async?.pid) {

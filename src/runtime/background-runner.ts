@@ -291,18 +291,15 @@ async function main(): Promise<void> {
 	scrubProcessEnv();
 	// Install signal handlers EARLY — log events before exiting so we can distinguish
 	// OOM/SIGKILL (no event) from SIGTERM/SIGINT (event written).
-	const signalLog = (sig: string): void => {
-		const cwd = argValue("--cwd");
+	const signalLog = (sig: string, eventsPath: string): void => {
 		const runId = argValue("--run-id");
-		if (cwd && runId) {
-			const loaded = loadRunManifestById(cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency;
-			if (loaded)
-				appendEvent(loaded.manifest.eventsPath, {
-					type: "async.failed",
-					runId,
-					message: `Background runner received ${sig} — exiting.`,
-					data: { signal: sig, pid: process.pid },
-				});
+		if (runId && eventsPath) {
+			appendEvent(eventsPath, {
+				type: "async.failed",
+				runId,
+				message: `Background runner received ${sig} — exiting.`,
+				data: { signal: sig, pid: process.pid },
+			});
 		}
 	};
 	// BUG #17 FIX: Compute exitCodePath at module load time using args,
@@ -337,18 +334,15 @@ async function main(): Promise<void> {
 		// FIX Issue #3: Trigger graceful shutdown via abortController signal,
 		// allowing the finally block to run and clean up child processes.
 		// The io_uring I/O is still performed before abort takes effect.
-		const cwd = argValue("--cwd");
 		const runId = argValue("--run-id");
-		if (cwd && runId) {
+		if (runId && manifest.eventsPath) {
 			try {
-				const loaded = loadRunManifestById(cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency;
-				if (loaded)
-					appendEvent(loaded.manifest.eventsPath, {
-						type: "async.sigterm_ignored",
-						runId,
-						message: `SIGTERM ignored pid=${process.pid}`,
-						data: { pid: process.pid, ppid: process.ppid },
-					});
+				appendEvent(manifest.eventsPath, {
+					type: "async.sigterm_received_graceful_shutdown",
+					runId,
+					message: `SIGTERM received, graceful shutdown via abort pid=${process.pid}`,
+					data: { pid: process.pid, ppid: process.ppid },
+				});
 			} catch {
 				/* best-effort */
 			}
@@ -357,7 +351,7 @@ async function main(): Promise<void> {
 		abortController.abort();
 	});
 	process.on("SIGINT", () => {
-		signalLog("SIGINT");
+		signalLog("SIGINT", manifest.eventsPath);
 		process.exit(130);
 	});
 	// BUG #17: Catch ALL signals to identify what kills the background runner
@@ -383,19 +377,7 @@ async function main(): Promise<void> {
 	] as const) {
 		try {
 			process.on(sig, () => {
-				signalLog(sig);
-				try {
-					const loaded = loadRunManifestById(cwd!, runId!); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency;
-					if (loaded)
-						appendEvent(loaded.manifest.eventsPath, {
-							type: "async.signal",
-							runId: runId!,
-							message: `Background runner received ${sig}`,
-							data: { signal: sig, pid: process.pid },
-						});
-				} catch {
-					/* best-effort */
-				}
+				signalLog(sig, manifest.eventsPath);
 			});
 		} catch {
 			/* some signals not supported on this platform */
@@ -407,20 +389,16 @@ async function main(): Promise<void> {
 	// Intercept all exit(code) calls to log them as async.exit events before exiting.
 	// This surfaces uncaught exceptions / early exits that would otherwise vanish silently.
 	process.exit = ((code?: number | string): never => {
-		const cwd2 = argValue("--cwd");
 		const runId2 = argValue("--run-id");
 		const codeStr = code === undefined ? "<none>" : String(code);
-		if (cwd2 && runId2) {
+		if (runId2 && manifest.eventsPath) {
 			try {
-				const loaded = loadRunManifestById(cwd2, runId2); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency;
-				if (loaded) {
-					appendEvent(loaded.manifest.eventsPath, {
-						type: "async.exit",
-						runId: runId2,
-						message: `Background runner exit(${codeStr}) pid=${process.pid}`,
-						data: { code, pid: process.pid },
-					});
-				}
+				appendEvent(manifest.eventsPath, {
+					type: "async.exit",
+					runId: runId2,
+					message: `Background runner exit(${codeStr}) pid=${process.pid}`,
+					data: { code, pid: process.pid },
+				});
 			} catch {
 				/* best-effort */
 			}

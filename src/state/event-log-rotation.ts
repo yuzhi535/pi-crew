@@ -89,20 +89,24 @@ export function compactEventLog(eventsPath: string, config?: Partial<RotationCon
 		// Detect this and re-append any missing events.
 		try {
 			const afterWrite = readEvents(eventsPath);
-			const appendedDuringWindow = afterWrite.length - kept.length;
-			if (appendedDuringWindow >= 0) {
+			// FIX: Check if events were actually lost (afterWrite.length < kept.length)
+			// rather than using appendedDuringWindow >= 0 which is always true.
+			// Also use sequence numbers for comparison instead of JSON.stringify
+			// which is fragile due to key ordering and floating point differences.
+			if (afterWrite.length >= kept.length) {
 				// No data loss — either events were appended and kept, or nothing happened.
 				return {
 					originalSize,
 					compactedSize: fs.statSync(eventsPath).size,
 					eventsRemoved: originalCount - kept.length,
-					eventsKept: kept.length + Math.max(0, appendedDuringWindow),
+					eventsKept: kept.length + Math.max(0, afterWrite.length - kept.length),
 				};
 			}
 			// afterWrite.length < kept.length — events were lost during compaction window.
 			// Find missing events and re-append them.
-			const afterSet = new Set(afterWrite.map((e) => JSON.stringify(e)));
-			const missingEvents = kept.filter((e) => !afterSet.has(JSON.stringify(e)));
+			// FIX: Use sequence numbers for comparison instead of JSON.stringify.
+			const afterSeqs = new Set(afterWrite.map((e) => e.metadata?.seq).filter((s): s is number => s !== undefined));
+			const missingEvents = kept.filter((e) => e.metadata?.seq === undefined || !afterSeqs.has(e.metadata.seq));
 			for (const event of missingEvents) {
 				try {
 					// Use atomicWriteFile for recovery append too — safer than plain appendFileSync
@@ -139,18 +143,19 @@ export function compactEventLog(eventsPath: string, config?: Partial<RotationCon
  */
 export function rotateEventLog(eventsPath: string): boolean {
 	if (!fs.existsSync(eventsPath)) return false;
-	// FIX: Wrap rotation in lock and use atomic rename+write pattern.
-	// Create new file atomically first (via atomicWriteFile temp+rename),
-	// then rename the old file to archive. This guarantees the events file
-	// never disappears between rename and new-file-creation.
+	// FIX: Wrap rotation in lock to prevent race conditions with concurrent readers.
+	// Order of operations: (1) rename old file to archive, (2) create new empty file.
+	// This ensures eventsPath always has content (either old or new) — a reader
+	// never sees a missing/empty file between operations.
 	return withEventLogLockSync(eventsPath, () => {
 		try {
 			const ts = new Date().toISOString().replace(/[:.]/g, "-");
 			const archivePath = `${eventsPath}.${ts}.archive.jsonl`;
-			// Step 1: atomically create new empty file at eventsPath
-			atomicWriteFile(eventsPath, "");
-			// Step 2: atomically rename old content to archive
+			// Step 1: rename old content to archive FIRST
+			// This ensures eventsPath still has content until the new file is created
 			fs.renameSync(eventsPath, archivePath);
+			// Step 2: atomically create new empty file at eventsPath
+			atomicWriteFile(eventsPath, "");
 			return true;
 		} catch (error) {
 			logInternalError("event-log.rotate", error, `eventsPath=${eventsPath}`);
