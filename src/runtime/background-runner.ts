@@ -103,6 +103,7 @@ function argValue(name: string): string | undefined {
 function startInterruptGuard(
 	manifest: { runId: string; stateRoot: string; eventsPath: string },
 	abortController: AbortController,
+	stopParentGuard: () => void,
 ): () => void {
 	const controlPath = path.join(
 		manifest.stateRoot,
@@ -136,6 +137,9 @@ function startInterruptGuard(
 				);
 				// Also abort the run signal so executeTeamRun exits quickly via its signal check.
 				abortController.abort();
+				// FIX Issue #1: Call stopParentGuard() here since process.exit(130) bypasses
+				// the finally block in main() which would otherwise call runCleanup.
+				stopParentGuard();
 				// NOTE: process.exit() schedules exit handlers synchronously. The finally
 				// block in main() (stopParentGuard, cleanup, etc.) executes BEFORE the
 				// process actually terminates. This ordering is intentional — cleanup must
@@ -494,7 +498,7 @@ async function main(): Promise<void> {
 		manifest.eventsPath,
 		manifest.runId,
 	);
-	const stopInterruptGuard = startInterruptGuard(manifest, abortController);
+	const stopInterruptGuard = startInterruptGuard(manifest, abortController, stopParentGuard);
 	console.log(`[background-runner] DEBUG: heartbeat+interrupt guard started`);
 	// NOTE: Keep-alive interval is NOT unref'd (unlike heartbeat and interrupt
 	// guard intervals which ARE unref'd). This is intentional — during jiti
@@ -642,21 +646,22 @@ async function main(): Promise<void> {
 			// and the subsequent save, the save could overwrite the reconciler's changes. The
 			// run could remain stuck in 'running' status if the save fails to acquire the lock.
 			// The stale reconciler will eventually repair this inconsistency.
-			if (loaded) {
+			const manifestToUse = loaded?.manifest ?? manifest;
+			if (manifestToUse) {
 				// LAZY: live-agent-manager only needed on failure cleanup path; avoid module load at hot path.
 				const { terminateLiveAgentsForRun } = await import(
 					"./live-agent-manager.ts"
 				);
 				void terminateLiveAgentsForRun(
-					loaded.manifest.runId,
+					manifestToUse.runId,
 					"failed",
 					appendEvent,
-					loaded.manifest.eventsPath,
+					manifestToUse.eventsPath,
 				).catch((error) =>
 					logInternalError(
 						"background-runner.terminate",
 						error,
-						`runId=${loaded.manifest.runId}`,
+						`runId=${manifestToUse.runId}`,
 					),
 				);
 			}

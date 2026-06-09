@@ -610,6 +610,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			};
 
 			let softLimitReached = false;
+			let steerInjectionFailed = false;
 			const maxTurns = input.maxTurns;
 			// FIX (Issue #1): Bound graceTurns to prevent the hard abort condition from
 			// never triggering when an arbitrarily large value is passed.
@@ -666,6 +667,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 										const writeSucceeded = child.stdin.write(steerPayload);
 										if (!writeSucceeded) {
 											logInternalError("child-pi.steer-backpressure", new Error("stdin write returned false during steer injection; buffer full"), `pid=${child.pid}`);
+											steerInjectionFailed = true;
 											killProcessTree(child.pid, child);
 										}
 									} else {
@@ -749,6 +751,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 
 			const abort = (): void => {
 				abortRequested = true;
+				clearNoResponseTimer();
 				killProcessTree(child.pid, child);
 				if (process.platform !== "win32") {
 					trySignalChild(child, "SIGTERM");
@@ -872,7 +875,8 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			const finalExitCode = forcedFinalDrain && !timeoutError ? 0 : exitCode;
 				const wasGraceAborted = softLimitReached && turnCount >= (maxTurns ?? 0) + (graceTurns ?? 5);
 				const wasParentAborted = abortDueToParentSignal && !wasGraceAborted;
-				settle({ exitCode: finalExitCode, stdout, stderr, ...(timeoutError ? { error: timeoutError.error } : {}), aborted: wasGraceAborted || wasParentAborted, steered: softLimitReached && !wasGraceAborted, exitStatus: { exitCode: finalExitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
+				const steerError = steerInjectionFailed ? "Steer injection failed due to stdin backpressure; process killed" : undefined;
+				settle({ exitCode: finalExitCode, stdout, stderr, ...(timeoutError ? { error: timeoutError.error } : {}), ...(steerError ? { error: steerError } : {}), aborted: wasGraceAborted || wasParentAborted, steered: softLimitReached && !wasGraceAborted, exitStatus: { exitCode: finalExitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
 			});
 		});
 	} finally {

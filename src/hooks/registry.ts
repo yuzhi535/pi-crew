@@ -34,15 +34,20 @@ export async function executeHook(name: HookName, ctx: HookContext): Promise<Hoo
 	// for globally-applicable hooks (e.g., logging, metrics). For multi-tenant
 	// environments, all hooks should set workspaceId to prevent cross-workspace access.
 	// TODO: Add a linter rule to detect hooks registered without workspaceId in multi-tenant deployments.
-	const scopedHooks = hooks.filter((h) => h.workspaceId === undefined || h.workspaceId === null || h.workspaceId === ctx.workspaceId);
+	const scopedHooks = hooks.filter((h) => (h.workspaceId !== undefined || ctx.includeGlobalHooks) && (h.workspaceId === null || h.workspaceId === ctx.workspaceId));
 	if (scopedHooks.length === 0) return { hookName: name, outcome: "allow", durationMs: 0 };
 	const POLLUTED_KEYS = new Set(["__proto__", "constructor", "prototype", "hasOwnProperty", "toString", "valueOf", "isPrototypeOf", "propertyIsEnumerable", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"].map((k) => k.toLowerCase().normalize("NFKC")));
 	function sanitizeMergeData(data: Record<string, unknown>): Record<string, unknown> {
 		const clean: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(data)) {
 			if (!POLLUTED_KEYS.has(k.toLowerCase())) {
-				if (v !== null && typeof v === "object" && !Array.isArray(v)) {
-					clean[k] = sanitizeMergeData(v as Record<string, unknown>);
+				if (v !== null && typeof v === "object") {
+					if (Array.isArray(v)) {
+						// Sanitize array elements that are objects
+						clean[k] = v.map((item) => (item !== null && typeof item === "object" && !Array.isArray(item) ? sanitizeMergeData(item as Record<string, unknown>) : item));
+					} else {
+						clean[k] = sanitizeMergeData(v as Record<string, unknown>);
+					}
 				} else {
 					clean[k] = v;
 				}

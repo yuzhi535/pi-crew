@@ -32,66 +32,72 @@ export function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks
 		baseMtime = 0;
 	}
 
-	return withRunLockSync(manifest, () => {
-		let merged: TeamTaskState[] | undefined;
+	let merged: TeamTaskState[] | undefined;
 
-		retryLoop: for (let attempt = 0; attempt < 50; attempt++) {
-			const latest = loadRunManifestById(manifest.cwd, manifest.runId)?.tasks ?? fallbackTasks;
-			merged = updateTask(latest, updated);
+	try {
+		return withRunLockSync(manifest, () => {
+			retryLoop: for (let attempt = 0; attempt < 50; attempt++) {
+				const latest = loadRunManifestById(manifest.cwd, manifest.runId)?.tasks ?? fallbackTasks;
+				merged = updateTask(latest, updated);
 
-			// Re-stat to detect concurrent writes
-			let currentMtime: number;
+				// Re-stat to detect concurrent writes
+				let currentMtime: number;
+				try {
+					currentMtime = fs.statSync(manifest.tasksPath).mtimeMs;
+				} catch {
+					currentMtime = 0;
+				}
+
+				if (currentMtime !== baseMtime) {
+					// Another writer committed — their update is in latest, re-merge on top
+					baseMtime = currentMtime;
+					continue retryLoop;
+				}
+
+				// No concurrent writer — check that our merged result is based on the
+				// same base we observed (no intermediate writer between our load and check)
+				const recheckMtime = fs.statSync(manifest.tasksPath).mtimeMs;
+				if (recheckMtime !== baseMtime) {
+					baseMtime = recheckMtime;
+					continue retryLoop;
+				}
+
+				// Final pre-write mtime check to catch any concurrent writer that completed
+				// between the recheck and saveRunTasks
+				let preWriteMtime: number;
+				try {
+					preWriteMtime = fs.statSync(manifest.tasksPath).mtimeMs;
+				} catch {
+					preWriteMtime = 0;
+				}
+				if (preWriteMtime !== baseMtime) {
+					// Another writer committed — retry
+					baseMtime = preWriteMtime;
+					continue retryLoop;
+				}
+
+				break retryLoop;
+			}
+
+			if (merged === undefined) {
+				logInternalError("persistSingleTaskUpdate", new Error("failed to converge after 50 attempts"));
+				throw new Error("persistSingleTaskUpdate: failed to converge after 50 attempts");
+			}
+
 			try {
-				currentMtime = fs.statSync(manifest.tasksPath).mtimeMs;
-			} catch {
-				currentMtime = 0;
+				saveRunTasks(manifest, merged);
+			} catch (err) {
+				logInternalError("persistSingleTaskUpdate", err);
+				throw err;
 			}
-
-			if (currentMtime !== baseMtime) {
-				// Another writer committed — their update is in latest, re-merge on top
-				baseMtime = currentMtime;
-				continue retryLoop;
-			}
-
-			// No concurrent writer — check that our merged result is based on the
-			// same base we observed (no intermediate writer between our load and check)
-			const recheckMtime = fs.statSync(manifest.tasksPath).mtimeMs;
-			if (recheckMtime !== baseMtime) {
-				baseMtime = recheckMtime;
-				continue retryLoop;
-			}
-
-			// Final pre-write mtime check to catch any concurrent writer that completed
-			// between the recheck and saveRunTasks
-			let preWriteMtime: number;
-			try {
-				preWriteMtime = fs.statSync(manifest.tasksPath).mtimeMs;
-			} catch {
-				preWriteMtime = 0;
-			}
-			if (preWriteMtime !== baseMtime) {
-				// Another writer committed — retry
-				baseMtime = preWriteMtime;
-				continue retryLoop;
-			}
-
-			break retryLoop;
-		}
-
-		const finalMerged = merged;
-		if (finalMerged === undefined) {
-			logInternalError("persistSingleTaskUpdate", new Error("failed to converge after 50 attempts"));
-			throw new Error("persistSingleTaskUpdate: failed to converge after 50 attempts");
-		}
-
-		try {
-			saveRunTasks(manifest, finalMerged);
-		} catch (err) {
+			return merged;
+		});
+	} catch (err) {
+		if (merged === undefined) {
 			logInternalError("persistSingleTaskUpdate", err);
-			throw err;
 		}
-		return finalMerged;
-	});
+		throw err;
+	}
 }
 
 export function checkpointTask(manifest: TeamRunManifest, tasks: TeamTaskState[], task: TeamTaskState, phase: TaskCheckpointState["phase"], childPid?: number): { task: TeamTaskState; tasks: TeamTaskState[] } {

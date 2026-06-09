@@ -555,9 +555,11 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 	// NOTE: manifest mtime may legitimately be >= tasks mtime because
 	// saveManifestAndTasksAtomicSync writes manifest before tasks. However,
 	// if a crash occurs AFTER tasks is written but BEFORE manifest is written,
-	// tasks mtime would be > manifest mtime (the opposite). The comment above
-	// describes the normal case only. Do NOT fail based on this comparison
-	// alone - it does not indicate corruption.
+	// tasks mtime would be > manifest mtime (the opposite). The retry loop
+	// above detects this crash state by re-reading until mtime/size are stable
+	// — the final stable state is what gets used. Because the retry loop
+	// handles the crash case, we do NOT fail based on this comparison alone.
+	// It does not indicate corruption on its own.
 	if (!manifest || !validateRunManifestPaths(cwd, runId, manifest, stateRoot, tasksPath)) return undefined;
 	setManifestCache(stateRoot, {
 		manifest,
@@ -640,9 +642,11 @@ export async function loadRunManifestByIdAsync(cwd: string, runId: string): Prom
 	// NOTE: manifest mtime may legitimately be >= tasks mtime because
 	// saveManifestAndTasksAtomicSync writes manifest before tasks. However,
 	// if a crash occurs AFTER tasks is written but BEFORE manifest is written,
-	// tasks mtime would be > manifest mtime (the opposite). The comment above
-	// describes the normal case only. Do NOT fail based on this comparison
-	// alone - it does not indicate corruption.
+	// tasks mtime would be > manifest mtime (the opposite). The retry loop
+	// above detects this crash state by re-reading until mtime/size are stable
+	// — the final stable state is what gets used. Because the retry loop
+	// handles the crash case, we do NOT fail based on this comparison alone.
+	// It does not indicate corruption on its own.
 
 	if (!manifest || !validateRunManifestPaths(cwd, runId, manifest, stateRoot, tasksPath)) return undefined;
 	setManifestCache(stateRoot, { manifest, tasks: tasks ?? [], manifestMtimeMs: manifestStat.mtimeMs, manifestSize: manifestStat.size, tasksMtimeMs, tasksSize: tasksStat?.size ?? 0 });

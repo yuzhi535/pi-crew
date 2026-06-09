@@ -140,7 +140,6 @@ function shouldMergeTaskUpdate(current: TeamTaskState, updated: TeamTaskState): 
 	// contain stale queued/running copies of tasks that another worker already
 	// completed. Never let those stale snapshots regress durable task state.
 	if (current.status === "waiting" && updated.status === "running") return false;
-	if (current.status === "queued" && updated.status === "running") return false;
 	// Block non-terminal→terminal transitions (queued/running/waiting → terminal).
 	if (!isNonTerminalTaskStatus(current.status) && isNonTerminalTaskStatus(updated.status)) return false;
 	// Explicitly block terminal→non-terminal transitions (e.g. failed→running).
@@ -174,8 +173,10 @@ if (current.status === "needs_attention" && updated.status === "completed") retu
 		const updatedTime = safeFinishedAt(updated);
 		// Malformed finishedAt (NaN) is treated as Infinity — invalid state should be
 		// replaced rather than persisting corruption. Log warning for visibility.
+		if (!Number.isFinite(currentTime)) {
+			console.warn(`[team-runner] Task ${current.id} has malformed finishedAt: ${current.finishedAt}`);
+		}
 		if (!Number.isFinite(currentTime) && Number.isFinite(updatedTime)) {
-			console.warn(`[team-runner] Task ${current.id} has malformed finishedAt, treating as invalid state: ${current.finishedAt}`);
 			return true;
 		}
 		if (updatedTime < currentTime) return false;
@@ -452,7 +453,6 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 		rejectRunPromise(manifest.runId, error instanceof Error ? error : new Error(message));
 		crewHooks.emit({ type: "run_failed", timestamp: new Date().toISOString(), runId: manifest.runId, data: { status: manifest.status, error: message } });
 		cleanupUsage();
-		stopTeamHeartbeat();
 		return result;
 	}
 }

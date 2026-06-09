@@ -386,22 +386,21 @@ export async function runTeamTask(
 			let lastRunProgressSummary: ProgressEventSummary | undefined;
 			const persistHeartbeat = (force = false): void => {
 				const now = Date.now();
-				// Always update in-memory heartbeat so in-memory state is always fresh,
-				// even when skipping the disk write to throttle I/O.
+				// Skip disk write if throttled (unless forced).
+				if (!force && now - lastHeartbeatPersistedAt < 1000) return;
+				// Write to disk first, then update in-memory.
+				// Disk state is always <= in-memory state, so a crash never produces
+				// a fresher in-memory heartbeat than what's on disk. This prevents the
+				// stale reconciler from seeing a live heartbeat paired with stale task state
+				// (which could cause false zombie detection).
+				tasks = persistSingleTaskUpdate(manifest, tasks, task);
+				// Now update in-memory heartbeat so it is always >= persisted state.
 				task = {
 					...task,
 					heartbeat: touchWorkerHeartbeat(
 						task.heartbeat ?? createWorkerHeartbeat(task.id),
 					),
 				};
-				if (!force && now - lastHeartbeatPersistedAt < 1000) return;
-				// Update in-memory heartbeat first, then write to disk.
-				// In-memory state is always >= persisted state, so a crash never produces
-				// a fresher in-memory heartbeat than what's on disk. This prevents the
-				// stale reconciler from seeing a live heartbeat paired with stale task state
-				// (which could cause false zombie detection).
-				tasks = persistSingleTaskUpdate(manifest, tasks, task);
-				task = tasks.find(t => t.id === task.id) ?? task;
 				lastHeartbeatPersistedAt = now;
 			};
 			const persistChildProgress = (

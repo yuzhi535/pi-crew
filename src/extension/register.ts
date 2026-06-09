@@ -1202,10 +1202,11 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		notifyActiveRuns(ctx);
 
 		// Auto-cancel orphaned runs from dead sessions
-		// Extract sessionId from context — validate runtime type instead of unsafe cast.
+		// Extract sessionId from context — use Object.getOwnPropertyDescriptor
+		// to safely access property without triggering Proxy traps, then validate.
 		const rawSessionId =
-			typeof ctx === "object" && ctx !== null && "sessionId" in ctx
-				? (ctx as Record<string, unknown>).sessionId
+			typeof ctx === "object" && ctx !== null
+				? Object.getOwnPropertyDescriptor(ctx, "sessionId")?.value
 				: undefined;
 		const currentSessionId =
 			typeof rawSessionId === "string" && rawSessionId.length > 0

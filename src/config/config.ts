@@ -87,6 +87,9 @@ function resolveHomeDir(): string {
 	// It allows tests to use isolated temporary directories (e.g. withIsolatedHome
 	// sets PI_TEAMS_HOME to /tmp). This is NOT a security boundary — tests that
 	// need the validation skipped should set PI_CREW_SKIP_HOME_CHECK=1 explicitly.
+	// WARNING: Tests must NOT rely on PI_TEAMS_HOME for security boundaries in
+	// test environments. Any test verifying path-restriction behavior should set
+	// PI_CREW_SKIP_HOME_CHECK=1 and validate the path directly.
 	if (process.env.NODE_ENV === "test") {
 		return envValue;
 	}
@@ -578,6 +581,9 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 		return undefined;
 	// Defensive: create a sanitized copy to prevent prototype pollution.
 	// Uses Object.create(null) so the result has no prototype chain.
+	// WARNING: The returned object has no prototype methods (no hasOwnProperty,
+	// toString, etc.). Use Object.hasOwn(obj, key) or
+	// Object.prototype.hasOwnProperty.call(obj, key) for property checks.
 	return sanitizeObject(value as Record<string, unknown>);
 }
 
@@ -1267,7 +1273,16 @@ function readConfigRecord(filePath: string): Record<string, unknown> {
 		);
 		return {};
 	}
-	const raw = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
+	// Parse with depth limit to prevent stack overflow from deeply nested JSON.
+	// Nesting beyond 100 levels is almost certainly an attack or malformed file.
+	const MAX_JSON_DEPTH = 100;
+	let depth = 0;
+	const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"), (_key, value) => {
+		if (++depth > MAX_JSON_DEPTH) {
+			throw new Error(`config JSON exceeds max depth ${MAX_JSON_DEPTH}`);
+		}
+		return value;
+	}) as unknown;
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
 	return raw as Record<string, unknown>;
 }

@@ -259,6 +259,17 @@ export function appendEvent(eventsPath: string, event: AppendTeamEvent): TeamEve
 // --- Async write queue (non-blocking alternative to withEventLogLockSync) ---
 const asyncQueues = new Map<string, Promise<unknown>>();
 
+/** Drain all pending async writes by awaiting all in-flight queue promises.
+ *  Called on process exit to minimize event loss for crash-sensitive events.
+ *  Note: SIGKILL (kill -9) cannot be intercepted and will still lose events.
+ */
+async function drainAsyncQueues(): Promise<void> {
+	const promises = [...asyncQueues.values()];
+	if (promises.length === 0) return;
+	// Use allSettled to ensure a rejected promise doesn't prevent others from completing.
+	await Promise.allSettled(promises);
+}
+
 /** Reset event log mode (for testing only). */
 export function resetEventLogMode(): void {
 	asyncQueues.clear();
@@ -621,11 +632,11 @@ export function appendEventFireAndForget(eventsPath: string, event: AppendTeamEv
 // immediately and the main thread is not blocked by sync I/O.
 process.on("exit", () => {
 	flushEventLogBuffer();
-	// FIX (Issue 4): Clear asyncQueues on exit. The event loop is stopping,
-	// so in-flight async writes cannot complete. Clearing the map prevents
-	// new events from being added to a stale queue and ensures callers that
-	// await appendEventAsync receive a resolved promise (via queue cleanup
-	// in .then/.catch) before the process terminates.
+	// FIX (Issue 1): Drain asyncQueues on exit to minimize event loss.
+	// In-flight async writes are awaited (via Promise.allSettled) before
+	// the map is cleared. This reduces but does not eliminate event loss
+	// on crash — SIGKILL (kill -9) cannot be intercepted.
+	drainAsyncQueues();
 	asyncQueues.clear();
 });
 process.on("SIGTERM", () => setImmediate(() => flushEventLogBuffer()));
@@ -636,6 +647,8 @@ process.on("SIGINT", () => setImmediate(() => flushEventLogBuffer()));
 // Note: SIGKILL (kill -9) cannot be intercepted and is not handled.
 process.on("uncaughtException", (error) => {
 	try { flushEventLogBuffer(); } catch { /* best-effort */ }
+	// FIX (Issue 1): Drain asyncQueues before clearing to minimize event loss.
+	drainAsyncQueues();
 	asyncQueues.clear();
 	// Re-throw to preserve default uncaught exception behavior (process exit)
 	throw error;

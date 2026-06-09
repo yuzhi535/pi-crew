@@ -179,18 +179,11 @@ export function writeBlob(artifactsRoot: string, input: {
 			}
 			// Issue 3 fix: Two-phase commit for metadata
 			// Write to temp file first, then atomically rename to final location.
-			// Use O_NOFOLLOW to prevent symlink attacks on the temp file.
+			// Issue 1 fix: Use atomicWriteFile instead of plain writeSync for the temp file
+			// to prevent partial writes on crash. atomicWriteFile uses O_EXCL + write + rename
+			// pattern which is consistent with how blob content is written.
 			const tempMetaPath = `${metadataPath}.${randomUUID()}.tmp`;
-			const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
-			const metaFd = fs.openSync(tempMetaPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW, 0o600);
-			try {
-				fs.writeSync(metaFd, JSON.stringify(metadata, null, 2));
-				fs.closeSync(metaFd);
-			} catch (err) {
-				try { fs.closeSync(metaFd); } catch { /* best-effort */ }
-				try { fs.rmSync(tempMetaPath, { force: true }); } catch { /* best-effort */ }
-				throw err;
-			}
+			atomicWriteFile(tempMetaPath, JSON.stringify(metadata, null, 2));
 			renameWithRetry(tempMetaPath, metadataPath);
 			metadataWritten = true;
 		});

@@ -69,7 +69,7 @@ function linkNodeModulesIfPresent(repoRoot: string, worktreePath: string): boole
 function normalizeSyntheticPath(worktreePath: string, rawPath: string): string {
 	const resolved = path.resolve(worktreePath, rawPath);
 	const relative = path.relative(worktreePath, resolved);
-	if (!relative || relative === "." || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`synthetic path escapes worktree: ${rawPath}`);
+	if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`synthetic path escapes worktree: ${rawPath}`);
 	return path.normalize(relative);
 }
 
@@ -159,8 +159,17 @@ function runSetupHook(manifest: TeamRunManifest, task: TeamTaskState, repoRoot: 
 	if (process.platform === "win32" && !nodeHook && !isBatchFile) {
 		logInternalError("worktree.setupHook.windowsNoShell", new Error("Non-node, non-batch hook skipped on Windows (shell:true disabled for security)"), `hook=${hookPath}`);
 	}
+	// SECURITY: Resolve the hook to its real path before execution to close the TOCTOU window.
+	// This prevents a symlink swap between the containment check and actual execution.
+	let realHookPath: string;
+	try {
+		realHookPath = fs.realpathSync(hookPath);
+	} catch {
+		logInternalError("worktree.setupHook.realpath", new Error("hook realpath resolution failed: " + hookPath), `cwd=${manifest.cwd}`);
+		return [];
+	}
 	const result = isBatchFile
-		? spawnSync("cmd.exe", ["/c", hookPath], {
+		? spawnSync("cmd.exe", ["/c", realHookPath], {
 			cwd: worktreePath,
 			encoding: "utf-8",
 			input: JSON.stringify({ version: 1, repoRoot, worktreePath, agentCwd: worktreePath, branch, runId: manifest.runId, taskId: task.id, agent: task.agent }),
@@ -171,12 +180,12 @@ function runSetupHook(manifest: TeamRunManifest, task: TeamTaskState, repoRoot: 
 			}),
 			windowsHide: true,
 		})
-		: spawnSync(nodeHook ? process.execPath : hookPath, nodeHook ? [hookPath] : [], {
+		: spawnSync(nodeHook ? process.execPath : realHookPath, nodeHook ? [realHookPath] : [], {
 			cwd: worktreePath,
 			encoding: "utf-8",
 			input: JSON.stringify({ version: 1, repoRoot, worktreePath, agentCwd: worktreePath, branch, runId: manifest.runId, taskId: task.id, agent: task.agent }),
 			timeout: cfg.setupHookTimeoutMs ?? 30_000,
-			shell: useShell,
+			shell: false,
 			env: sanitizeEnvSecrets(process.env, {
 				allowList: ["PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL"],
 			}),
@@ -312,7 +321,8 @@ export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskSt
 	const sanitizedRunId = manifest.runId.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^-+|-+$/g, "") || "run";
 	const worktreeRoot = path.join(projectCrewRoot(manifest.cwd), DEFAULT_PATHS.state.worktreesSubdir, sanitizedRunId);
 	fs.mkdirSync(worktreeRoot, { recursive: true });
-	const worktreePath = path.join(worktreeRoot, task.id);
+	const sanitizedTaskId = sanitizeBranchPart(task.id);
+	const worktreePath = path.join(worktreeRoot, sanitizedTaskId);
 	const branch = `pi-crew/${sanitizeBranchPart(manifest.runId)}/${sanitizeBranchPart(task.id)}`;
 	// Use `git worktree list --porcelain` to atomically verify the worktree exists.
 	// This avoids a TOCTOU race between fs.existsSync and git branch verification.

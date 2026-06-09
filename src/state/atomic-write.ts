@@ -9,6 +9,7 @@ function hashContent(content: string): string {
 }
 
 const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
+const RETRYABLE_LINK_CODES = new Set(["EPERM", "EBUSY", "EACCES", "ENOENT"]);
 
 /**
  * Symlink-safe file write guard (caveman-inspired).
@@ -116,6 +117,58 @@ function isRetryableRenameError(error: unknown): boolean {
 	return Boolean(error && typeof error === "object" && "code" in error && RETRYABLE_RENAME_CODES.has(String((error as NodeJS.ErrnoException).code)));
 }
 
+function isRetryableLinkError(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && RETRYABLE_LINK_CODES.has(String((error as NodeJS.ErrnoException).code)));
+}
+
+/**
+ * Issue 1 fix: rename via link+unlink instead of rename.
+ * Unlike rename, link() does NOT follow symlinks at the destination path.
+ * It atomically creates a hard link to the source. We then unlink the source.
+ * This prevents TOCTOU attacks where an attacker plants a symlink at the
+ * destination between the check and the rename operation.
+ */
+function renameWithLinkSync(tempPath: string, filePath: string, retries = 8): void {
+	let lastError: unknown;
+	for (let attempt = 0; attempt <= retries; attempt++) {
+		try {
+			// First try to unlink any existing file at destination (hard links don't follow symlinks)
+			try { fs.unlinkSync(filePath); } catch { /* destination may not exist */ }
+			// Create hard link - does NOT follow symlinks at filePath
+			fs.linkSync(tempPath, filePath);
+			// Successfully linked - now unlink the temp file
+			fs.unlinkSync(tempPath);
+			return;
+		} catch (error) {
+			lastError = error;
+			if (!isRetryableLinkError(error) || attempt === retries) break;
+			const base = Math.min(500, 10 * 2 ** attempt);
+			const jitter = base * 0.2 * (Math.random() * 2 - 1);
+			sleepSync(Math.max(1, Math.round(base + jitter)));
+		}
+	}
+	throw lastError;
+}
+
+async function renameWithLinkAsync(tempPath: string, filePath: string, retries = 8): Promise<void> {
+	let lastError: unknown;
+	for (let attempt = 0; attempt <= retries; attempt++) {
+		try {
+			try { await fs.promises.unlink(filePath); } catch { /* destination may not exist */ }
+			await fs.promises.link(tempPath, filePath);
+			await fs.promises.unlink(tempPath);
+			return;
+		} catch (error) {
+			lastError = error;
+			if (!isRetryableLinkError(error) || attempt === retries) break;
+			const base = Math.min(500, 10 * 2 ** attempt);
+			const jitter = base * 0.2 * (Math.random() * 2 - 1);
+			await sleep(Math.max(1, Math.round(base + jitter)));
+		}
+	}
+	throw lastError;
+}
+
 export function renameWithRetry(tempPath: string, filePath: string, retries = 8, rename: (oldPath: string, newPath: string) => void = fs.renameSync): void {
 	let lastError: unknown;
 	for (let attempt = 0; attempt <= retries; attempt++) {
@@ -188,7 +241,8 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 			if (!isSymlinkSafePath(filePath)) {
 				throw new Error(`Refusing to rename: target became a symlink or inside untrusted directory: ${filePath}`);
 			}
-			renameWithRetry(tempPath, filePath);
+			// Issue 1 fix: use link+unlink instead of rename to avoid following symlinks
+			renameWithLinkSync(tempPath, filePath);
 		} catch (renameError) {
 			// Issue 4 fix: use finally block to guarantee temp file cleanup.
 			// Between the initial isSymlinkSafePath check and rename attempt,
@@ -250,7 +304,8 @@ export async function atomicWriteFileAsync(filePath: string, content: string): P
 				try { await fs.promises.rm(tempPath, { force: true }); } catch { /* best-effort */ }
 				throw new Error(`Refusing to rename: target became a symlink or inside untrusted directory: ${filePath}`);
 			}
-			await renameWithRetryAsync(tempPath, filePath);
+			// Issue 1 fix: use link+unlink instead of rename to avoid following symlinks
+			await renameWithLinkAsync(tempPath, filePath);
 		} catch (renameError) {
 			let matches = false;
 			try {
@@ -306,10 +361,14 @@ interface CoalescedAtomicWrite {
 	timer: ReturnType<typeof setTimeout>;
 	coalesceMs: number;
 	retryCount: number;
+	/** Generation counter to detect stale flushes (Issue 2 fix) */
+	generation: number;
 }
 const MAX_FLUSH_RETRIES = 5;
 const pendingAtomicWrites = new Map<string, CoalescedAtomicWrite>();
 const DEFAULT_ATOMIC_COALESCE_MS = 50;
+/** Issue 2 fix: generation counter for coalesced writes */
+let writeGeneration = 0;
 
 // Issue 1 fix: guard against concurrent AND re-entrant flushes using depth counter
 let flushInProgress = 0;
@@ -328,23 +387,26 @@ export function atomicWriteJsonCoalesced<T>(filePath: string, value: T, coalesce
 	if (previous) clearTimeout(previous.timer);
 	const timer = setTimeout(() => flushOnePendingAtomicWrite(filePath), coalesceMs);
 	timer.unref();
-	pendingAtomicWrites.set(filePath, { content, timer, coalesceMs, retryCount: 0 });
+	// Issue 2 fix: increment generation for each new entry
+	const generation = ++writeGeneration;
+	pendingAtomicWrites.set(filePath, { content, timer, coalesceMs, retryCount: 0, generation });
 }
 
 function flushOnePendingAtomicWrite(filePath: string): void {
 	const entry = pendingAtomicWrites.get(filePath);
 	if (!entry) return;
-	// Issue 2 fix: Remove entry ONLY after successful flush.
-	// If flush fails, keep the entry so the next flush (or process exit)
-	// can retry. This prevents silent data loss when writes fail.
+	// Issue 2 fix: capture generation before flush to detect stale flushes.
+	// If a new write arrives during the flush, the generation will change
+	// and we will NOT delete the newer entry after the flush completes.
+	const savedGeneration = entry.generation;
 	clearTimeout(entry.timer);
 	try {
 		atomicWriteFile(filePath, entry.content);
-		// Issue 2 fix: Verify this entry is still the current one before deleting.
+		// Issue 2 fix: Verify generation hasn't changed before deleting.
 		// A concurrent write may have replaced entry with a newer one during the flush.
-		// Only delete if pendingAtomicWrites.get(filePath) === entry (not a newer entry).
+		// Only delete if generation matches (not a newer entry).
 		// This prevents orphaning newer entries that arrived during the flush.
-		if (pendingAtomicWrites.get(filePath) === entry) {
+		if (pendingAtomicWrites.get(filePath)?.generation === savedGeneration) {
 			pendingAtomicWrites.delete(filePath);
 		}
 	} catch (error) {
@@ -354,19 +416,19 @@ function flushOnePendingAtomicWrite(filePath: string): void {
 		// write to arrive. Only set timer if this entry is still current
 		// (not replaced by a newer write during the flush).
 		const current = pendingAtomicWrites.get(filePath);
-		if (current === entry) {
-			entry.retryCount++;
-			if (entry.retryCount >= MAX_FLUSH_RETRIES) {
+		if (current?.generation === savedGeneration) {
+			current.retryCount++;
+			if (current.retryCount >= MAX_FLUSH_RETRIES) {
 				// Max retries exceeded - remove entry and propagate error to callers
 				pendingAtomicWrites.delete(filePath);
 				// Re-throw so callers can handle the persistent failure
 				throw error;
 			}
 			// Exponential backoff: base delay * 2^(retryCount-1), capped at 30 seconds
-			const backoffMs = Math.min(30000, entry.coalesceMs * Math.pow(2, entry.retryCount - 1));
+			const backoffMs = Math.min(30000, current.coalesceMs * Math.pow(2, current.retryCount - 1));
 			const timer = setTimeout(() => flushOnePendingAtomicWrite(filePath), backoffMs);
 			timer.unref();
-			entry.timer = timer;
+			current.timer = timer;
 		}
 	}
 }

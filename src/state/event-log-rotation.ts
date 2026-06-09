@@ -153,18 +153,17 @@ export function compactEventLog(eventsPath: string, config?: Partial<RotationCon
 export function rotateEventLog(eventsPath: string): boolean {
 	if (!fs.existsSync(eventsPath)) return false;
 	// FIX: Wrap rotation in lock to prevent race conditions with concurrent readers.
-	// Order of operations: (1) rename old file to archive, (2) create new empty file.
-	// This ensures eventsPath always has content (either old or new) — a reader
-	// never sees a missing/empty file between operations.
+	// Order of operations: (1) create new empty file, (2) rename old file to archive.
+	// This ensures eventsPath always exists — a reader never sees a missing file.
 	return withEventLogLockSync(eventsPath, () => {
 		try {
 			const ts = new Date().toISOString().replace(/[:.]/g, "-");
 			const archivePath = `${eventsPath}.${ts}.archive.jsonl`;
-			// Step 1: rename old content to archive FIRST
-			// This ensures eventsPath still has content until the new file is created
-			fs.renameSync(eventsPath, archivePath);
-			// Step 2: atomically create new empty file at eventsPath
+			// Step 1: create new empty file at eventsPath FIRST
+			// This ensures eventsPath always exists for readers
 			atomicWriteFile(eventsPath, "");
+			// Step 2: rename old content to archive (after new file is in place)
+			fs.renameSync(eventsPath, archivePath);
 			return true;
 		} catch (error) {
 			logInternalError("event-log.rotate", error, `eventsPath=${eventsPath}`);

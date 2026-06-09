@@ -88,6 +88,12 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 		// the O_NOFOLLOW open to fail before we reach this point.
 		realBase = fs.realpathSync.native(baseDir);
 	} catch (error) {
+		// baseDir MUST exist and be resolvable for the containment guarantee to hold.
+		// Callers creating new directories must create baseDir atomically (e.g.,
+		// mkdirSync with { recursive: true }) BEFORE calling this function, and use
+		// O_NOFOLLOW|O_CREAT|O_EXCL for the actual file creation to ensure atomicity.
+		// The safe-paths validation and the file creation are two separate operations
+		// with a gap between them — callers must close this gap with atomic primitives.
 		throw new Error(`Cannot resolve real path of base directory ${baseDir}: ${error instanceof Error ? error.message : String(error)}`);
 	} finally {
 		fs.closeSync(baseFd);
@@ -142,6 +148,29 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 		throw new Error(`Cannot resolve real path of ${resolved}: ${targetError instanceof Error ? targetError.message : String(targetError)}`);
 	} finally {
 		fs.closeSync(targetFd);
+	}
+
+	// Re-validate the ancestor chain of the resolved path to catch any TOCTOU
+	// races that occurred between the initial O_NOFOLLOW validation and the
+	// realpathSync call. An attacker could have replaced a validated ancestor
+	// with a symlink during this window.
+	const realPathParts = realTarget.split(path.sep);
+	let realPathAccumulated = "";
+	if (realPathParts[0] === "") realPathAccumulated = "/";
+	for (let i = 1; i < realPathParts.length; i++) {
+		if (realPathParts[i] === "") continue;
+		realPathAccumulated = path.join(realPathAccumulated, realPathParts[i]);
+		try {
+			const fd = fs.openSync(realPathAccumulated, O_RDONLY | O_NOFOLLOW);
+			fs.closeSync(fd);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: TOCTOU race detected, path became a symlink: " + realPathAccumulated);
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			// ENOENT on an ancestor of realTarget after realpathSync is concerning
+			// — the path existed when we validated it but now doesn't. This could
+			// indicate a race or attack. For safety, treat this as an error.
+			throw new Error(`Cannot validate resolved path: ${realPathAccumulated} disappeared after realpathSync: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	// Verify the resolved real path is still within baseDir.

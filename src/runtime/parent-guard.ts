@@ -95,6 +95,12 @@ export function startParentGuard(parentPid: number): void {
 	const existing = guardIntervals.get(parentPid);
 	if (existing) clearInterval(existing);
 
+	// Add ±20% jitter to prevent synchronized polling across workers that
+	// start simultaneously (e.g., after pi restart). Without jitter, all
+	// workers would poll at exactly the same interval, creating load spikes.
+	const jitter = POLL_INTERVAL_MS * 0.2 * (Math.random() - 0.5) * 2;
+	const actualInterval = POLL_INTERVAL_MS + jitter;
+
 	const interval = setInterval(() => {
 		// Immediate check on every tick — detects parent death within one poll
 		// interval (max POLL_INTERVAL_MS latency, default 500ms).
@@ -104,7 +110,7 @@ export function startParentGuard(parentPid: number): void {
 			guardIntervals.delete(parentPid);
 			selfTerminate(parentPid);
 		}
-	}, POLL_INTERVAL_MS);
+	}, actualInterval);
 
 	guardIntervals.set(parentPid, interval);
 

@@ -72,7 +72,15 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 			if (options.signal?.aborted) break;
 			// Commit changes to a branch instead of just preserving the worktree
 			try {
+				// Issue 2 fix: verify status before and after add to ensure atomicity
+				const statusBefore = git(worktreePath, ["status", "--porcelain"]);
 				execFileSync("git", ["add", "-A"], { cwd: worktreePath, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: GIT_SAFE_ENV, windowsHide: true });
+				// Verify no unexpected changes were added (only staged the original dirty files)
+				const statusAfterAdd = git(worktreePath, ["status", "--porcelain"]);
+				if (statusAfterAdd !== statusBefore) {
+					// Something changed between our status check and add - abort to avoid including unexpected changes
+					throw new Error("worktree state changed unexpectedly during add; refusing to commit");
+				}
 				// Issue 1 fix: check signal before commit
 				if (options.signal?.aborted) break;
 				let safeDesc = entry.name.slice(0, 200);
@@ -115,7 +123,13 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 					result.removed.push(worktreePath);
 				} catch (removeError) {
 					// Commit succeeded but worktree remove failed — directory is orphaned
-					result.preserved.push({ path: worktreePath, reason: `commit succeeded but worktree remove failed: ${removeError instanceof Error ? removeError.message : String(removeError)}` });
+					// Issue 1 fix: use fs.rmSync as fallback to clean up orphaned directory
+					try {
+						fs.rmSync(worktreePath, { recursive: true, force: true });
+						result.removed.push(worktreePath);
+					} catch {
+						result.preserved.push({ path: worktreePath, reason: `commit succeeded but worktree remove failed: ${removeError instanceof Error ? removeError.message : String(removeError)}; fs.rmSync fallback also failed` });
+					}
 					const artifact = writeArtifact(manifest.artifactsRoot, {
 						kind: "metadata",
 						relativePath: `metadata/worktree-branch-${safeBranchName}.json`,
@@ -147,6 +161,8 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 			}
 			continue;
 		}
+		// Issue 3 fix: sanitize entry.name before using in git commands
+		const safeEntryName = sanitizeBranchPart(entry.name);
 		// Issue 1 fix: check signal before non-dirty worktree remove
 		if (options.signal?.aborted) break;
 		const args = ["worktree", "remove"];
