@@ -29,7 +29,7 @@ const DEFAULT_HELP: Record<ErrorCode, string | undefined> = {
  */
 export class CrewError extends Error {
   readonly code: ErrorCode;
-  readonly help?: string;
+  help?: string;
   private _context?: string;
 
   constructor(code: ErrorCode, message: string, help?: string) {
@@ -89,7 +89,8 @@ export const errors = {
   },
 
   config(message: string): CrewError {
-    return new CrewError(ErrorCode.ConfigError, message);
+    return new CrewError(ErrorCode.ConfigError, message)
+      .withContext("configuration loading");
   },
 
   resourceNotFound(type: string, name: string): CrewError {

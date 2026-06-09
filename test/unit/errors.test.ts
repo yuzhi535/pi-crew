@@ -32,6 +32,12 @@ test("CrewError is instanceof Error", () => {
   assert.ok(new CrewError(ErrorCode.FileWriteError, "x") instanceof Error);
 });
 
+test("withHelp overrides default help", () => {
+  const err = errors.fileRead("x", { code: "ENOENT" } as NodeJS.ErrnoException)
+    .withHelp("custom help override");
+  assert.equal(err.help, "custom help override");
+});
+
 test("CrewError factory methods produce correct codes", () => {
   assert.equal(errors.fileRead("x", {} as NodeJS.ErrnoException).code, ErrorCode.FileReadError);
   assert.equal(errors.taskNotFound("t1").code, ErrorCode.TaskNotFound);
