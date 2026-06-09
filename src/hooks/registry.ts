@@ -102,6 +102,9 @@ export async function executeHook(name: HookName, ctx: HookContext): Promise<Hoo
 	for (const hook of scopedHooks) {
 			try {
 				const result: HookResult = await hook.handler(sanitizeContext(ctx));
+				// SECURITY: Sanitize any direct mutations the handler may have made to ctx.
+				// This prevents hooks from injecting dangerous properties via direct ctx assignment.
+				sanitizeContext(ctx);
 				if (hook.mode === "blocking" && result.outcome === "block") {
 					return { hookName: name, outcome: "block", durationMs: Date.now() - start, reason: result.reason };
 				}

@@ -36,8 +36,8 @@ export interface HookContext {
 	// "constructor", "prototype", etc. (see registry.ts POLLUTED_KEYS).
 	// Hook authors are trusted but must avoid prototype pollution attacks.
 	// The sanitizeMergeData function prevents dangerous properties from propagating
-	// via result.data merge, and a runtime guard rejects direct mutations of
-	// dangerous keys before passing ctx to handlers.
+	// via result.data merge, and a runtime guard sanitizes ctx before passing to
+	// handlers AND after handler execution to catch direct mutations.
 	[key: string]: unknown;
 }
 

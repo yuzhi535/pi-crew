@@ -849,8 +849,8 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 				.then(({ startForegroundWatchdog }) => {
 					startForegroundWatchdog({ pi, cwd: ctx.cwd, runId });
 				})
-				.catch(() => {
-					/* non-critical */
+				.catch((error) => {
+					logInternalError("register.foreground-watchdog-import", error);
 				});
 		}
 		setImmediate(() => {
