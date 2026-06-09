@@ -922,7 +922,8 @@ tasks = mergeResult.resultTasks;
 	});
 	manifest = finalManifest;
 	// Save health snapshot on run completion
-	const healthStore = new HealthStore(finalManifest.stateRoot);
+	const crewRoot = path.dirname(path.dirname(finalManifest.stateRoot));
+	const healthStore = new HealthStore(crewRoot);
 	healthStore.saveSnapshot({
 		runId: finalManifest.runId,
 		tasks: tasks.map((t) => ({ id: t.id, status: t.status })),
