@@ -259,6 +259,10 @@ export function appendEvent(eventsPath: string, event: AppendTeamEvent): TeamEve
 // --- Async write queue (non-blocking alternative to withEventLogLockSync) ---
 const asyncQueues = new Map<string, Promise<unknown>>();
 
+// --- Async lock for flush operations (non-blocking alternative to withEventLogLockSync) ---
+// Uses promise-chain pattern to ensure sequential lock acquisition without blocking the event loop.
+const asyncLocks = new Map<string, Promise<unknown>>();
+
 /** Drain all pending async writes by awaiting all in-flight queue promises.
  *  Called on process exit to minimize event loss for crash-sensitive events.
  *  Note: SIGKILL (kill -9) cannot be intercepted and will still lose events.
@@ -268,6 +272,24 @@ async function drainAsyncQueues(): Promise<void> {
 	if (promises.length === 0) return;
 	// Use allSettled to ensure a rejected promise doesn't prevent others from completing.
 	await Promise.allSettled(promises);
+}
+
+/** Async lock using promise-chain pattern to avoid blocking the Node.js event loop.
+ *  Unlike withEventLogLockSync, this uses async I/O and does not use sleepSync,
+ *  allowing AbortSignal handlers and SIGTERM handlers to proceed while waiting.
+ */
+async function withEventLogLockAsync(eventsPath: string, fn: () => Promise<void>): Promise<void> {
+	const queueKey = eventsPath;
+	const prev = asyncLocks.get(queueKey) ?? Promise.resolve();
+	const next = prev.then(async (): Promise<void> => {
+		await fn();
+	});
+	asyncLocks.set(queueKey, next);
+	try {
+		await next;
+	} finally {
+		asyncLocks.delete(queueKey);
+	}
 }
 
 /** Reset event log mode (for testing only). */
@@ -410,7 +432,7 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 				sequenceCache.set(eventsPath, { size: statResult.size, mtimeMs: statResult.mtimeMs, seq: finalSeq, lastAccessMs: Date.now() });
 			}
 			// Note: persistSequence is NOT called here again - it was already called
-			// before the append to ensure the sidecar is current before the event is written.
+			// after the append to ensure the sidecar is current after the event is written.
 		} catch (error) {
 			logInternalError("event-log.persist-sequence", error, `eventsPath=${eventsPath}`);
 		}
@@ -580,7 +602,7 @@ export function appendEventBuffered(eventsPath: string, event: AppendTeamEvent, 
 	});
 }
 
-function flushOneEventLogBuffer(eventsPath: string): void {
+async function flushOneEventLogBuffer(eventsPath: string): Promise<void> {
 	const queue = bufferedQueues.get(eventsPath);
 	bufferedQueues.delete(eventsPath);
 	const timer = bufferedTimers.get(eventsPath);
@@ -612,7 +634,10 @@ function flushOneEventLogBuffer(eventsPath: string): void {
 			}
 		}
 
-		withEventLogLockSync(eventsPath, () => {
+		// FIX (Issue 2): Use async lock instead of withEventLogLockSync to avoid
+		// blocking the event loop. The sync lock uses sleepSync which blocks for
+		// up to 5s and prevents AbortSignal handlers from firing.
+		await withEventLogLockAsync(eventsPath, async () => {
 			for (const item of queue) {
 				try {
 					const ev = appendEventInsideLock(eventsPath, item.event);
@@ -630,9 +655,9 @@ function flushOneEventLogBuffer(eventsPath: string): void {
 	}
 }
 
-/** Synchronously flush every queued buffered event across all paths. */
-export function flushEventLogBuffer(): void {
-	for (const eventsPath of [...bufferedQueues.keys()]) flushOneEventLogBuffer(eventsPath);
+/** Asynchronously flush every queued buffered event across all paths. */
+export async function flushEventLogBuffer(): Promise<void> {
+	for (const eventsPath of [...bufferedQueues.keys()]) await flushOneEventLogBuffer(eventsPath);
 }
 
 /**

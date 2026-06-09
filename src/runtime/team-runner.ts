@@ -50,7 +50,7 @@ import { logInternalError } from "../utils/internal-error.ts";
  * executing. The team-runner has no periodic heartbeat today, so any
  * team run lasting >5min is at risk.
  */
-function startTeamRunHeartbeat(stateRoot: string, runId: string): () => void {
+function startTeamRunHeartbeat(stateRoot: string, runId: string, lastTaskUpdateAt?: string): () => void {
 	const heartbeatPath = path.join(stateRoot, "heartbeat.json");
 	const writeHeartbeat = (): void => {
 		try {
@@ -59,6 +59,7 @@ function startTeamRunHeartbeat(stateRoot: string, runId: string): () => void {
 				at: Date.now(),
 				runId,
 				kind: "team-runner",
+				lastTaskUpdateAt,
 			}), { encoding: "utf-8", mode: 0o600 });
 		} catch {
 			// best-effort
@@ -135,16 +136,25 @@ function safeFinishedAt(task: TeamTaskState): number {
 	return Number.isNaN(ms) ? Infinity : ms;
 }
 
+/**
+ * Returns true when the current task has a malformed finishedAt (NaN/Infinity)
+ * and the updated task has a valid finite finishedAt. Malformed finishedAt
+ * should be replaced rather than persisting corruption.
+ */
+function isMalformedFinishedAtReplacement(currentTime: number, updatedTime: number): boolean {
+	return !Number.isFinite(currentTime) && Number.isFinite(updatedTime);
+}
+
 function shouldMergeTaskUpdate(current: TeamTaskState, updated: TeamTaskState): boolean {
 	// Parallel workers receive the same input snapshot. A later result may still
 	// contain stale queued/running copies of tasks that another worker already
 	// completed. Never let those stale snapshots regress durable task state.
 	if (current.status === "waiting" && updated.status === "running") return false;
-	// Block non-terminal→terminal transitions (queued/running/waiting → terminal).
-	if (!isNonTerminalTaskStatus(current.status) && isNonTerminalTaskStatus(updated.status)) return false;
-	// Explicitly block terminal→non-terminal transitions (e.g. failed→running).
-	// The check above guards non-terminal→terminal; this makes the protection symmetric.
-	if (isNonTerminalTaskStatus(updated.status) && !isNonTerminalTaskStatus(current.status)) return false;
+	// Block terminal→non-terminal transitions (e.g. completed→running).
+	// A task that has reached a terminal state must not be resurrected.
+	const currentIsTerminal = !isNonTerminalTaskStatus(current.status);
+	const updatedIsNonTerminal = isNonTerminalTaskStatus(updated.status);
+	if (currentIsTerminal && updatedIsNonTerminal) return false;
 	// Explicitly block completed↔needs_attention terminal-to-terminal transitions.
 // Both are success terminal states used interchangeably; stale worker updates must
 // not cause a completed task to appear as needs_attention or vice versa.
@@ -176,7 +186,7 @@ if (current.status === "needs_attention" && updated.status === "completed") retu
 		if (!Number.isFinite(currentTime)) {
 			console.warn(`[team-runner] Task ${current.id} has malformed finishedAt: ${current.finishedAt}`);
 		}
-		if (!Number.isFinite(currentTime) && Number.isFinite(updatedTime)) {
+		if (isMalformedFinishedAtReplacement(currentTime, updatedTime)) {
 			return true;
 		}
 		if (updatedTime < currentTime) return false;
@@ -389,7 +399,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 	// (NO_PID_HEARTBEAT_STALE_MS). Previously only sub-task runners wrote
 	// heartbeats; the team-level run had no heartbeat, so any multi-phase
 	// workflow lasting >5min was marked stale and cancelled.
-	const stopTeamHeartbeat = startTeamRunHeartbeat(manifest.stateRoot, manifest.runId);
+	const stopTeamHeartbeat = startTeamRunHeartbeat(manifest.stateRoot, manifest.runId, manifest.updatedAt);
 
 	const cleanupUsage = (): void => {
 		for (const task of input.tasks) clearTrackedTaskUsage(task.id);
@@ -711,15 +721,21 @@ async function executeTeamRunCore(
 // Use the in-memory manifest as base (not the last-completing worker's snapshot).
 // Recompute status from merged tasks so the manifest reflects actual task state,
 // not the arbitrary order in which mapConcurrent returned results.
-const mergedArtifacts = mergeArtifacts([manifest.artifacts, ...validResults.map((item) => item.manifest.artifacts)].flat());
-manifest = updateRunStatus({ ...manifest, artifacts: mergedArtifacts }, "running", "Merged task updates from parallel batch.");
-		tasks = mergeTaskUpdatesPreservingTerminal(tasks, validResults);
-		// Build a synthetic manifest that reflects the merged task state.
-		// The last result's manifest contains stale task state from that worker's
-		// snapshot; merged tasks are correct but manifest.tasks would be stale.
-		// Use a separate variable with explicit tasks field rather than type assertion.
-		const manifestWithTasks: TeamRunManifest & { tasks: TeamTaskState[] } = { ...manifest, tasks };
-		manifest = { ...manifestWithTasks, updatedAt: new Date().toISOString() };
+// Read committed manifest from disk inside the lock so artifact merge is based
+// on committed state, not in-memory state that may differ from disk.
+const mergeResult = await withRunLock(manifest, async () => {
+    const disk = loadRunManifestById(manifest.cwd, manifest.runId);
+    const diskManifest = disk?.manifest ?? manifest;
+    const diskArtifacts = diskManifest.artifacts;
+    const reconciledArtifacts = mergeArtifacts([...diskArtifacts, ...validResults.map((item) => item.manifest.artifacts)].flat());
+    const resultManifest = updateRunStatus({ ...diskManifest, artifacts: reconciledArtifacts }, "running", "Merged task updates from parallel batch.");
+    const resultTasks = mergeTaskUpdatesPreservingTerminal(tasks, validResults);
+    await saveRunManifestAsync(resultManifest);
+    await saveRunTasksAsync(resultManifest, resultTasks);
+    return { resultManifest, resultTasks };
+});
+manifest = mergeResult.resultManifest;
+tasks = mergeResult.resultTasks;
 
 		// Advance workflow phases whose tasks are all in terminal state
 		const terminalStatuses = new Set(["completed", "failed", "skipped", "cancelled", "needs_attention"]);
@@ -864,13 +880,17 @@ manifest = updateRunStatus({ ...manifest, artifacts: mergedArtifacts }, "running
 			"",
 		].join("\n"),
 	});
-	manifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, summaryArtifact] };
+	// Build the complete manifest BEFORE acquiring the lock so the artifacts array
+	// is already incorporated into the manifest object that will be atomically written.
+	// This prevents crash-between-mutation-and-lock from leaving inconsistent state.
+	const finalManifest = { ...manifest, updatedAt: new Date().toISOString(), artifacts: [...manifest.artifacts, summaryArtifact] };
 	// Joint atomic save: wrap manifest + tasks in a single run lock so they are
 	// written together or not at all. Crash between separate saveRunManifestAsync
 	// and saveRunTasksAsync calls could leave manifest/tasks.json out of sync.
-	await withRunLock(manifest, async () => {
-		await saveRunManifestAsync(manifest);
-		await saveRunTasksAsync(manifest, tasks);
+	await withRunLock(finalManifest, async () => {
+		await saveRunManifestAsync(finalManifest);
+		await saveRunTasksAsync(finalManifest, tasks);
 	});
+	manifest = finalManifest;
 	return { manifest, tasks };
 }

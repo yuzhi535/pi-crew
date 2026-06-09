@@ -61,11 +61,19 @@ export class FileCheckpointStore implements CheckpointStore {
 		assertSafePathId("taskId", checkpoint.taskId);
 		this.ensureDir();
 		const p = this.checkpointPath(checkpoint.taskId);
-		// Atomic write: write to temp file first, then rename. This guarantees
-		// either the old file or the new file, never a partial write.
+		// Atomic write: write to temp file first, then rename, then fsync parent.
+		// This guarantees either the old file or the new file, never a partial
+		// write, even on network filesystems or certain journal modes.
 		const tmp = path.join(this.checkpointDir(), ".tmp.checkpoint");
 		fs.writeFileSync(tmp, JSON.stringify(checkpoint, null, 2), "utf-8");
 		fs.renameSync(tmp, p);
+		// fsync parent directory to ensure the rename is durable
+		const dirFd = fs.openSync(this.checkpointDir(), "r");
+		try {
+			fs.fsyncSync(dirFd);
+		} finally {
+			fs.closeSync(dirFd);
+		}
 	}
 
 	load(runId: string, taskId: string): Checkpoint | null {

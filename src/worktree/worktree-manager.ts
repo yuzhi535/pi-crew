@@ -161,6 +161,12 @@ function runSetupHook(manifest: TeamRunManifest, task: TeamTaskState, repoRoot: 
 	}
 	// SECURITY: Resolve the hook to its real path before execution to close the TOCTOU window.
 	// This prevents a symlink swap between the containment check and actual execution.
+	// KNOWN LIMITATION: There is a residual TOCTOU window between realpathSync validation
+	// (line 166) and spawnSync execution (line 183). A sufficiently fast attacker could
+	// theoretically swap the symlink between these two operations. The realpathSync + O_NOFOLLOW
+	// approach minimizes but does not eliminate this window. To fully close it, consider
+	// opening the hook file once via a file descriptor and executing via fd passing (not available
+	// in Node.js spawnSync). This is documented as a known limitation rather than a bug.
 	let realHookPath: string;
 	try {
 		realHookPath = fs.realpathSync(hookPath);
@@ -345,6 +351,7 @@ export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskSt
 		const dirtyStatus = git(worktreePath, ["status", "--porcelain"]);
 		if (dirtyStatus.trim()) {
 			// Discard uncommitted changes to ensure clean slate for new task
+			logInternalError("worktree.reused.dirty", new Error(`Discarding uncommitted changes in reused worktree at ${worktreePath}`), `runId=${manifest.runId}, taskId=${task.id}, dirtyStatus=${dirtyStatus.trim()}`);
 			git(worktreePath, ["checkout", "--", "."]);
 			git(worktreePath, ["clean", "-fd"]);
 		}

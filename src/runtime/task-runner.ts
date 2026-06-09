@@ -220,7 +220,7 @@ export async function runTeamTask(
 				tasks: updateTask(tasks, cancelledTask),
 			};
 		}
-		tasks = persistSingleTaskUpdate(manifest, tasks, task);
+		tasks = persistSingleTaskUpdate(manifest, tasks, task, "started");
 		if (runtimeKind === "child-process")
 			({ task, tasks } = checkpointTask(
 				manifest,
@@ -261,7 +261,7 @@ export async function runTeamTask(
 						teamRole: { skills: input.teamRoleSkills },
 						step: input.step,
 						override: input.skillOverride,
-						runId: manifest.runId,  // ECC INSTINCT: Enable skill confidence tracking
+						runId: manifest.runId,  
 					})
 				: undefined;
 		const skillBlock = input.skillBlock ?? renderedSkills?.block;
@@ -529,89 +529,90 @@ export async function runTeamTask(
 						// Errors are logged but processing continues so subsequent events still update state.
 						try {
 							appendCrewAgentEvent(manifest, task.id, event);
-						} catch (err) {
-							logInternalError("task-runner.append-crew-agent-event", err, `taskId=${task.id}`);
-						}
-						if (
-							event &&
-							typeof event === "object" &&
-							!Array.isArray(event)
-						)
-							collectedJsonEvents.push(
-								event as Record<string, unknown>,
-							);
-							if (collectedJsonEvents.length > 1000) {
-								collectedJsonEvents.splice(0, collectedJsonEvents.length - 1000);
-							}
-						// Accumulate lifetime usage via message_end events (survives compaction)
-						if (event && typeof event === "object" && (event as Record<string, unknown>).type === "message_end") {
-							const msg = (event as Record<string, unknown>).message as Record<string, unknown> | undefined;
-							if (msg?.role === "assistant") {
-								const usage = msg.usage as Record<string, number> | undefined;
-								if (usage) {
-									task.lifetimeUsage = {
-										input: (task.lifetimeUsage?.input ?? 0) + (usage.input ?? 0),
-										output: (task.lifetimeUsage?.output ?? 0) + (usage.output ?? 0),
-										cacheWrite: (task.lifetimeUsage?.cacheWrite ?? 0) + (usage.cacheWrite ?? 0),
-									};
+							if (
+								event &&
+								typeof event === "object" &&
+								!Array.isArray(event)
+							)
+								collectedJsonEvents.push(
+									event as Record<string, unknown>,
+								);
+								if (collectedJsonEvents.length > 1000) {
+									collectedJsonEvents.splice(0, collectedJsonEvents.length - 1000);
+								}
+							// Accumulate lifetime usage via message_end events (survives compaction)
+							if (event && typeof event === "object" && (event as Record<string, unknown>).type === "message_end") {
+								const msg = (event as Record<string, unknown>).message as Record<string, unknown> | undefined;
+								if (msg?.role === "assistant") {
+									const usage = msg.usage as Record<string, number> | undefined;
+									if (usage) {
+										task.lifetimeUsage = {
+											input: (task.lifetimeUsage?.input ?? 0) + (usage.input ?? 0),
+											output: (task.lifetimeUsage?.output ?? 0) + (usage.output ?? 0),
+											cacheWrite: (task.lifetimeUsage?.cacheWrite ?? 0) + (usage.cacheWrite ?? 0),
+										};
+									}
 								}
 							}
-						}
-						persistHeartbeat();
-						// Bug #3 fix: Write worker JSON events to background.log for debugging when running in background mode.
-						// This supplements the event log so developers can see what the child Pi worker produced.
-						if (process.env.PI_CREW_BACKGROUND_MODE === "1" && event) {
-							try {
+							persistHeartbeat();
+							// Bug #3 fix: Write worker JSON events to background.log for debugging when running in background mode.
+							// This supplements the event log so developers can see what the child Pi worker produced.
+							if (process.env.PI_CREW_BACKGROUND_MODE === "1" && event) {
 								const bgLogPath = `${manifest.stateRoot}/background.log`;
 								const eventLine = typeof event === "object" && !Array.isArray(event) ? JSON.stringify(event) : String(event);
 								fs.appendFileSync(bgLogPath, `${eventLine}\n`);
-							} catch { /* background log write failures should not affect task */ }
-						}
-						task = {
-							...task,
-							agentProgress: applyAgentProgressEvent(
-								task.agentProgress ?? emptyCrewAgentProgress(),
-								event,
-								task.startedAt,
-							),
-						};
-						tasks = updateTask(tasks, task);
-						// Bridge event to UI event bus for near-instant updates
-						try {
+							}
+							// Apply agentProgress update first, then persist, then update in-memory array.
+							// This ensures disk state is always >= in-memory state, preventing
+							// fresher in-memory state from being lost on crash.
+							tasks = persistSingleTaskUpdate(manifest, tasks, {
+								...task,
+								agentProgress: applyAgentProgressEvent(
+									task.agentProgress ?? emptyCrewAgentProgress(),
+									event,
+									task.startedAt,
+								),
+							});
+							task = {
+								...task,
+								agentProgress: applyAgentProgressEvent(
+									task.agentProgress ?? emptyCrewAgentProgress(),
+									event,
+									task.startedAt,
+								),
+							};
+							tasks = updateTask(tasks, task);
+							// Bridge event to UI event bus for near-instant updates
 							const bridgeEvent = bridgeEventFromJsonEvent(
 								manifest.runId,
 								task.id,
 								event,
 							);
 							if (bridgeEvent) streamBridge?.handler(bridgeEvent);
-						} catch {
-							/* bridge errors should not affect task */
-						}
-						// Feed overflow recovery tracker
-						if (input.onJsonEvent) {
-							try {
+							// Feed overflow recovery tracker
+							if (input.onJsonEvent) {
 								input.onJsonEvent(
 									task.id,
 									manifest.runId,
 									event,
 								);
-							} catch (err) {
-								logInternalError("task-runner.on-json-event", err as Error, `taskId=${task.id}`);
 							}
+							if (
+								!finalCheckpointWritten &&
+								isFinalChildEvent(event)
+							) {
+								finalCheckpointWritten = true;
+								({ task, tasks } = checkpointTask(
+									manifest,
+									tasks,
+									task,
+									"child-stdout-final",
+								));
+							}
+							persistChildProgress(event);
+						} catch (err) {
+							logInternalError("task-runner.on-json-event", err as Error, `taskId=${task.id}`);
 						}
-						if (
-							!finalCheckpointWritten &&
-							isFinalChildEvent(event)
-						) {
-							finalCheckpointWritten = true;
-							({ task, tasks } = checkpointTask(
-								manifest,
-								tasks,
-								task,
-								"child-stdout-final",
-							));
-						}
-						persistChildProgress(event);
 					},
 				});
 				const evidenceStatus = childResult.exitStatus?.cancelled
@@ -1075,7 +1076,7 @@ export async function runTeamTask(
 		// 2. Verification contract has commands
 		// 3. Not in scaffold mode (scaffold mode intentionally skips execution)
 		let verificationEvidence: VerificationEvidence = baseEvidence;
-		if (!error && runtimeKind !== "scaffold" && taskPacket.verification?.commands?.length) {
+		if (runtimeKind !== "scaffold" && taskPacket.verification?.commands?.length) {
 			try {
 				const commandResults = await executeVerificationCommands(
 					taskPacket.verification,

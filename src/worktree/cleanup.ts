@@ -6,6 +6,7 @@ import { writeArtifact } from "../state/artifact-store.ts";
 import { projectCrewRoot } from "../utils/paths.ts";
 import { DEFAULT_PATHS } from "../config/defaults.ts";
 import { sanitizeEnvSecrets } from "../utils/env-filter.ts";
+import { logInternalError } from "../utils/internal-error.ts";
 
 export interface WorktreeCleanupResult {
 	removed: string[];
@@ -32,11 +33,11 @@ function git(cwd: string, args: string[]): string {
 	return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: GIT_SAFE_ENV, windowsHide: true }).trim();
 }
 
-function isDirty(worktreePath: string): boolean {
+function isDirty(worktreePath: string): boolean | "error" {
 	try {
 		return git(worktreePath, ["status", "--porcelain"]).trim().length > 0;
 	} catch {
-		return true;
+		return "error";
 	}
 }
 
@@ -64,6 +65,7 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 		// Issue 1 fix: check signal before each git operation to respect abort faster
 		if (options.signal?.aborted) break;
 		const worktreePath = path.join(worktreeRoot, entry.name);
+		if (options.signal?.aborted) break;
 		const dirty = isDirty(worktreePath);
 		const branchName = `pi-crew/${manifest.runId}/${sanitizeBranchPart(entry.name)}`;
 		const safeBranchName = sanitizeBranchPart(entry.name);
@@ -87,7 +89,7 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 				// SECURITY: Strip any newlines that could be injected via a malicious worktree name
 				// to prevent newline injection in git commit messages
 				if (safeDesc.includes("\n")) {
-					safeDesc = safeDesc.replace(/[\r\n]+/g, " ");
+					safeDesc = safeDesc.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+/g, " ");
 				}
 				execFileSync("git", ["commit", "-m", `pi-crew: ${safeDesc}`], { cwd: worktreePath, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: GIT_SAFE_ENV, windowsHide: true });
 				// Issue 1 fix: check signal before branch creation
@@ -118,6 +120,8 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 				//   git branch -D <branchName>   (to clean up the branch)
 				//   rm -rf <worktreePath>        (to clean up the orphaned directory)
 				const removeArgs = ["worktree", "remove", "--force", worktreePath];
+				// Capture git status before removal since worktree won't exist after successful remove
+				const gitStatusBeforeRemove = git(worktreePath, ["status", "--porcelain"]);
 				try {
 					git(manifest.cwd, removeArgs);
 					result.removed.push(worktreePath);
@@ -133,7 +137,7 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 					const artifact = writeArtifact(manifest.artifactsRoot, {
 						kind: "metadata",
 						relativePath: `metadata/worktree-branch-${safeBranchName}.json`,
-						content: JSON.stringify({ worktreePath, branch: branchName, committedAt: new Date().toISOString(), mergeCommand: `git merge ${branchName}`, gitStatusAtCommit: git(worktreePath, ["status", "--porcelain"]) }, null, 2),
+						content: JSON.stringify({ worktreePath, branch: branchName, committedAt: new Date().toISOString(), mergeCommand: `git merge ${branchName}`, gitStatusAtCommit: gitStatusBeforeRemove }, null, 2),
 						producer: "worktree-cleanup",
 					});
 					result.artifactPaths.push(artifact.path);
@@ -142,7 +146,7 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 				const artifact = writeArtifact(manifest.artifactsRoot, {
 					kind: "metadata",
 					relativePath: `metadata/worktree-branch-${safeBranchName}.json`,
-					content: JSON.stringify({ worktreePath, branch: branchName, committedAt: new Date().toISOString(), mergeCommand: `git merge ${branchName}`, gitStatusAtCommit: git(worktreePath, ["status", "--porcelain"]) }, null, 2),
+					content: JSON.stringify({ worktreePath, branch: branchName, committedAt: new Date().toISOString(), mergeCommand: `git merge ${branchName}`, gitStatusAtCommit: gitStatusBeforeRemove }, null, 2),
 					producer: "worktree-cleanup",
 				});
 				result.artifactPaths.push(artifact.path);
@@ -182,13 +186,21 @@ export function cleanupRunWorktrees(manifest: TeamRunManifest, options: { force?
 		// after processing all worktrees. This helps clean up directories left orphaned
 		// when git worktree remove failed after a successful commit.
 		git(manifest.cwd, ["worktree", "prune"]);
-	} catch {
+	} catch (error) {
 		// Non-critical cleanup.
+		logInternalError("cleanup.worktreePrune", error instanceof Error ? error : new Error(String(error)));
 	}
 	try {
-		if (fs.existsSync(worktreeRoot) && fs.readdirSync(worktreeRoot).length === 0) fs.rmSync(worktreeRoot, { recursive: true, force: true });
-	} catch {
-		// Non-critical cleanup.
+		// Issue 1 fix: Use rmdirSync which fails atomically on non-empty directories,
+		// avoiding TOCTOU race between readdirSync check and rmSync removal.
+		// Ignore ENOENT (already removed) and ENOTEMPTY (became non-empty between check and remove).
+		fs.rmdirSync(worktreeRoot);
+	} catch (error) {
+		// Non-critical cleanup. Ignore ENOENT and ENOTEMPTY.
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "ENOENT" && code !== "ENOTEMPTY") {
+			// Optionally log unexpected errors in debug mode
+		}
 	}
 	return result;
 }

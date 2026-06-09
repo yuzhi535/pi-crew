@@ -331,6 +331,10 @@ export function reconcileStaleRun(
 	// Phase 1: Check if results already exist
 	const phase1 = checkResultFile(manifest, tasks);
 	if (phase1.found) {
+		// checkResultFile sets manifest.status='completed' and saves it,
+		// but we re-save to ensure the completed status is persisted
+		// before returning (avoids TOCTOU where caller might re-read stale data)
+		saveRunManifest(manifest);
 		return {
 			runId,
 			verdict: "result_exists",
@@ -548,14 +552,12 @@ export function reconcileOrphanedTempWorkspaces(
 						}
 						// Persist result_exists manifest status update
 							if (result.verdict === "result_exists") {
-								// checkResultFile already updated manifest.status = 'completed'
-								// but caller never persisted it — fix that now
-								fs.writeFileSync(
-									manifestPath,
-									JSON.stringify(manifest, null, 2),
-								);
+								// checkResultFile (called by reconcileStaleRun at line 518)
+								// already saved manifest.status='completed' at line 66.
+								// No additional manifest write needed here — avoids TOCTOU
+								// window between checkResultFile save and re-write.
 								// Sync agent records (checkResultFile also does this but
-								// we persist manifest first so agents are consistent)
+								// we sync here for consistency)
 								for (const task of tasks) {
 									try {
 										upsertCrewAgent(
@@ -608,8 +610,12 @@ export function reconcileOrphanedTempWorkspaces(
 			const sentinelPath = path.join(workspaceDir, ".cleanup-in-progress");
 			let canCleanup = !hasRunning;
 			if (canCleanup) {
-				// Create sentinel file before re-scan to signal cleanup in progress
+				// Create sentinel file before re-scan to signal cleanup in progress.
+				// O_EXCL requires workspaceDir to exist — ensure it before writing.
 				try {
+					if (!fs.existsSync(workspaceDir)) {
+						fs.mkdirSync(workspaceDir, { recursive: true });
+					}
 					fs.writeFileSync(sentinelPath, JSON.stringify({ startedAt: now }), {
 						flag: "wx",
 					});

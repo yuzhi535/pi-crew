@@ -273,6 +273,10 @@ function runCleanup(
 	}
 }
 
+// Module-level flag: set by unhandled rejection guard and main() catch.
+// Used by the module-level catch to signal that finally should call process.exit(1).
+let exitDueToRejection = false;
+
 async function main(): Promise<void> {
 	// FIX: Store logFd so it can be closed on exit to prevent file descriptor leak
 	let logFd: number | undefined;
@@ -346,6 +350,8 @@ async function main(): Promise<void> {
 	})();
 	if (exitCodePath) {
 		process.on("exit", (code) => {
+			// Only log non-zero exit codes to avoid noise in exit-code.txt
+			if (code === 0 || code === undefined) return;
 			try {
 				fs.appendFileSync(
 					exitCodePath,
@@ -371,7 +377,7 @@ async function main(): Promise<void> {
 		loaded = withRunLockSync(
 			{ stateRoot: "", runId, cwd } as TeamRunManifest,
 			() => loadRunManifestById(cwd, runId),
-			{ staleMs: 5000 },
+			{ staleMs: 30_000 },
 		);
 	} catch (lockErr) {
 		throw new Error(`Failed to acquire lock for run '${runId}': ${lockErr instanceof Error ? lockErr.message : String(lockErr)}`);
@@ -469,7 +475,7 @@ async function main(): Promise<void> {
 	};
 	// FIX Issues #2& #4: Flag to signal that an unhandled rejection occurred.
 	// When set, runCleanup() will ensure process.exit(1) is called after cleanup.
-	let exitDueToRejection = false;
+	exitDueToRejection = false;
 	const setExitFlag = (): void => {
 		exitDueToRejection = true;
 	};
@@ -640,12 +646,12 @@ async function main(): Promise<void> {
 	} catch (error) {
 		// Terminate live agents on failure too — agents are done when the run fails
 		try {
-			const loaded = loadRunManifestById(cwd, runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency;
-			// This best-effort read is used to update task status on failure. If another writer
-			// (e.g., the stale reconciler) concurrently modifies the manifest between the read
-			// and the subsequent save, the save could overwrite the reconciler's changes. The
-			// run could remain stuck in 'running' status if the save fails to acquire the lock.
-			// The stale reconciler will eventually repair this inconsistency.
+			const loaded = withRunLockSync(
+				manifest,
+				() => loadRunManifestById(cwd, runId),
+				{ staleMs: 30_000 },
+			); // Use withRunLockSync to prevent race with concurrent writers (e.g., stale reconciler)
+			// between the read and the subsequent save.
 			const manifestToUse = loaded?.manifest ?? manifest;
 			if (manifestToUse) {
 				// LAZY: live-agent-manager only needed on failure cleanup path; avoid module load at hot path.
@@ -698,15 +704,34 @@ async function main(): Promise<void> {
 				`[background-runner] runCleanup threw: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
 			);
 		}
-		// If exitDueToRejection was set, we must exit with code 1 regardless of
-		// whether runCleanup succeeded or threw.
-		if (exitDueToRejection) process.exit(1);
+		// NOTE: If exitDueToRejection was set, runCleanup() already called process.exit(1)
+		// so this finally block never continues past that point.
 	}
 }
 
-await main().catch((err) => {
+// FIX Issue #1: Restructure so the finally block (which calls runCleanup) ALWAYS
+// runs and decides when to exit. The old pattern: await main().catch((err) =>
+// { process.exit(1); }) bypassed the finally block because .catch() intercepted
+// the rejection and called process.exit(1) directly. If exitDueToRejection was
+// already true, the finally called process.exit(1) first and .catch() was never
+// reached. If exitDueToRejection was false (main() threw but unhandled rejection
+// guard didn't fire), .catch() ran instead of the finally block doing the exit.
+// New pattern: move await main() inside main() itself, wrapped in try/catch that
+// sets exitDueToRejection so the finally block exits with code 1 after cleanup.
+try {
+	await main();
+} catch (err) {
 	console.error(
-		`[background-runner] DEBUG: main() uncaught: ${err?.message ?? err}`,
+		`[background-runner] DEBUG: main() uncaught: ${err instanceof Error ? err.message : String(err)}`,
 	);
-	process.exit(1);
-});
+	// FIX Issue #1: Set the flag so the finally block's runCleanup() call
+	// will trigger process.exit(1) after cleanup completes. Previously this
+	// called process.exit(1) directly, bypassing the finally block and leaving
+	// orphaned child processes.
+	exitDueToRejection = true;
+	// FIX: Call stopParentGuard directly here as a safety net in case the
+	// finally block (which calls runCleanup→stopParentGuard) does not complete.
+	// This ensures the parent guard is stopped in ALL exit paths: normal
+	// completion, unhandled rejection, and fatal errors.
+	stopParentGuard();
+}

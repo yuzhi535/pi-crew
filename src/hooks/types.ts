@@ -32,10 +32,12 @@ export interface HookContext {
 	taskId?: string;
 	cwd: string;
 	// NOTE: Hooks receive a shared mutable context object. A hook may directly set
-	// properties on ctx (including dangerous names like "__proto__", "constructor").
-	// This is an intentional design choice: hook authors are trusted. The
-	// sanitizeMergeData function prevents dangerous properties from propagating
-	// via result.data merge, but direct ctx mutations bypass that protection.
+	// properties on ctx, but MUST NOT set dangerous names like "__proto__",
+	// "constructor", "prototype", etc. (see registry.ts POLLUTED_KEYS).
+	// Hook authors are trusted but must avoid prototype pollution attacks.
+	// The sanitizeMergeData function prevents dangerous properties from propagating
+	// via result.data merge, and a runtime guard rejects direct mutations of
+	// dangerous keys before passing ctx to handlers.
 	[key: string]: unknown;
 }
 
@@ -52,6 +54,8 @@ export interface HookDefinition {
 	// SECURITY: Optional workspace scoping. When set, the hook only executes for
 	// runs in the specified workspace. When absent, the hook applies to all runs.
 	workspaceId?: string;
+	/** @internal Internal hook ID for scope-aware cleanup. */
+	_hookId?: number;
 }
 
 export interface HookExecutionReport {

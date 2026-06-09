@@ -122,7 +122,12 @@ function computeRepoRoot(start: string): string | undefined {
 }
 
 export function projectPiRoot(cwd: string): string {
-	return path.join(findRepoRoot(cwd) ?? cwd, ".pi");
+	const repoRoot = findRepoRoot(cwd) ?? cwd;
+	const piDir = path.join(repoRoot, ".pi");
+	// Use realpathSync to resolve any symlinks before returning to prevent
+	// config from being read from unexpected locations.
+	if (fs.existsSync(piDir)) return fs.realpathSync(piDir);
+	return piDir;
 }
 
 export function projectCrewRoot(cwd: string): string {

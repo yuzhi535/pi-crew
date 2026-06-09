@@ -22,8 +22,10 @@ export function updateTask(tasks: TeamTaskState[], updated: TeamTaskState): Team
  * to record its mtime. After merging, re-stat — if mtime changed, another writer
  * committed first; retry with the fresh state. This is O(retry) under contention but
  * converges in the normal single-writer case.
+ *
+ * @param checkpointPhase - Optional checkpoint phase to include in the task state alongside the update.
  */
-export function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks: TeamTaskState[], updated: TeamTaskState): TeamTaskState[] {
+export function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks: TeamTaskState[], updated: TeamTaskState, checkpointPhase?: TaskCheckpointState["phase"]): TeamTaskState[] {
 	let baseMtime = 0;
 	try {
 		baseMtime = fs.statSync(manifest.tasksPath).mtimeMs;
@@ -34,11 +36,16 @@ export function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks
 
 	let merged: TeamTaskState[] | undefined;
 
+	// Build the task with optional checkpoint phase
+	const taskWithCheckpoint = checkpointPhase
+		? { ...updated, checkpoint: { phase: checkpointPhase, updatedAt: new Date().toISOString() } }
+		: updated;
+
 	try {
 		return withRunLockSync(manifest, () => {
-			retryLoop: for (let attempt = 0; attempt < 50; attempt++) {
+			retryLoop: for (let attempt = 0; attempt < 100; attempt++) {
 				const latest = loadRunManifestById(manifest.cwd, manifest.runId)?.tasks ?? fallbackTasks;
-				merged = updateTask(latest, updated);
+				merged = updateTask(latest, taskWithCheckpoint);
 
 				// Re-stat to detect concurrent writes
 				let currentMtime: number;

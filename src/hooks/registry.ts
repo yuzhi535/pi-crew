@@ -5,19 +5,42 @@ import { runEventBus } from "../ui/run-event-bus.ts";
 
 const registry = new Map<HookName, HookDefinition[]>();
 
+// Track hook IDs registered by pi-crew for scope-aware cleanup
+const _piCrewHookIds = new Set<number>();
+let _nextHookId = 1;
+
 // SECURITY: Hooks are currently global (registered once, applied to all workspaces).
 // For multi-workspace environments, consider filtering hooks by workspace scope:
 //   const workspaceHooks = getHooks(name).filter(h => !h.workspaceId || h.workspaceId === ctx.workspaceId);
 // This prevents globally-registered hooks from operating on runs they weren't designed for.
 
-export function registerHook(definition: HookDefinition): void {
+export function registerHook(definition: HookDefinition): number {
+	const hookId = _nextHookId++;
+	_piCrewHookIds.add(hookId);
 	const hooks = registry.get(definition.name) ?? [];
-	hooks.push(definition);
+	hooks.push({ ...definition, _hookId: hookId });
 	registry.set(definition.name, hooks);
+	return hookId;
 }
 
 export function clearHooks(): void {
 	registry.clear();
+	_piCrewHookIds.clear();
+	_nextHookId = 1;
+}
+
+// Scope-aware hook clearing: only removes hooks registered by pi-crew
+export function clearHooksScoped(): void {
+	for (const [name, hooks] of registry) {
+		const remaining = hooks.filter((h) => !("_hookId" in h && _piCrewHookIds.has((h as { _hookId?: number })._hookId ?? -1)));
+		if (remaining.length === 0) {
+			registry.delete(name);
+		} else {
+			registry.set(name, remaining);
+		}
+	}
+	_piCrewHookIds.clear();
+	_nextHookId = 1;
 }
 
 export function getHooks(name: HookName): HookDefinition[] {
@@ -55,6 +78,17 @@ export async function executeHook(name: HookName, ctx: HookContext): Promise<Hoo
 		}
 		return clean;
 	}
+	// Sanitize ctx by stripping dangerous property names before passing to handlers.
+	// Hook authors must NOT set these keys directly on ctx: [...POLLUTED_KEYS]
+	// This sanitization runs at the start of executeHook to prevent prototype pollution attacks.
+	function sanitizeContext(ctx: HookContext): HookContext {
+		for (const key of Object.keys(ctx)) {
+			if (POLLUTED_KEYS.has(key.toLowerCase())) {
+				delete ctx[key];
+			}
+		}
+		return ctx;
+	}
 	function sanitizeErrorMessage(message: string): string {
 		// Remove file paths, environment variable references, and other potentially sensitive data
 		return message
@@ -67,7 +101,7 @@ export async function executeHook(name: HookName, ctx: HookContext): Promise<Hoo
 	let capturedModifications: Record<string, unknown> | undefined;
 	for (const hook of scopedHooks) {
 			try {
-				const result: HookResult = await hook.handler(ctx);
+				const result: HookResult = await hook.handler(sanitizeContext(ctx));
 				if (hook.mode === "blocking" && result.outcome === "block") {
 					return { hookName: name, outcome: "block", durationMs: Date.now() - start, reason: result.reason };
 				}
