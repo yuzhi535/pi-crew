@@ -81,8 +81,9 @@ export function compactEventLog(eventsPath: string, config?: Partial<RotationCon
 	return withEventLogLockSync(eventsPath, () => {
 		try {
 			atomicWriteFile(eventsPath, lines);
-		} catch {
+		} catch (err) {
 			// Concurrent write conflict — skip compaction this cycle
+			logInternalError("event-log-rotation.compact", err, `eventsPath=${eventsPath}`);
 			return undefined;
 		}
 		// C2: Re-read to recover any events appended during the compaction window.

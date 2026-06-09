@@ -576,7 +576,7 @@ function sanitizeObject(obj: Record<string, unknown>): Record<string, unknown> {
 	return sanitized;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value))
 		return undefined;
 	// Defensive: create a sanitized copy to prevent prototype pollution.
@@ -1442,11 +1442,9 @@ export function updateAutonomousConfig(
 				? (current.autonomous as Record<string, unknown>)
 				: {};
 		current.autonomous = { ...currentAutonomous, ...patch };
-		fs.mkdirSync(path.dirname(filePath), { recursive: true });
-		fs.writeFileSync(
+		atomicWriteFile(
 			filePath,
 			`${JSON.stringify(current, null, 2)}\n`,
-			"utf-8",
 		);
 		return { path: filePath, config: parseConfig(current) };
 	});

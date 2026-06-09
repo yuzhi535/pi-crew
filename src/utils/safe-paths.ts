@@ -61,8 +61,9 @@ export function resolveContainedPath(baseDir: string, targetPath: string): strin
  * NOTE: There is a race condition window between validation and use where an
  * attacker could create a directory component after validation but before the
  * file is created. Callers MUST create parent directories atomically
- * (e.g., mkdirSync with { recursive: true }) or use O_CREAT with O_NOFOLLOW
- * flags in the actual file operation to minimize this window.
+ * (e.g., mkdirSync with { recursive: true }) and use O_CREAT | O_NOFOLLOW | O_EXCL
+ * for atomic file creation, as atomicWriteFile does. This ensures the entire
+ * operation is atomic and prevents TOCTOU attacks.
  */
 export function resolveRealContainedPath(baseDir: string, targetPath: string): string {
 	if (targetPath.includes('\0')) {

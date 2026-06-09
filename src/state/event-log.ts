@@ -375,6 +375,15 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 		if (!skippedDueToSize) {
 			const line = JSON.stringify(redactSecrets(fullEvent)) + "\n";
 			await fs.promises.appendFile(eventsPath, line, { encoding: "utf-8", flag: "a" });
+			// FIX: fsync to ensure event content is flushed to disk before persisting
+			// the sequence number. This closes the crash window between appendFile and
+			// persistSequence where sequence reuse could occur on restart.
+			const fd = await fs.promises.open(eventsPath, "r+");
+			try {
+				await fd.sync();
+			} finally {
+				await fd.close();
+			}
 			// FIX: Persist sequence AFTER successful appendFile to ensure sidecar
 			// is only updated when the event is definitively written. If appendFile
 			// threw, we would not reach here and the sidecar would not be updated,
@@ -493,6 +502,15 @@ function appendEventInsideLock(eventsPath: string, event: AppendTeamEvent): Team
 	const seq = fullEvent.metadata?.seq ?? 0;
 	if (!skippedDueToSize) {
 		fs.appendFileSync(eventsPath, `${JSON.stringify(redactSecrets(fullEvent))}\n`, "utf-8");
+		// FIX: fsync to ensure event content is flushed to disk before persisting
+		// the sequence number. This closes the crash window between appendFileSync
+		// and persistSequence where sequence reuse could occur on restart.
+		const fd = fs.openSync(eventsPath, "r+");
+		try {
+			fs.fsyncSync(fd);
+		} finally {
+			fs.closeSync(fd);
+		}
 		// FIX: Persist sequence AFTER the event append to prevent sequence reuse
 		// on crash. Only update the sidecar when the event is definitively written.
 		persistSequence(eventsPath, seq);

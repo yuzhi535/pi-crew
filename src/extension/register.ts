@@ -5,7 +5,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { loadConfig } from "../config/config.ts";
+import { asRecord, loadConfig } from "../config/config.ts";
 import { applyCrewSettingsToConfig, loadCrewSettings } from "../runtime/settings-store.ts";
 // 2.7: Lazy-load LiveRunSidebar — only constructed when the user actually opens
 // a live run sidebar overlay. The class pulls in transcript-viewer and other
@@ -87,6 +87,7 @@ import {
 	projectCrewRoot,
 	userCrewRoot,
 } from "../utils/paths.ts";
+import { resolveContainedPath } from "../utils/safe-paths.ts";
 import { resetTimings, time } from "../utils/timings.ts";
 import {
 	type PiCrewRpcHandle,
@@ -1861,8 +1862,15 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			);
 			const paths: string[] = [];
 			if (fs.existsSync(extSkillDir)) paths.push(extSkillDir);
-			if (skillDir !== extSkillDir && fs.existsSync(skillDir))
-				paths.push(skillDir);
+			if (skillDir !== extSkillDir && fs.existsSync(skillDir)) {
+				// Validate skillDir is within sessionCwd to prevent path traversal
+				try {
+					resolveContainedPath(sessionCwd, "skills");
+					paths.push(skillDir);
+				} catch {
+					// skillDir outside sessionCwd boundary — skip
+				}
+			}
 			return paths.length > 0 ? { skillPaths: paths } : {};
 		});
 	} catch {
@@ -1886,7 +1894,8 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		if (event.toolName !== "team") return;
 		const rawInput = event.input;
 		if (!rawInput || typeof rawInput !== "object") return;
-		const input = rawInput as { action?: unknown; confirm?: unknown; force?: unknown };
+		const input = asRecord(rawInput);
+		if (!input) return;
 		const action = typeof input.action === "string" ? input.action : undefined;
 		const destructiveActions = new Set(["delete", "forget", "prune", "cleanup"]);
 		if (!action || !destructiveActions.has(action)) return;

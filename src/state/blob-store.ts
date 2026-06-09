@@ -164,6 +164,7 @@ export function writeBlob(artifactsRoot: string, input: {
 				// have identical mime/retention/producer/originalPath but different
 				// taskId, the conflict check passes and both writes succeed — the
 				// final taskId reflects whichever write completed last.
+				// Callers should not rely on taskId for correctness-critical decisions.
 				if (existingMeta.mime !== metadata.mime ||
 					existingMeta.retention !== metadata.retention ||
 					existingMeta.producer !== metadata.producer ||
@@ -172,8 +173,9 @@ export function writeBlob(artifactsRoot: string, input: {
 				}
 			} catch (err) {
 				if (err instanceof Error && err.message.includes("ENOENT")) {
-					// OK - metadata doesn't exist yet
+					// OK - metadata doesn't exist yet, proceed to write
 				} else {
+					// Re-throw non-ENOENT errors (e.g., permission denied, corrupt file)
 					throw err;
 				}
 			}
@@ -198,7 +200,7 @@ export function writeBlob(artifactsRoot: string, input: {
 		// The caller can retry the metadata write if needed.
 		// However, if metadata was never written (metadataWritten === false),
 		// the blob is orphaned and should be cleaned up.
-		if (!metadataWritten) {
+		if (!blobContentWritten) {
 			try { fs.rmSync(blobPath, { force: true }); } catch { /* best-effort */ }
 		}
 		throw error;

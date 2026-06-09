@@ -209,6 +209,11 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 			 *   - sanitizeEnvSecrets strips all env vars NOT on this list.
 			 *   - Do NOT add wildcards ("*_API_KEY") — only explicit, intended provider keys.
 			 *   - Consider per-task key scoping if the architecture allows it in the future.
+			 *
+			 * MAINTENANCE REQUIREMENT: When new secret env vars are added to the Pi ecosystem,
+			 * they MUST be explicitly added to this allowlist to be passed to child processes.
+			 * A CI check should fail if a secret-like env var (matching patterns like *_API_KEY,
+			 * *_TOKEN, *_SECRET) is detected in the codebase but not present in this list.
 			 */
 			// Model provider API keys (explicit list — do NOT use wildcards)
 			"MINIMAX_API_KEY",
@@ -541,6 +546,15 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			// any secret values before the env reaches spawn(). However, if built.env ever gains
 			// secret content without corresponding allowlist filtering, secrets would leak to children.
 			// This comment serves as a warning: built.env must never contain secret values.
+			//
+			// Runtime assertion: verify all built.env keys are execution-control vars (PI_CREW_* or PI_TEAMS_*).
+			// This is a canary for future regressions — if someone accidentally adds a secret key to
+			// built.env, the assertion will throw before the secret reaches the child process.
+			for (const key of Object.keys(built.env)) {
+				if (!key.startsWith("PI_CREW_") && !key.startsWith("PI_TEAMS_")) {
+					throw new Error(`SECURITY: built.env contains unexpected key "${key}"; expected only PI_CREW_* or PI_TEAMS_* execution-control vars`);
+				}
+			}
 			const child = spawn(spawnSpec.command, spawnSpec.args, buildChildPiSpawnOptions(input.cwd, { ...process.env, ...built.env }));
 			if (child.pid) {
 				activeChildProcesses.set(child.pid, child);

@@ -40,6 +40,7 @@ interface ManifestCacheEntry {
 let manifestCacheGeneration = 0;
 
 const MANIFEST_CACHE_TTL_MS = 15 * 1000; // 15 seconds (FIX: increased from 5s for read-heavy workloads; 5s was too short causing unnecessary cache invalidation)
+const LOAD_MANIFEST_RETRY_LIMIT = 5; // Configurable retry limit for mtime/size stability checks under contention
 const manifestCache = new Map<string, ManifestCacheEntry>();
 
 function setManifestCache(stateRoot: string, entry: ManifestCacheEntry): void {
@@ -101,6 +102,9 @@ function resolveRunStateRoot(cwd: string, runId: string): string | undefined {
 }
 
 function validateRunManifestPaths(cwd: string, runId: string, manifest: TeamRunManifest, stateRoot: string, tasksPath: string): boolean {
+	// Issue 2 fix: Reject manifests missing status field to prevent undefined
+	// behavior in callers like canTransitionRunStatus(manifest.status, newStatus).
+	if (!manifest.status || typeof manifest.status !== "string") return false;
 	if (manifest.runId !== runId || manifest.stateRoot !== stateRoot || manifest.tasksPath !== tasksPath || manifest.eventsPath !== path.join(stateRoot, "events.jsonl")) return false;
 	const artifactsParent = path.join(scopeBaseRoot(cwd), DEFAULT_PATHS.state.artifactsSubdir);
 	const expectedArtifactsRoot = resolveContainedRelativePath(artifactsParent, runId, "runId");
@@ -479,6 +483,12 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 		return undefined;
 	}
 	const cached = manifestCache.get(stateRoot);
+	// Issue 1 fix: Note that the cache read-check-use sequence below is NOT atomic
+	// under concurrent modification. While individual JS Map operations are atomic,
+	// the sequence spanning multiple filesystem operations is not atomic. Callers MUST
+	// NOT invoke loadRunManifestById concurrently with cache-modifying operations
+	// (setManifestCache, invalidateRunCache) for the same stateRoot. The generation
+	// counter provides some protection, but does not make the read-check-use atomic.
 	let tasksStat: fs.Stats | undefined;
 	try {
 		tasksStat = fs.statSync(tasksPath);
@@ -521,17 +531,14 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 	}
 
 	// FIX: Sentinel-based retry loop for best-effort consistency. Re-stat and
-	// re-read until mtime/size are stable. The 3-attempt limit is arbitrary —
-	// high contention can cause non-convergence. IMPORTANT: This loop does NOT
-	// guarantee consistency under contention because the final stat and final
-	// read are not atomic. A concurrent writer can complete a full write cycle
-	// between the final stat and the read, making the cached mtime/size stale.
-	// For strict consistency, callers MUST wrap load+modify+save in
-	// withRunLock(). This loop is best-effort only for benign race conditions.
+	// re-read until mtime/size are stable. The retry limit is now configurable
+	// via LOAD_MANIFEST_RETRY_LIMIT (was hardcoded 3). High contention can still
+	// cause non-convergence — for strict consistency, callers MUST use withRunLock().
+	// Issue 3 fix: Made retry limit configurable instead of hardcoded 3.
 	let attempts = 0;
 	let manifest: TeamRunManifest | undefined;
 	let tasks: TeamTaskState[] | undefined;
-	while (attempts < 3) {
+	while (attempts < LOAD_MANIFEST_RETRY_LIMIT) {
 		const freshStat = fs.statSync(manifestPath);
 		manifest = readJsonFile<TeamRunManifest>(manifestPath);
 		const freshTasksStat = fs.existsSync(tasksPath) ? fs.statSync(tasksPath) : undefined;
@@ -585,6 +592,8 @@ export async function loadRunManifestByIdAsync(cwd: string, runId: string): Prom
 		return undefined;
 	}
 	const cached = manifestCache.get(stateRoot);
+	// Issue 1 fix: Note that the cache read-check-use sequence below is NOT atomic
+	// under concurrent modification. Same as sync version — see loadRunManifestById.
 	let tasksStat: fs.Stats | undefined;
 	try {
 		tasksStat = await fs.promises.stat(tasksPath);
@@ -615,10 +624,11 @@ export async function loadRunManifestByIdAsync(cwd: string, runId: string): Prom
 
 	// FIX: Sentinel-based retry loop to close TOCTOU window between stat and read.
 	// Matches the pattern used in the sync loadRunManifestById.
+	// Issue 3 fix: Made retry limit configurable instead of hardcoded 3.
 	let manifest: TeamRunManifest | undefined;
 	let tasks: TeamTaskState[] | undefined;
 	let attempts = 0;
-	while (attempts < 3) {
+	while (attempts < LOAD_MANIFEST_RETRY_LIMIT) {
 		const freshStat = await fs.promises.stat(manifestPath);
 		manifest = await readJsonFileAsync<TeamRunManifest>(manifestPath);
 		const freshTasksStat = await fs.promises.stat(tasksPath).catch(() => undefined);

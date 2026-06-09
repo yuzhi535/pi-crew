@@ -130,8 +130,12 @@ function readLockToken(filePath: string): string | undefined {
 function timingSafeTokenMatch(a: string, b: string): boolean {
 	const bufA = Buffer.from(String(a));
 	const bufB = Buffer.from(String(b));
-	if (bufA.length !== bufB.length) return false;
-	return timingSafeEqual(bufA, bufB);
+	const len = Math.max(bufA.length, bufB.length);
+	const safeA = Buffer.alloc(len);
+	const safeB = Buffer.alloc(len);
+	bufA.copy(safeA);
+	bufB.copy(safeB);
+	return timingSafeEqual(safeA, safeB);
 }
 
 function releaseLock(filePath: string, token: string): void {
@@ -204,7 +208,16 @@ function acquireLockWithRetry(filePath: string, staleMs: number, kind: LockKind 
 				if (fd >= 0) fs.closeSync(fd);
 			}
 			// O_EXCL succeeded — we atomically verified the lock is still free.
-			// Now it is safe to remove it.
+			// Now verify the token is still valid (not replaced by a new lock).
+			// If the token is missing, the lock was replaced and we should not remove it.
+			const currentToken = readLockToken(filePath);
+			if (currentToken === undefined) {
+				// Lock was replaced between O_EXCL and now — retry the full sequence
+				sleepSync(Math.min(250, 25 * 2 ** attempt));
+				attempt++;
+				continue;
+			}
+			// Token is valid — proceed to remove the stale lock.
 			try {
 				fs.rmSync(filePath, { force: true });
 			} catch { /* race — let loop retry */ }
@@ -262,7 +275,17 @@ async function acquireLockWithRetryAsync(filePath: string, staleMs: number, kind
 				if (fd >= 0) fs.closeSync(fd);
 			}
 			// O_EXCL succeeded — we atomically verified the lock is still free.
-			// Now it is safe to remove it.
+			// Now verify the token is still valid (not replaced by a new lock).
+			// If the token is missing, the lock was replaced and we should not remove it.
+			const currentToken = readLockToken(filePath);
+			if (currentToken === undefined) {
+				// Lock was replaced between O_EXCL and now — retry the full sequence
+				const delay = Math.min(250, 25 * 2 ** attempt);
+				await sleep(delay);
+				attempt++;
+				continue;
+			}
+			// Token is valid — proceed to remove the stale lock.
 			try {
 				fs.rmSync(filePath, { force: true });
 			} catch { /* race — let loop retry */ }
@@ -298,7 +321,24 @@ export function withFileLockSync<T>(filePath: string, fn: () => T, options: RunL
 		// The lock will be acquired fresh for the new file (if fn creates it).
 		try { fs.rmSync(lockFile, { force: true }); } catch { /* ignore */ }
 	}
-	const token = acquireLockWithRetry(lockFile, staleMs, "file");
+	// FIX (TOCTOU): Re-validate symlink safety before each lock acquisition
+	// attempt. Between our initial check and the acquisition (and between
+	// acquireLockWithRetry's internal retries), an attacker could plant a
+	// symlink. We must re-check on each iteration to catch TOCTOU races.
+	let token = "";
+	let attempt = 0;
+	const deadline = Date.now() + staleMs * 2;
+	while (Date.now() <= deadline) {
+		if (!isSymlinkSafePath(path.dirname(lockFile))) throw new Error("Refusing: parent of lock directory is a symlink");
+		try {
+			token = acquireLockWithRetry(lockFile, staleMs, "file");
+			break;
+		} catch {
+			sleepSync(Math.min(250, 25 * 2 ** attempt));
+			attempt++;
+		}
+	}
+	if (token === "") throw new Error(`Run '${path.basename(lockFile)}' is locked by another operation.`);
 	try {
 		return fn();
 	} finally {

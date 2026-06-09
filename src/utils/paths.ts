@@ -38,7 +38,13 @@ export function userPiRoot(): string {
 		if (err instanceof Error && "code" in err && err.code !== "ENOENT") {
 			throw err;
 		}
-		// ENOENT is acceptable — the directory may not exist yet.
+		// ENOENT from lstatSync means the path does not exist. We cannot validate
+		// symlink safety on a non-existent path, so throw rather than silently
+		// returning an unvalidated path.
+		throw new Error(
+			`userPiRoot: PI_TEAMS_HOME path "${resolved}" does not exist and cannot be validated. ` +
+			"Set PI_TEAMS_HOME to a path that exists and is owned by the current user.",
+		);
 	}
 
 	return resolved;

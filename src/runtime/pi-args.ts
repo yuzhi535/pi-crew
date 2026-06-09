@@ -149,13 +149,13 @@ export function createSafeTempDir(base: string, prefix: string): string {
 	// validation loop (lines 135-146) and realpathSync, realpathSync throws
 	// ENOENT. Re-validate and retry to handle fast delete+recreate races.
 	let resolvedBase: string;
-	let realpathRetries = 3;
+	let retries = 3;
 	while (true) {
 		try {
 			resolvedBase = fs.realpathSync(base);
 			break;
 		} catch (e: unknown) {
-			if (--realpathRetries <= 0) throw e;
+			if (--retries <= 0) throw e;
 			// ENOENT: re-validate ancestor chain and retry
 			const code = e instanceof Object && "code" in e ? (e as { code: string }).code : undefined;
 			if (code !== "ENOENT") throw e;
@@ -164,7 +164,6 @@ export function createSafeTempDir(base: string, prefix: string): string {
 		const revalidateParts = absoluteBase.split(path.sep);
 		let revalidateAccumulated = "";
 		if (revalidateParts[0] === "") revalidateAccumulated = "/";
-		let revalidateOk = true;
 		for (let i = 1; i < revalidateParts.length; i++) {
 			if (revalidateParts[i] === "") continue;
 			revalidateAccumulated = path.join(revalidateAccumulated, revalidateParts[i]);
@@ -176,11 +175,9 @@ export function createSafeTempDir(base: string, prefix: string): string {
 			} catch (e) {
 				if (e instanceof Error && e.message.includes("symlink")) throw e;
 				// Component doesn't exist — stop re-validating, retry realpathSync
-				revalidateOk = false;
 				break;
 			}
 		}
-		void revalidateOk; // suppress unused warning
 	}
 	// Issue #2 fix: verify resolvedBase itself is not a symlink (TOCTOU
 	// between realpathSync and the ancestor walk). If a symlink was
@@ -386,6 +383,27 @@ export function __test_getTrackedTempDirs(): readonly string[] {
 	return [...createdTempDirs];
 }
 
+/**
+ * Purge stale entries from createdTempDirs — directories that no longer
+ * exist on disk. This handles the case where a process crashed before
+ * cleanupAllTrackedTempDirs ran, leaving orphaned entries in the Set.
+ * Called at startup as a belt-and-suspenders measure alongside the
+ * periodic cleanupOrphanTempDirs.
+ */
+export function purgeStaleTrackedTempDirs(): { removed: number; remaining: number } {
+	let removed = 0;
+	for (const dir of [...createdTempDirs]) {
+		if (!fs.existsSync(dir)) {
+			createdTempDirs.delete(dir);
+			removed++;
+		}
+	}
+	return { removed, remaining: createdTempDirs.size };
+}
+
+// Run startup purge to prevent unbounded Set growth from crash loops.
+purgeStaleTrackedTempDirs();
+
 /** Max age (ms) for orphan temp dirs. Anything older is considered abandoned. */
 const ORPHAN_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
 /** Cap dirs removed per call to avoid main-thread stalls. */
@@ -520,7 +538,13 @@ export function cleanupLegacyOrphanTempDirs(
 			// Skip dirs containing active run state — those are handled by
 			// reconcileOrphanedTempWorkspaces which has run-state semantics.
 			const crewDir = path.join(dir, ".crew");
-			if (fs.existsSync(crewDir)) continue;
+			let crewDirLstat: fs.Stats | undefined;
+			try {
+				crewDirLstat = fs.lstatSync(crewDir);
+			} catch {
+				// doesn't exist
+			}
+			if (crewDirLstat && !crewDirLstat.isSymbolicLink()) continue;
 			// Skip dirs currently tracked by this process (defense in depth:
 			// with 8ba270d the Set should never contain /tmp/ paths, but
 			// future code or external callers might).
