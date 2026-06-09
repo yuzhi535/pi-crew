@@ -144,8 +144,44 @@ export function createSafeTempDir(base: string, prefix: string): string {
 			break;
 		}
 	}
-	// Resolve base to canonical path before joining
-	const resolvedBase = fs.realpathSync(base);
+	// Resolve base to canonical path before joining.
+	// Issue #1 fix: if the base dir is deleted between the post-mkdir
+	// validation loop (lines 135-146) and realpathSync, realpathSync throws
+	// ENOENT. Re-validate and retry to handle fast delete+recreate races.
+	let resolvedBase: string;
+	let realpathRetries = 3;
+	while (true) {
+		try {
+			resolvedBase = fs.realpathSync(base);
+			break;
+		} catch (e: unknown) {
+			if (--realpathRetries <= 0) throw e;
+			// ENOENT: re-validate ancestor chain and retry
+			const code = e instanceof Object && "code" in e ? (e as { code: string }).code : undefined;
+			if (code !== "ENOENT") throw e;
+		}
+		// Re-validate ancestor chain post-mkdir (same logic as lines 135-146)
+		const revalidateParts = absoluteBase.split(path.sep);
+		let revalidateAccumulated = "";
+		if (revalidateParts[0] === "") revalidateAccumulated = "/";
+		let revalidateOk = true;
+		for (let i = 1; i < revalidateParts.length; i++) {
+			if (revalidateParts[i] === "") continue;
+			revalidateAccumulated = path.join(revalidateAccumulated, revalidateParts[i]);
+			try {
+				const stat = fs.lstatSync(revalidateAccumulated);
+				if (stat.isSymbolicLink()) {
+					throw new Error("Refusing to create temp dir: ancestor is a symlink (post-mkdir): " + revalidateAccumulated);
+				}
+			} catch (e) {
+				if (e instanceof Error && e.message.includes("symlink")) throw e;
+				// Component doesn't exist — stop re-validating, retry realpathSync
+				revalidateOk = false;
+				break;
+			}
+		}
+		void revalidateOk; // suppress unused warning
+	}
 	// Issue #2 fix: verify resolvedBase itself is not a symlink (TOCTOU
 	// between realpathSync and the ancestor walk). If a symlink was
 	// created at the base path after realpathSync returned, catch it.
@@ -505,6 +541,10 @@ export function cleanupLegacyOrphanTempDirs(
 				// Reuse preRmlstat (captured at line 494) — already verified non-symlink at line 501.
 				// Avoid calling lstatSync again to eliminate the TOCTOU window between
 				// preRmlstat lstatSync (line 494) and this mtime check.
+				// NOTE: This is a best-effort approximation. The mtime was captured at line 494,
+				// potentially seconds before the rmSync at line 505. If the directory was modified
+				// after line 494, the age check uses stale data. This could cause premature cleanup
+				// of dirs that were recently modified but appeared old based on cached mtime (±seconds jitter).
 				if (now - preRmlstat.mtimeMs > ORPHAN_TEMP_MAX_AGE_MS) {
 					fs.rmSync(dir, { recursive: true, force: true });
 					cleaned++;

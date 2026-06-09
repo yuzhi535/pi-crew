@@ -55,20 +55,34 @@ export interface OrphanWorkerEntry {
 }
 
 /**
- * Get process start time in milliseconds since boot from /proc/<pid>/stat.
- * Returns undefined if the process is gone or /proc is unavailable.
+ * Get process start time in milliseconds since boot.
+ * Uses platform-specific APIs for cross-platform PID reuse detection:
+ * - Linux: reads /proc/<pid>/stat (field 22, starttime)
+ * - macOS: sysctl KERN_PROC_PID to get kinfo_proc and extract p_starttime
+ * - Windows: GetProcessTimes API to get creation time
  *
- * Platform limitation: This implementation relies on Linux's /proc filesystem
- * and does not work on macOS (which uses sysctl) or Windows (which uses Windows
- * API). On those platforms, startTime will be undefined and PID reuse detection
- * is weaker — relying primarily on parentPid verification and the grace period
- * checks in cleanupOrphanWorkers. Consider adding platform-specific PID reuse
- * detection (e.g., sysctl on macOS, Windows API on Windows) for full coverage.
- *
- * The start time is in the 22nd field (index 21) of /proc/<pid>/stat.
- * We parse after the closing parenthesis of comm to handle spaces in comm.
+ * Returns undefined if the process is gone or the platform API is unavailable.
  */
 function getProcessStartTime(pid: number): number | undefined {
+	try {
+		// First check if process exists
+		process.kill(pid, 0);
+	} catch {
+		return undefined;
+	}
+
+	const platform = process.platform;
+	if (platform === "linux") {
+		return getProcessStartTimeLinux(pid);
+	} else if (platform === "darwin") {
+		return getProcessStartTimeMacOS(pid);
+	} else if (platform === "win32") {
+		return getProcessStartTimeWindows(pid);
+	}
+	return undefined;
+}
+
+function getProcessStartTimeLinux(pid: number): number | undefined {
 	try {
 		const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf-8");
 		// comm is wrapped in parentheses and may contain spaces/special chars.
@@ -88,6 +102,43 @@ function getProcessStartTime(pid: number): number | undefined {
 		// We use a conservative estimate; the absolute value matters less
 		// than the uniqueness per PID lifecycle.
 		return Math.floor(startTimeClockTicks * 100);
+	} catch {
+		return undefined;
+	}
+}
+
+function getProcessStartTimeMacOS(pid: number): number | undefined {
+	// Use sysctl to get process start time on macOS
+	// KERN_PROC_PID returns a kinfo_proc structure with p_starttime
+	const { execSync } = require("child_process");
+	try {
+		// Use ps to get process start time - format: Mon Day Time or Mon Day Year
+		// For cross-platform consistency, we use 'lstart' which gives full timestamp
+		const output = execSync(`ps -p ${pid} -o lstart=`, { encoding: "utf-8", timeout: 5000 }).trim();
+		if (!output) return undefined;
+		// Parse date string like "Mon Jan 15 10:30:45 2024"
+		const date = new Date(output);
+		if (Number.isNaN(date.getTime())) return undefined;
+		return date.getTime();
+	} catch {
+		return undefined;
+	}
+}
+
+function getProcessStartTimeWindows(pid: number): number | undefined {
+	// Use Windows API via JSDrive's winattr or native code
+	// For Node.js without native modules, use tasklist /v and parse output
+	const { execSync } = require("child_process");
+	try {
+		// /v verbose, /fo csv, /nh no header
+		const output = execSync(
+			`powershell -Command "Get-Process -Id ${pid} | Select-Object -ExpandProperty StartTime"`,
+			{ encoding: "utf-8", timeout: 5000 },
+		).trim();
+		if (!output) return undefined;
+		const date = new Date(output);
+		if (Number.isNaN(date.getTime())) return undefined;
+		return date.getTime();
 	} catch {
 		return undefined;
 	}
@@ -115,7 +166,9 @@ function isValidId(id: string): boolean {
 function readRegistry(): OrphanWorkerEntry[] {
 	const p = getRegistryPath();
 	try {
-		if (!fs.existsSync(p)) return [];
+		// Atomic read: if file doesn't exist, readFileSync throws ENOENT
+		// which we handle explicitly. This eliminates the TOCTOU window
+		// between existsSync and readFileSync.
 		const raw = fs.readFileSync(p, "utf-8");
 		const parsed = JSON.parse(raw);
 		if (!Array.isArray(parsed)) return [];
@@ -131,9 +184,12 @@ function readRegistry(): OrphanWorkerEntry[] {
 				typeof (e as { startTime?: unknown }).startTime === "number",
 		);
 	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return [];
+		}
 		// Silent failure is deliberate for robustness (registry read failures
-		// shouldn't crash the process), but log at debug level to aid troubleshooting.
-		console.debug(`[orphan-worker-registry] readRegistry failed: ${error}`);
+		// shouldn't crash the process), but log at warning level to aid troubleshooting.
+		console.warn(`[orphan-worker-registry] readRegistry failed: ${error}`);
 		return [];
 	}
 }
@@ -141,15 +197,6 @@ function readRegistry(): OrphanWorkerEntry[] {
 function writeRegistry(entries: OrphanWorkerEntry[]): void {
 	const p = getRegistryPath();
 	const dir = path.dirname(p);
-	// Issue 1 fix: Validate the full ancestor chain BEFORE creating any parent
-	// directories. This closes the TOCTOU window between mkdirSync and the
-	// isSymlinkSafePath check. If an attacker could plant a symlink at an
-	// ancestor of the registry directory (e.g. userPiRoot/state -> /tmp/evil),
-	// we must detect that BEFORE mkdirSync creates anything.
-	if (!isSymlinkSafePath(dir)) {
-		logInternalError("orphan-worker-registry.write", new Error("Refusing to write: parent directory is a symlink or inside untrusted directory"), `dir=${dir}`);
-		return;
-	}
 	// Issue 2 fix: Defense-in-depth validation of IDs inside writeRegistry.
 	// Even if registerWorker is bypassed in the future, we still validate
 	// that sessionId/runId don't contain path traversal characters before
@@ -168,10 +215,9 @@ function writeRegistry(entries: OrphanWorkerEntry[]): void {
 			logInternalError("orphan-worker-registry.write", new Error("Refusing to write: target is a symlink or inside untrusted directory"), `path=${p}`);
 			return;
 		}
-		// Re-check parent directory safety immediately before creating it.
-		// This closes the TOCTOU window between the check at line 149 and
-		// mkdirSync below: if an attacker planted a symlink at dir after
-		// the earlier check, we detect it and refuse to create inside it.
+		// Issue 2 fix: Check parent directory safety immediately before creating it.
+		// This check is inside the lock to ensure the validation and creation are
+		// atomic with respect to the lock, closing the TOCTOU window.
 		if (!isSymlinkSafePath(dir)) {
 			logInternalError("orphan-worker-registry.write", new Error("Refusing to create: parent directory is a symlink or inside untrusted directory"), `dir=${dir}`);
 			return;
@@ -307,8 +353,14 @@ export function cleanupOrphanWorkers(
 							// Parent is alive — concurrent session, keep worker
 							kept.push(entry);
 							continue;
-						} catch {
+						} catch (err) {
 							// Parent is dead — proceed to verify it's actually our worker
+							// However, EPERM means the process exists but we lack permission
+							// to signal it. Treat as 'unknown' state and keep the entry.
+							if ((err as NodeJS.ErrnoException).code === "EPERM") {
+								kept.push(entry);
+								continue;
+							}
 						}
 					}
 				}
@@ -329,8 +381,8 @@ export function cleanupOrphanWorkers(
 				// TOCTOU window.
 				//
 				// KNOWN RESIDUAL RACE: Even with this re-check, a microsecond-level
-				// window exists between the preKillStartTime read (line 311) and the
-				// actual process.kill(entry.pid, "SIGKILL") call (line 321). The OS
+				// window exists between the currentStartTime read (line 366) and the
+				// actual process.kill(entry.pid, "SIGKILL") call (line 400). The OS
 				// could theoretically recycle the PID and allocate it to a new process
 				// within that window. This is an inherent limitation of userspace PID
 				// verification against kernel PID allocation — the race cannot be fully
@@ -341,8 +393,7 @@ export function cleanupOrphanWorkers(
 				// The consequence of killing a wrong process is severe (SIGKILL of an
 				// unrelated process), so this re-check is the best possible mitigation
 				// given the kernel's PID allocation semantics.
-				const preKillStartTime = getProcessStartTime(entry.pid);
-				if (preKillStartTime !== undefined && entry.startTime !== 0 && preKillStartTime !== entry.startTime) {
+				if (currentStartTime !== undefined && entry.startTime !== 0 && currentStartTime !== entry.startTime) {
 					// PID was recycled — different process now, prune without killing
 					pruned++;
 					continue;

@@ -159,6 +159,10 @@ if (current.status === "needs_attention" && updated.status === "completed") retu
 	// completed it), a stale updated with status="running" and no resultArtifact
 	// must not overwrite the actual completed state.
 	if (current.status === updated.status && updated.status === "running" && Boolean(current.resultArtifact) && !updated.resultArtifact) return false;
+	// Guard: when current is "completed" and has resultArtifact but updated is also
+	// "completed" without resultArtifact, block the stale update from overwriting
+	// a task that successfully produced output.
+	if (current.status === updated.status && current.status === "completed" && Boolean(current.resultArtifact) && !updated.resultArtifact) return false;
 	// Prevent a stale completed task from overwriting a fresher one.
 	// Restructure to handle undefined current.finishedAt as a special case:
 	// - undefined current + valid updated: allow the update

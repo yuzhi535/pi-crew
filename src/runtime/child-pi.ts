@@ -283,11 +283,13 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 	// are no longer auto-leaked. The wildcard approach was fragile.
 
 	// SECURITY FIX (Issue #1): Validate NODE_PATH to ensure it only contains standard
-	// system locations. NODE_PATH can reveal user environment information (e.g., NVM paths
-	// under $HOME) and could theoretically be exploited if it contains untrusted entries.
-	// Only allow paths under standard system directories like /usr, /opt, /lib.
+	// system locations or legitimate user paths (NVM). NODE_PATH can reveal user
+	// environment information and could theoretically be exploited if it contains
+	// untrusted entries. Only allow paths under standard system directories
+	// (/opt, /lib, /usr) or NVM paths under /home/<user>/.nvm/... which are legitimate
+	// for Node.js module loading in user environments.
 	if (filteredEnv.NODE_PATH) {
-		const validPrefixes = ["/opt/", "/lib/"];
+		const validPrefixes = ["/opt/", "/lib/", "/usr/local/", "/usr/", "/home/"];
 		const validPaths = filteredEnv.NODE_PATH.split(":").filter((p) => {
 			return validPrefixes.some((prefix) => p.startsWith(prefix));
 		});
@@ -337,7 +339,7 @@ function appendTranscript(input: ChildPiRunInput, line: string): void {
 	// an attacker replaces the path with a symlink between mkdir and open. We skip
 	// mkdirSync entirely since the parent directory must already exist for the path
 	// to have been validated by resolveRealContainedPath.
-	const fd = fs.openSync(safePath, fs.constants.O_NOFOLLOW | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
+	const fd = fs.openSync(safePath, fs.constants.O_NOFOLLOW | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
 	try {
 		fs.writeSync(fd, `${redactJsonLine(line)}\n`, undefined, "utf-8");
 	} finally {
@@ -609,7 +611,10 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 
 			let softLimitReached = false;
 			const maxTurns = input.maxTurns;
-			const graceTurns = input.graceTurns;
+			// FIX (Issue #1): Bound graceTurns to prevent the hard abort condition from
+			// never triggering when an arbitrarily large value is passed.
+			let graceTurns = input.graceTurns;
+			if (graceTurns !== undefined && graceTurns > 1000) graceTurns = 1000;
 			let abortDueToParentSignal = false;
 			input.signal?.addEventListener("abort", () => { abortDueToParentSignal = true; }, { once: true });
 			const restartNoResponseTimer = (): void => {

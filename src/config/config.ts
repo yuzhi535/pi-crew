@@ -80,7 +80,14 @@ function resolveHomeDir(): string {
 	// directory (e.g. withIsolatedHome) set PI_TEAMS_HOME to a tmp dir
 	// under /tmp; we skip the check in test environments (NODE_ENV=test)
 	// so existing tests don't break.
-	if (process.env.NODE_ENV === "test" || process.env.PI_CREW_SKIP_HOME_CHECK === "1") {
+	if (process.env.PI_CREW_SKIP_HOME_CHECK === "1") {
+		return envValue;
+	}
+	// NOTE: NODE_ENV=test bypass is intentional for test isolation only.
+	// It allows tests to use isolated temporary directories (e.g. withIsolatedHome
+	// sets PI_TEAMS_HOME to /tmp). This is NOT a security boundary — tests that
+	// need the validation skipped should set PI_CREW_SKIP_HOME_CHECK=1 explicitly.
+	if (process.env.NODE_ENV === "test") {
 		return envValue;
 	}
 	try {
@@ -524,7 +531,12 @@ const LIMIT_CEILINGS = {
 	runtimeGraceTurns: 1_000,
 } as const;
 
-/** Keys that could allow prototype pollution if merged into plain objects. */
+/**
+ * Keys that could allow prototype pollution if merged into plain objects.
+ * NOTE: This set is comprehensive for ES2023 and earlier. When upgrading JavaScript
+ * versions, verify whether new dangerous Object.prototype properties have been added
+ * that could enable prototype pollution attacks.
+ */
 const DANGEROUS_OBJECT_KEYS = new Set([
 	"__proto__",
 	"constructor",

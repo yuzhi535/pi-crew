@@ -222,6 +222,32 @@ export function computeEventFingerprint(event: Pick<TeamEvent, "type" | "runId" 
 }
 
 /**
+ * Check for sequence gaps between the sidecar file and the events file.
+ * This detects situations where the sidecar records a sequence number that has
+ * no corresponding event in the file (e.g., due to a crash between
+ * persistSequence and appendFile in older code, or other corruption).
+ *
+ * Returns an array of gap info: for each gap found, { missing: n } indicates
+ * sequence n is recorded in sidecar but has no corresponding event.
+ * An empty array means no gaps were found.
+ */
+export function checkSequenceGaps(eventsPath: string): { missing: number }[] {
+	if (!fs.existsSync(eventsPath)) return [];
+	const gaps: { missing: number }[] = [];
+	const storedSeq = readStoredSequence(eventsPath);
+	if (storedSeq === undefined) return [];
+	const maxInFile = scanSequence(eventsPath);
+	// If sidecar is ahead of file, report the missing sequences
+	// (sidecar stores the NEXT sequence to use, so storedSeq is the last written)
+	if (storedSeq > maxInFile) {
+		for (let i = maxInFile + 1; i <= storedSeq; i++) {
+			gaps.push({ missing: i });
+		}
+	}
+	return gaps;
+}
+
+/**
  * @deprecated Prefer `appendEventAsync()` in async contexts. The sync lock uses
  * `sleepSync` which blocks the Node.js event loop, preventing AbortSignal handlers
  * from firing and degrading live-agent responsiveness.
@@ -256,26 +282,22 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 		await fs.promises.mkdir(path.dirname(eventsPath), { recursive: true });
 
 		// Build metadata (same logic as appendEventInsideLock)
-		// FIX: Compute sequence INSIDE the promise chain and persist BEFORE append.
-		// This ensures the sidecar is updated before the event is written, preventing
-		// sequence reuse if the process crashes after append but before persist.
-		//
-		// NOTE: Sequence gaps are expected behavior on crash, not corruption.
-		// If the process crashes after persistSequence (line ~262) but before the
-		// fs.promises.appendFile call (line ~328), the sidecar will have sequence N
-		// recorded but no corresponding event written. This creates a "gap" in the
-		// sequence number space. This is preferable to the alternative (sequence
-		// reuse causing event overwrite on recovery), but can confuse audit/debugging
-		// when analyzing event sequences. Consider adding a startup check that warns
-		// if sequence gaps are detected in the future.
+		// FIX: Sequence is computed INSIDE the promise chain. We NO LONGER persist
+		// the sequence number before the append — that caused sequence reuse if
+		// appendFile failed after persistSequence succeeded. Instead, we persist
+		// ONLY AFTER successful appendFile, so the sidecar is only updated when
+		// the event is definitively written. If appendFile fails, the sidecar is
+		// not updated and nextSequence() will re-scan on next call, returning the
+		// correct value without reuse.
 		const baseMetadata = event.metadata;
 		let seq: number;
 		if (baseMetadata?.seq !== undefined) {
 			seq = baseMetadata.seq;
 		} else {
 			seq = nextSequence(eventsPath);
-			// Persist immediately BEFORE the append so sidecar is always current
-			persistSequence(eventsPath, seq);
+			// NOTE: We do NOT call persistSequence here. It will be called AFTER
+			// successful appendFile below to ensure sidecar is only updated when
+			// the event is actually written.
 		}
 		let metadata: TeamEventMetadata = {
 			seq,
@@ -342,15 +364,18 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 		if (!skippedDueToSize) {
 			const line = JSON.stringify(redactSecrets(fullEvent)) + "\n";
 			await fs.promises.appendFile(eventsPath, line, { encoding: "utf-8", flag: "a" });
+			// FIX: Persist sequence AFTER successful appendFile to ensure sidecar
+			// is only updated when the event is definitively written. If appendFile
+			// threw, we would not reach here and the sidecar would not be updated,
+			// preventing sequence reuse on restart.
+			persistSequence(eventsPath, seq);
 		}
-
-		appendCounter++;
 		if (appendCounter % 100 === 0 && needsRotation(eventsPath)) {
 			try { compactEventLog(eventsPath); } catch (error) { logInternalError("event-log.rotation", error, `eventsPath=${eventsPath}`); }
 		}
 		try { emitFromTeamEvent(fullEvent); } catch (error) { logInternalError("event-log.emit", error); }
 
-		// FIX: Sequence was already persisted BEFORE append in the seq computation block above.
+		// FIX: Sequence was persisted AFTER appendFile in the append block above.
 		// Only update the cache here (the sidecar persist is already done).
 		const finalSeq = fullEvent.metadata?.seq ?? 0;
 		try {
@@ -456,10 +481,10 @@ function appendEventInsideLock(eventsPath: string, event: AppendTeamEvent): Team
 	}
 	const seq = fullEvent.metadata?.seq ?? 0;
 	if (!skippedDueToSize) {
-		// FIX: Persist sequence BEFORE the event append to prevent sequence reuse
-		// on crash. The async path already does this (line 256).
-		persistSequence(eventsPath, seq);
 		fs.appendFileSync(eventsPath, `${JSON.stringify(redactSecrets(fullEvent))}\n`, "utf-8");
+		// FIX: Persist sequence AFTER the event append to prevent sequence reuse
+		// on crash. Only update the sidecar when the event is definitively written.
+		persistSequence(eventsPath, seq);
 		// FIX: Update cache AFTER append so cache and log are consistent with each other.
 		// This matches the async path behavior where cache is updated after the append.
 		// If a crash occurs after append but before cache update, the .seq file is
@@ -594,9 +619,27 @@ export function appendEventFireAndForget(eventsPath: string, event: AppendTeamEv
 // Auto-flush on process exit so buffered events do not silently leak.
 // Defense-in-depth: SIGTERM/SIGINT use setImmediate so the handler returns
 // immediately and the main thread is not blocked by sync I/O.
-process.on("exit", () => setImmediate(() => flushEventLogBuffer()));
+process.on("exit", () => {
+	flushEventLogBuffer();
+	// FIX (Issue 4): Clear asyncQueues on exit. The event loop is stopping,
+	// so in-flight async writes cannot complete. Clearing the map prevents
+	// new events from being added to a stale queue and ensures callers that
+	// await appendEventAsync receive a resolved promise (via queue cleanup
+	// in .then/.catch) before the process terminates.
+	asyncQueues.clear();
+});
 process.on("SIGTERM", () => setImmediate(() => flushEventLogBuffer()));
 process.on("SIGINT", () => setImmediate(() => flushEventLogBuffer()));
+// FIX (Issue 1): Handle uncaught exceptions to flush buffered events before
+// the process terminates. The async queues use promise chains that will be
+// abandoned on crash; clearing the map prevents memory leaks and stale state.
+// Note: SIGKILL (kill -9) cannot be intercepted and is not handled.
+process.on("uncaughtException", (error) => {
+	try { flushEventLogBuffer(); } catch { /* best-effort */ }
+	asyncQueues.clear();
+	// Re-throw to preserve default uncaught exception behavior (process exit)
+	throw error;
+});
 
 export function readEvents(eventsPath: string): TeamEvent[] {
 	if (!fs.existsSync(eventsPath)) return [];

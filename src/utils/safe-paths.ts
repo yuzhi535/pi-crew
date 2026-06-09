@@ -66,36 +66,37 @@ export function resolveContainedPath(baseDir: string, targetPath: string): strin
  */
 export function resolveRealContainedPath(baseDir: string, targetPath: string): string {
 	if (targetPath.includes('\0')) {
-	  throw new Error(`Security: path contains null byte`);
+		throw new Error(`Security: path contains null byte`);
 	}
 	const resolved = resolveContainedPath(baseDir, targetPath);
-	// Walk the full ancestor chain of baseDir and verify none are symlinks.
-	// This must be done BEFORE realpathSync to prevent TOCTOU attacks where
-	// an attacker replaces a directory with a symlink between our realpath calls.
-	const absoluteBase = path.resolve(baseDir);
-	const baseParts = absoluteBase.split(path.sep);
-	let accumulated = "";
-	if (baseParts[0] === "") accumulated = "/"; // Unix root
-	for (let i = 1; i < baseParts.length; i++) {
-		if (baseParts[i] === "") continue;
-		accumulated = path.join(accumulated, baseParts[i]);
-		try {
-			const stat = fs.lstatSync(accumulated);
-			if (stat.isSymbolicLink()) throw new Error("Refusing to resolve: baseDir ancestor is a symlink: " + accumulated);
-		} catch (e) {
-			if (e instanceof Error && e.message.includes("symlink")) throw e;
-			// Component doesn't exist — cannot validate ancestor chain safely
-			throw new Error(`Cannot validate path safety: ancestor does not exist: ${accumulated}`);
-		}
+
+	// Open baseDir with O_NOFOLLOW to atomically validate no symlinks in the path.
+	// O_NOFOLLOW makes the open fail with ELOOP if any path component is a symlink.
+	let baseFd: number;
+	try {
+		baseFd = fs.openSync(baseDir, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: baseDir path contains a symlink: " + baseDir);
+		throw new Error(`Cannot open base directory ${baseDir}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	let realBase: string;
 	try {
+		const stat = fs.fstatSync(baseFd);
+		if (!stat.isDirectory()) throw new Error(`baseDir ${baseDir} is not a directory`);
+		// Use realpathSync.native on the path - we've already validated with O_NOFOLLOW
+		// that no symlinks exist in the path at open time. Any TOCTOU race would cause
+		// the O_NOFOLLOW open to fail before we reach this point.
 		realBase = fs.realpathSync.native(baseDir);
-	} catch (baseError) {
-		throw new Error(`Cannot resolve real path of base directory ${baseDir}: ${baseError instanceof Error ? baseError.message : String(baseError)}`);
+	} catch (error) {
+		throw new Error(`Cannot resolve real path of base directory ${baseDir}: ${error instanceof Error ? error.message : String(error)}`);
+	} finally {
+		fs.closeSync(baseFd);
 	}
-	// Now walk the full ancestor chain of the resolved target path and verify
-	// none are symlinks before calling realpathSync on the target.
+
+	// Walk the ancestor chain of the resolved target path, using O_NOFOLLOW
+	// on each ancestor to atomically validate none are symlinks.
+	const O_NOFOLLOW = fs.constants.O_NOFOLLOW;
+	const O_RDONLY = fs.constants.O_RDONLY;
 	const resolvedParts = resolved.split(path.sep);
 	let resolvedAccumulated = "";
 	if (resolvedParts[0] === "") resolvedAccumulated = "/"; // Unix root
@@ -103,18 +104,33 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 		if (resolvedParts[i] === "") continue;
 		resolvedAccumulated = path.join(resolvedAccumulated, resolvedParts[i]);
 		try {
-			const stat = fs.lstatSync(resolvedAccumulated);
-			if (stat.isSymbolicLink()) throw new Error("Refusing to resolve: target path ancestor is a symlink: " + resolvedAccumulated);
-		} catch (e) {
-			if (e instanceof Error && e.message.includes("symlink")) throw e;
-			// Component doesn't exist — skip validation for this component.
-			// Only existing symlinks are a security risk; non-existent paths
-			// will be caught by realpathSync or the caller's filesystem access.
-			continue;
+			const fd = fs.openSync(resolvedAccumulated, O_RDONLY | O_NOFOLLOW);
+			fs.closeSync(fd);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: target path ancestor is a symlink: " + resolvedAccumulated);
+			// ENOENT means component doesn't exist — that's OK for target ancestors.
+			// Only existing symlinks are a security risk.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			// For the final component (target itself), ENOENT is expected for non-existent targets.
+			if (i === resolvedParts.length - 1) continue;
+			throw new Error(`Cannot validate path safety: ${resolvedAccumulated} does not exist: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
+
+	// Open the target with O_NOFOLLOW to catch any symlinks.
+	let targetFd: number;
+	try {
+		targetFd = fs.openSync(resolved, O_RDONLY | O_NOFOLLOW);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: target path is a symlink: " + resolved);
+		throw new Error(`Cannot open ${resolved}: ${error instanceof Error ? error.message : String(error)}`);
+	}
+
 	let realTarget: string;
 	try {
+		// Use realpathSync.native on the path - we've already validated with O_NOFOLLOW
+		// that no symlinks exist in the path at open time. Any TOCTOU race would cause
+		// the O_NOFOLLOW open to fail before we reach this point.
 		realTarget = fs.realpathSync.native(resolved);
 	} catch (targetError) {
 		if ((targetError as NodeJS.ErrnoException).code === "ENOENT") {
@@ -124,7 +140,11 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 			return resolved;
 		}
 		throw new Error(`Cannot resolve real path of ${resolved}: ${targetError instanceof Error ? targetError.message : String(targetError)}`);
+	} finally {
+		fs.closeSync(targetFd);
 	}
+
+	// Verify the resolved real path is still within baseDir.
 	const relative = path.relative(realBase, realTarget);
 	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
 	return realTarget;

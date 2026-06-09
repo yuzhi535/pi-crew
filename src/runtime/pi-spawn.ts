@@ -161,6 +161,7 @@ function validateExplicitBin(explicit: string): string | undefined {
 		}
 	} catch (e) {
 		if (e instanceof Error && e.message.includes("allowed prefixes")) throw e;
+		console.error("[pi-spawn] validateExplicitBin: unexpected realpathSync error:", e);
 		return undefined;
 	}
 	return resolved;

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
 import { recordFromTask, upsertCrewAgent } from "./crew-agent-records.ts";
 import { checkProcessLiveness } from "./process-status.ts";
+import { saveRunManifest } from "../state/state-store.ts";
 
 /** Age threshold for orphaned temp directory cleanup: 1 hour. */
 const ORPHAN_TEMP_DIR_AGE_THRESHOLD_MS = 60 * 60 * 1000;
@@ -60,7 +61,9 @@ function checkResultFile(
 		);
 	if (allTerminal) {
 		// All tasks are terminal but manifest status was not updated — repair it.
+		// Persist manifest status change immediately to make checkResultFile self-contained.
 		manifest.status = "completed";
+		saveRunManifest(manifest);
 		// Sync agent records even when tasks are already terminal
 		// (e.g., a previous reconcile fixed tasks but crashed before updating agents)
 		for (const task of tasks) {

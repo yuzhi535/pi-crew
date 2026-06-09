@@ -4,6 +4,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { TeamRunManifest } from "./types.ts";
 import { DEFAULT_LOCKS } from "../config/defaults.ts";
 import { sleepSync } from "../utils/sleep.ts";
+import { isSymlinkSafePath } from "./atomic-write.ts";
 
 export interface RunLockOptions {
 	staleMs?: number;
@@ -283,6 +284,9 @@ export function withFileLockSync<T>(filePath: string, fn: () => T, options: RunL
 	// append, or even the lock acquisition itself) would race with the lock.
 	const lockFile = `${filePath}.lock`;
 	const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
+	// FIX: Validate the parent directory is not a symlink BEFORE calling mkdirSync.
+	// Between mkdir and lock acquisition, an attacker could plant a symlink.
+	if (!isSymlinkSafePath(path.dirname(lockFile))) throw new Error("Refusing: parent of lock directory is a symlink");
 	fs.mkdirSync(path.dirname(lockFile), { recursive: true });
 	// FIX: Validate that the target file still exists. If it was deleted and
 	// recreated since the last lock cycle, the old .lock file may be orphaned

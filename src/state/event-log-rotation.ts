@@ -48,6 +48,7 @@ export interface CompactionResult {
 	compactedSize: number;
 	eventsRemoved: number;
 	eventsKept: number;
+	recoveryFailed?: boolean;
 }
 
 /**
@@ -109,11 +110,15 @@ export function compactEventLog(eventsPath: string, config?: Partial<RotationCon
 			// FIX: Use sequence numbers for comparison instead of JSON.stringify.
 			const afterSeqs = new Set(afterWrite.map((e) => e.metadata?.seq).filter((s): s is number => s !== undefined));
 			const missingEvents = kept.filter((e) => e.metadata?.seq === undefined || !afterSeqs.has(e.metadata.seq));
+			let recoveredCount = 0;
+			let recoveryFailed = false;
 			for (const event of missingEvents) {
 				try {
 					// Use atomicWriteFile for recovery append too — safer than plain appendFileSync
 					atomicWriteFile(eventsPath, JSON.stringify(event) + "\n");
+					recoveredCount++;
 				} catch (err) {
+					recoveryFailed = true;
 					// FIX: Log when recovery append fails to avoid silent event loss
 					logInternalError("event-log-rotation.recovery", err, `eventsPath=${eventsPath} lostEvent=${JSON.stringify(event).slice(0, 100)}`);
 				}
@@ -122,7 +127,8 @@ export function compactEventLog(eventsPath: string, config?: Partial<RotationCon
 				originalSize,
 				compactedSize: fs.statSync(eventsPath).size,
 				eventsRemoved: originalCount - kept.length,
-				eventsKept: kept.length,
+				eventsKept: kept.length + recoveredCount,
+				recoveryFailed,
 			};
 		} catch {
 			// Post-write verification failed — compaction likely succeeded.

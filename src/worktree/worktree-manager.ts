@@ -123,6 +123,12 @@ function runSetupHook(manifest: TeamRunManifest, task: TeamTaskState, repoRoot: 
 	}
 	// SECURITY WARNING: Home directory hooks (~/.pi/hooks/) are user-writable and not project-scoped.
 	// A rogue npm postinstall script could place malicious hooks there. Log for visibility.
+	//
+	// SECURITY ASSUMPTION: This function trusts that the hook scripts themselves are not malicious.
+	// Hook scripts are executed with the same privileges as the Pi process. The caller is responsible
+	// for ensuring that only trusted hook scripts are configured. Path containment validation
+	// (isAllowedSetupHook, isHookPathContainedInRepoRoot) prevents hook scripts from writing outside
+	// the worktree, but cannot prevent a trusted hook from performing harmful operations within it.
 	if (path.isAbsolute(rawHookPath)) {
 		logInternalError("worktree.setupHook.homeHook", new Error("Home directory hook used — ensure ~/.pi/hooks/ is trusted"), `hookPath=${rawHookPath}`);
 	}

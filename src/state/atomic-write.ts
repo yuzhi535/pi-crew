@@ -39,18 +39,11 @@ const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
  */
 export function isSymlinkSafePath(filePath: string): boolean {
 	try {
-		// Issue 1 fix: resolve baseDir early so boundary checks use resolved paths.
-		// If baseDir itself is a symlink, comparing realDir (resolved intermediate)
-		// against unresolved baseDir would produce false negatives (incorrectly reject
-		// safe paths) and false positives (incorrectly accept unsafe paths when
-		// baseDir is a symlink pointing outside the intended boundary).
-		let baseDir = path.dirname(filePath);
-		try {
-			baseDir = fs.realpathSync(baseDir);
-		} catch {
-			// baseDir doesn't exist yet — that's OK, we can't have a symlink issue
-			// with a non-existent directory. The existence checks below will handle it.
-		}
+		// Note: baseDir is intentionally NOT resolved here with realpathSync.
+		// The while loop below walks the full ancestor chain and the explicit
+		// check at lines 94-101 verifies baseDir itself is not a symlink.
+		// This redundant early resolution was removed per Issue 1.
+		const baseDir = path.dirname(filePath);
 		// Walk the full ancestor chain to detect any symlinks
 		let currentPath = filePath;
 		while (currentPath !== path.dirname(currentPath)) {
@@ -173,8 +166,9 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 	const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;
 	// Write temp with restrictive permissions
 	const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+	let fd: number | undefined;
 	try {
-		const fd = fs.openSync(tempPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW, 0o600);
+		fd = fs.openSync(tempPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW, 0o600);
 		// Post-open verification: on Windows O_NOFOLLOW is 0, so verify FD is a regular file
 		const openedStat = fs.fstatSync(fd);
 		if (!openedStat.isFile()) {
@@ -184,26 +178,25 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 		fs.writeSync(fd, content, undefined, "utf-8");
 		fs.closeSync(fd);
 		try {
-		// Issue 1 fix: re-check symlink safety immediately before rename.
-		// Between the initial isSymlinkSafePath check (line 147) and here,
-		// an attacker with control of an ancestor directory could plant a
-		// symlink at the target path. If rename succeeds with a symlink at
-		// target, the symlink is atomically replaced with attacker's content.
-		// The post-rename lstat check only runs on rename failure, so we must
-		// check BEFORE the rename to catch this TOCTOU race.
-		if (!isSymlinkSafePath(filePath)) {
-			try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
-			throw new Error(`Refusing to rename: target became a symlink or inside untrusted directory: ${filePath}`);
-		}
+			// Issue 1 fix: re-check symlink safety immediately before rename.
+			// Between the initial isSymlinkSafePath check (line 147) and here,
+			// an attacker with control of an ancestor directory could plant a
+			// symlink at the target path. If rename succeeds with a symlink at
+			// target, the symlink is atomically replaced with attacker's content.
+			// The post-rename lstat check only runs on rename failure, so we must
+			// check BEFORE the rename to catch this TOCTOU race.
+			if (!isSymlinkSafePath(filePath)) {
+				throw new Error(`Refusing to rename: target became a symlink or inside untrusted directory: ${filePath}`);
+			}
 			renameWithRetry(tempPath, filePath);
 		} catch (renameError) {
-			// H3 fix: re-check symlink safety before fallback.
-			// Between isSymlinkSafePath at top and rename attempt, the file
-			// could have been replaced with a symlink (TOCTOU). Refuse if so.
+			// Issue 4 fix: use finally block to guarantee temp file cleanup.
+			// Between the initial isSymlinkSafePath check and rename attempt,
+			// the file could have been replaced with a symlink (TOCTOU).
+			// If lstat check below throws unexpectedly, finally ensures cleanup.
 			try {
 				const lstat = fs.lstatSync(filePath);
 				if (lstat.isSymbolicLink()) {
-					try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
 					throw renameError;
 				}
 			} catch (checkError) {
@@ -218,13 +211,14 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 			// The rename failed after retries — throw the error rather than
 			// risking data corruption via a non-atomic write. Callers should
 			// handle this error or use a different strategy for contended files.
-			try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
 			throw renameError;
 		}
-	} catch (error) {
-		// Clean up temp file before re-throwing, preventing orphaned temps.
-		try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
-		throw error;
+	} finally {
+		// Issue 4 fix: always clean up temp file, regardless of success or error path.
+		// This ensures no orphaned temp files remain when errors occur at any point.
+		if (fd !== undefined) {
+			try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
+		}
 	}
 }
 
@@ -311,7 +305,9 @@ interface CoalescedAtomicWrite {
 	content: string;
 	timer: ReturnType<typeof setTimeout>;
 	coalesceMs: number;
+	retryCount: number;
 }
+const MAX_FLUSH_RETRIES = 5;
 const pendingAtomicWrites = new Map<string, CoalescedAtomicWrite>();
 const DEFAULT_ATOMIC_COALESCE_MS = 50;
 
@@ -332,7 +328,7 @@ export function atomicWriteJsonCoalesced<T>(filePath: string, value: T, coalesce
 	if (previous) clearTimeout(previous.timer);
 	const timer = setTimeout(() => flushOnePendingAtomicWrite(filePath), coalesceMs);
 	timer.unref();
-	pendingAtomicWrites.set(filePath, { content, timer, coalesceMs });
+	pendingAtomicWrites.set(filePath, { content, timer, coalesceMs, retryCount: 0 });
 }
 
 function flushOnePendingAtomicWrite(filePath: string): void {
@@ -353,13 +349,22 @@ function flushOnePendingAtomicWrite(filePath: string): void {
 		}
 	} catch (error) {
 		logInternalError("atomic-write.coalesced-flush", error, filePath);
-		// Issue 2 fix: set a fresh timer for failed entries before returning.
+		// Issue 1 fix: set a fresh timer for failed entries before returning.
 		// This ensures failed entries are retried without waiting for another
 		// write to arrive. Only set timer if this entry is still current
 		// (not replaced by a newer write during the flush).
 		const current = pendingAtomicWrites.get(filePath);
 		if (current === entry) {
-			const timer = setTimeout(() => flushOnePendingAtomicWrite(filePath), entry.coalesceMs);
+			entry.retryCount++;
+			if (entry.retryCount >= MAX_FLUSH_RETRIES) {
+				// Max retries exceeded - remove entry and propagate error to callers
+				pendingAtomicWrites.delete(filePath);
+				// Re-throw so callers can handle the persistent failure
+				throw error;
+			}
+			// Exponential backoff: base delay * 2^(retryCount-1), capped at 30 seconds
+			const backoffMs = Math.min(30000, entry.coalesceMs * Math.pow(2, entry.retryCount - 1));
+			const timer = setTimeout(() => flushOnePendingAtomicWrite(filePath), backoffMs);
 			timer.unref();
 			entry.timer = timer;
 		}
@@ -390,9 +395,17 @@ export function readJsonFile<T>(filePath: string): T | undefined {
 		return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
 	} catch (err) {
 		const code = (err as NodeJS.ErrnoException).code;
-		if (code !== "ENOENT" && code !== "ENOTDIR") {
+		if (code === "ENOENT" || code === "ENOTDIR") {
+			// Expected: file doesn't exist or path is not a directory
+			return undefined;
+		} else if (code === "EACCES" || code === "EPERM") {
+			// Permission error - log as warning but still return undefined
+			logInternalError("readJsonFile.permission", err, `filePath=${filePath}`);
+			return undefined;
+		} else {
+			// Other unexpected errors - log as internal error
 			logInternalError("readJsonFile", err, `filePath=${filePath}`);
+			return undefined;
 		}
-		return undefined;
 	}
 }

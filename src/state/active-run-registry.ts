@@ -219,22 +219,19 @@ function writeEntries(entries: ActiveRunRegistryEntry[], skipTerminalRunIds?: Se
 			// Binary succeeded, JSON failed — try to recover JSON from temp
 			try { renameWithRetry(tempJson, registryPath()); jsonRenamed = true; } catch { /* recovery failed */ }
 		}
-		// FIX Issue 2: Re-check file existence rather than relying solely on flags,
-		// since a failed recovery doesn't always mean the final file is missing.
-		// If final file exists, do NOT delete it — it may be valid from a prior write.
-		try {
-			if (!binRenamed && fs.existsSync(registryBinaryPath())) {
-				try { fs.rmSync(registryBinaryPath(), { force: true }); } catch { /* best-effort */ }
-			}
-			if (!jsonRenamed && fs.existsSync(registryPath())) {
-				try { fs.rmSync(registryPath(), { force: true }); } catch { /* best-effort */ }
-			}
-			// FIX Issue 1: Ensure temp file cleanup executes even when recovery rename fails.
-			// If recovery throws, the error propagates before reaching the cleanup below.
-			// Wrapping in nested try-catch guarantees cleanup runs regardless of recovery outcome.
+		// FIX Issue 2: If recovery failed, do NOT delete the final files — they may contain valid
+		// data from a prior write cycle. Leave temp files for manual recovery and throw error.
+		if (!binRenamed || !jsonRenamed) {
+			// Attempt to clean up temp files only (not final files)
 			try { fs.rmSync(tempJson, { force: true }); } catch { /* best-effort */ }
 			try { fs.rmSync(tempBin, { force: true }); } catch { /* best-effort */ }
-		} catch { /* cleanup errors are best-effort */ }
+			throw error;
+		}
+		// FIX Issue 1: Ensure temp file cleanup executes even when recovery rename fails.
+		// If recovery throws, the error propagates before reaching the cleanup below.
+		// Wrapping in nested try-catch guarantees cleanup runs regardless of recovery outcome.
+		try { fs.rmSync(tempJson, { force: true }); } catch { /* best-effort */ }
+		try { fs.rmSync(tempBin, { force: true }); } catch { /* best-effort */ }
 		throw error;
 }
 }
@@ -332,7 +329,10 @@ export function unregisterActiveRun(runId: string): void {
 		return;
 	}
 	withRegistryLock(() => {
-		writeEntries(readActiveRunRegistry().filter((entry) => entry.runId !== runId));
+		// FIX Issue 1: Filter alive entries and pass terminal runIds to writeEntries,
+		// closing the TOCTOU race between status check and write (same pattern as registerActiveRun).
+		const { alive, terminalRunIds } = filterAliveEntries(readActiveRunRegistry().filter((entry) => entry.runId !== runId));
+		writeEntries(alive, terminalRunIds);
 	});
 }
 

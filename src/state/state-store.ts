@@ -32,7 +32,12 @@ interface ManifestCacheEntry {
 	tasksMtimeMs: number;
 	tasksSize: number;
 	cachedAt?: number;
+	generation?: number;
 }
+
+// Global generation counter incremented on each cache invalidation.
+// Detects staleness even when mtime/size are spoofed by an attacker.
+let manifestCacheGeneration = 0;
 
 const MANIFEST_CACHE_TTL_MS = 15 * 1000; // 15 seconds (FIX: increased from 5s for read-heavy workloads; 5s was too short causing unnecessary cache invalidation)
 const manifestCache = new Map<string, ManifestCacheEntry>();
@@ -40,6 +45,7 @@ const manifestCache = new Map<string, ManifestCacheEntry>();
 function setManifestCache(stateRoot: string, entry: ManifestCacheEntry): void {
 	if (manifestCache.has(stateRoot)) manifestCache.delete(stateRoot);
 	entry.cachedAt = Date.now();
+	entry.generation = manifestCacheGeneration;
 	// FIX: Evict all stale entries by TTL before adding new entry.
 	// This ensures entries that are never accessed still get evicted
 	// based on TTL, not just entries that are hit.
@@ -71,6 +77,7 @@ function useProjectState(cwd: string): boolean {
 
 function invalidateRunCache(stateRoot: string): void {
 	manifestCache.delete(stateRoot);
+	manifestCacheGeneration++;
 }
 
 function scopeBaseRoot(cwd: string): string {
@@ -278,8 +285,21 @@ export function saveRunTasks(manifest: TeamRunManifest, tasks: TeamTaskState[]):
 	// FIX: If cache was evicted, re-read manifest from disk rather than using
 	// a minimal fallback. A stale minimal manifest with only runId populated
 	// would cause manifest.status to be undefined, breaking status checks.
+	// If the manifest cannot be read, throw an error — callers using withRunLock
+	// should never hit this case, and the error indicates a serious problem.
+	// FIX: Also check that the re-read manifest has a status field. If not,
+	// fall back to the manifest parameter's status rather than serving a
+	// degraded manifest that would break status transition checks.
 	const cached = manifestCache.get(manifest.stateRoot);
-	const manifestEntry: TeamRunManifest = cached?.manifest ?? (readJsonFile<TeamRunManifest>(manifestPath) ?? { runId: manifest.runId } as TeamRunManifest);
+	const manifestEntry = cached?.manifest ?? readJsonFile<TeamRunManifest>(manifestPath);
+	if (!manifestEntry) {
+		throw new Error(`saveRunTasks: manifest not found at ${manifestPath}`);
+	}
+	// Preserve current status from the manifest parameter if the on-disk
+	// manifest is missing it (could be a partial write).
+	if (!manifestEntry.status) {
+		manifestEntry.status = manifest.status;
+	}
 	setManifestCache(manifest.stateRoot, {
 		manifest: manifestEntry,
 		tasks,
@@ -472,6 +492,7 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 		&& cached.manifestSize === manifestStat.size
 		&& cached.tasksMtimeMs === tasksMtimeMs
 		&& cached.tasksSize === (tasksStat?.size ?? 0)
+		&& cached.generation === manifestCacheGeneration
 	) {
 		// TTL eviction: expire stale entries even if mtime matches
 		// FIX: Also evict entries where cachedAt is undefined — such entries are
@@ -485,11 +506,17 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 			manifestCache.delete(stateRoot);
 			return undefined;
 			} else if (!fs.existsSync(tasksPath)) {
-			// Tasks file was deleted after cache was populated — do not serve stale cache.
+			// Tasks file was deleted after cache was populated — this is a cache miss,
+			// not a manifest inconsistency. The cache check passes because
+			// tasksMtimeMs=0 and tasksSize=0 match a cache entry written when tasks.json
+			// didn't exist. We fall through to the retry loop which will correctly
+			// detect the missing file and return undefined. The alternative (treating
+			// this as an inconsistency) would require failing the cache hit path, which
+			// is unnecessary since the retry loop handles it correctly anyway.
 			manifestCache.delete(stateRoot);
 			return undefined;
 		} else {
-			return { manifest: cached.manifest, tasks: cached.tasks };
+			return { manifest: cached.manifest, tasks: cached.tasks ?? [] };
 		}
 	}
 
@@ -517,6 +544,13 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 		attempts += 1;
 		manifestStat = freshStat;
 		tasksStat = freshTasksStat;
+	}
+	// WARNING: Best-effort consistency only — retry loop detected mtime/size
+	// instability. A concurrent writer can still complete a full write cycle
+	// between the final stat and the read. Callers needing strict consistency
+	// MUST use withRunLock() around load+modify+save.
+	if (attempts > 0) {
+		console.warn(`[state-store] loadRunManifestById: retry loop detected instability for run ${runId} after ${attempts} attempt(s) — best-effort only, use withRunLock() for strict consistency`);
 	}
 	// NOTE: manifest mtime may legitimately be >= tasks mtime because
 	// saveManifestAndTasksAtomicSync writes manifest before tasks. However,
@@ -556,7 +590,7 @@ export async function loadRunManifestByIdAsync(cwd: string, runId: string): Prom
 		tasksStat = undefined;
 	}
 	const tasksMtimeMs = tasksStat?.mtimeMs ?? 0;
-	if (cached && cached.manifestMtimeMs === manifestStat.mtimeMs && cached.manifestSize === manifestStat.size && cached.tasksMtimeMs === tasksMtimeMs && cached.tasksSize === (tasksStat?.size ?? 0)) {
+	if (cached && cached.manifestMtimeMs === manifestStat.mtimeMs && cached.manifestSize === manifestStat.size && cached.tasksMtimeMs === tasksMtimeMs && cached.tasksSize === (tasksStat?.size ?? 0) && cached.generation === manifestCacheGeneration) {
 		// TTL eviction: expire stale entries even if mtime matches
 		// FIX: Also evict entries where cachedAt is undefined — such entries are
 		// effectively immortal otherwise (the `cached.cachedAt &&` check would skip
@@ -573,7 +607,7 @@ export async function loadRunManifestByIdAsync(cwd: string, runId: string): Prom
 				manifestCache.delete(stateRoot);
 				return undefined;
 		} else {
-			return { manifest: cached.manifest, tasks: cached.tasks };
+			return { manifest: cached.manifest, tasks: cached.tasks ?? [] };
 		}
 	}
 
@@ -595,6 +629,13 @@ export async function loadRunManifestByIdAsync(cwd: string, runId: string): Prom
 		attempts += 1;
 		manifestStat = freshStat;
 		tasksStat = freshTasksStat;
+	}
+	// WARNING: Best-effort consistency only — retry loop detected mtime/size
+	// instability. A concurrent writer can still complete a full write cycle
+	// between the final stat and the read. Callers needing strict consistency
+	// MUST use withRunLock() around load+modify+save.
+	if (attempts > 0) {
+		console.warn(`[state-store] loadRunManifestByIdAsync: retry loop detected instability for run ${runId} after ${attempts} attempt(s) — best-effort only, use withRunLock() for strict consistency`);
 	}
 	// NOTE: manifest mtime may legitimately be >= tasks mtime because
 	// saveManifestAndTasksAtomicSync writes manifest before tasks. However,

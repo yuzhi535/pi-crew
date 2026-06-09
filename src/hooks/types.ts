@@ -33,8 +33,9 @@ export interface HookContext {
 	cwd: string;
 	// NOTE: Hooks receive a shared mutable context object. A hook may directly set
 	// properties on ctx (including dangerous names like "__proto__", "constructor").
-	// The sanitizeMergeData function prevents dangerous properties from propagating
-	// via result.data merge, but hooks operating on the raw ctx do so at their own risk.
+	// This is an intentional design choice: hook authors are trusted. The
+	// sanitizeMergeData function prevents dangerous properties from propagating
+	// via result.data merge, but direct ctx mutations bypass that protection.
 	[key: string]: unknown;
 }
 

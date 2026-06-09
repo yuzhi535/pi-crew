@@ -141,6 +141,8 @@ function startInterruptGuard(
 				// process actually terminates. This ordering is intentional — cleanup must
 				// run before exit handlers to ensure consistent state.
 				process.exit(130);
+			} else if (last) {
+				console.warn(`[background-runner] Ignoring unknown foreground control request: ${last.type}`);
 			}
 		} catch {
 			/* ignore read/parse errors */

@@ -33,7 +33,7 @@ export function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks
 	}
 
 	return withRunLockSync(manifest, () => {
-		let merged: TeamTaskState[];
+		let merged: TeamTaskState[] | undefined;
 
 		retryLoop: for (let attempt = 0; attempt < 50; attempt++) {
 			const latest = loadRunManifestById(manifest.cwd, manifest.runId)?.tasks ?? fallbackTasks;
@@ -78,13 +78,19 @@ export function persistSingleTaskUpdate(manifest: TeamRunManifest, fallbackTasks
 			break retryLoop;
 		}
 
+		const finalMerged = merged;
+		if (finalMerged === undefined) {
+			logInternalError("persistSingleTaskUpdate", new Error("failed to converge after 50 attempts"));
+			throw new Error("persistSingleTaskUpdate: failed to converge after 50 attempts");
+		}
+
 		try {
-			saveRunTasks(manifest, merged!);
+			saveRunTasks(manifest, finalMerged);
 		} catch (err) {
 			logInternalError("persistSingleTaskUpdate", err);
 			throw err;
 		}
-		return merged!;
+		return finalMerged;
 	});
 }
 

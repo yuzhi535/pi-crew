@@ -100,10 +100,19 @@ export function writeBlob(artifactsRoot: string, input: {
 	const algorithm = SHA256_PREFIX;
 	const blobDir = path.join(artifactsRoot, BLOBS_DIR, algorithm);
 	const metaDir = path.join(artifactsRoot, BLOB_META_DIR);
+	// Issue 2 fix: Validate parent directories are not symlinks before mkdirSync.
+	// An attacker could plant a symlink before we create the directory, causing
+	// blob content to be written to an attacker-controlled location.
+	resolveRealContainedPath(artifactsRoot, blobDir);
+	resolveRealContainedPath(artifactsRoot, metaDir);
 	fs.mkdirSync(blobDir, { recursive: true });
 	fs.mkdirSync(metaDir, { recursive: true });
 
 	const blobPath = path.join(blobDir, hash);
+	// Issue 6 fix: Validate blobPath BEFORE writing to ensure the path is safe.
+	// If resolveRealContainedPath throws after the write, the blob may already
+	// exist at an unexpected location. Validate first to prevent this.
+	resolveRealContainedPath(artifactsRoot, blobPath);
 	const metadata: BlobMetadata = {
 		blobHash: hash,
 		blobAlgorithm: algorithm,
@@ -169,9 +178,19 @@ export function writeBlob(artifactsRoot: string, input: {
 				}
 			}
 			// Issue 3 fix: Two-phase commit for metadata
-			// Write to temp file first, then atomically rename to final location
+			// Write to temp file first, then atomically rename to final location.
+			// Use O_NOFOLLOW to prevent symlink attacks on the temp file.
 			const tempMetaPath = `${metadataPath}.${randomUUID()}.tmp`;
-			fs.writeFileSync(tempMetaPath, JSON.stringify(metadata, null, 2), "utf-8");
+			const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+			const metaFd = fs.openSync(tempMetaPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW, 0o600);
+			try {
+				fs.writeSync(metaFd, JSON.stringify(metadata, null, 2));
+				fs.closeSync(metaFd);
+			} catch (err) {
+				try { fs.closeSync(metaFd); } catch { /* best-effort */ }
+				try { fs.rmSync(tempMetaPath, { force: true }); } catch { /* best-effort */ }
+				throw err;
+			}
 			renameWithRetry(tempMetaPath, metadataPath);
 			metadataWritten = true;
 		});
@@ -245,19 +264,24 @@ export function cleanupOrphanedBlobs(artifactsRoot: string): number {
 			if (!SHA256_HEX.test(blobFile)) continue;
 
 			const metaPath = path.join(metaDir, `${blobFile}.json`);
-			try {
-				fs.statSync(metaPath);
-				// Metadata exists - blob is not orphaned
-			} catch {
-				// Metadata does not exist - blob is orphaned, delete it
-				const blobPath = path.join(blobDir, blobFile);
+			// Issue 4 fix: Use lock to prevent race between stat and delete.
+			// A concurrent process could write metadata between stat and delete,
+			// causing valid blob to be deleted while metadata remains.
+			withMetadataLock(metaPath, () => {
 				try {
-					fs.rmSync(blobPath, { force: true });
-					cleaned++;
+					fs.statSync(metaPath);
+					// Metadata exists - blob is not orphaned
 				} catch {
-					// Best-effort cleanup - continue to next blob
+					// Metadata does not exist - blob is orphaned, delete it
+					const blobPath = path.join(blobDir, blobFile);
+					try {
+						fs.rmSync(blobPath, { force: true });
+						cleaned++;
+					} catch {
+						// Best-effort cleanup - continue to next blob
+					}
 				}
-			}
+			});
 		}
 	} catch {
 		// Blobs directory doesn't exist or inaccessible - nothing to clean
