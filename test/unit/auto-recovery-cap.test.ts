@@ -35,8 +35,8 @@ test("register.ts implements an autoRecoveryLast defensive cap (Round 22)", () =
 	);
 	assert.match(
 		source,
-		/autoRecoveryLast\.keys\(\)\.next\(\)\.value/,
-		"register.ts should use Map's natural insertion order (oldest first) for eviction",
+		/lastAccessAt.*oldest/,
+		"register.ts should use LRU-style eviction (based on lastAccessAt) for autoRecoveryLast cap",
 	);
 });
 

@@ -330,12 +330,25 @@ function appendTranscript(input: ChildPiRunInput, line: string): void {
 		logInternalError("child-pi.transcript-path-rejected", error as Error, `transcriptPath=${input.transcriptPath}`);
 		return;
 	}
-	// Use O_NOFOLLOW | O_CREAT | O_EXCL to atomically create the file without following
-	// symlinks. O_EXCL fails if the file already exists, preventing TOCTOU attacks where
-	// an attacker replaces the path with a symlink between mkdir and open. We skip
-	// mkdirSync entirely since the parent directory must already exist for the path
-	// to have been validated by resolveRealContainedPath.
-	const fd = fs.openSync(safePath, fs.constants.O_NOFOLLOW | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
+	// Ensure parent directory exists. The directory itself must still be validated
+	// by resolveRealContainedPath (which resolved symlinks and checked containment),
+	// but intermediate subdirectories like 'transcripts/' may not exist yet.
+	const dir = path.dirname(safePath);
+	try {
+		if (!fs.existsSync(dir)) {
+			fs.mkdirSync(dir, { recursive: true });
+		}
+	} catch {
+		// Directory creation may fail if the path is invalid; the openSync below
+		// will also fail and the error will be caught by the caller.
+	}
+	// Use O_NOFOLLOW | O_CREAT | O_APPEND to safely open the transcript file.
+	// O_NOFOLLOW prevents symlink attacks (refuses to follow symlinks).
+	// O_CREAT creates the file if it doesn't exist.
+	// O_APPEND atomically positions at end for each write (no seek race).
+	// Note: O_EXCL was previously used but prevented appending to existing files,
+	// causing EBADF on subsequent writes.
+	const fd = fs.openSync(safePath, fs.constants.O_NOFOLLOW | fs.constants.O_CREAT | fs.constants.O_APPEND, 0o600);
 	try {
 		fs.writeSync(fd, `${redactJsonLine(line)}\n`, undefined, "utf-8");
 	} finally {
