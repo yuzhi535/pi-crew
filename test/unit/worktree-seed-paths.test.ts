@@ -7,7 +7,14 @@ import { normalizeSeedPaths, overlaySeedPaths } from "../../src/worktree/worktre
 import type { WorkflowStep } from "../../src/workflows/workflow-config.ts";
 
 describe("normalizeSeedPaths", () => {
-	const repoRoot = "/fake/repo";
+	// Use temp dir so normalizeSeedPaths can verify files exist (ENOENT → skip).
+	let repoRoot: string;
+	beforeEach(() => {
+		repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "seed-norm-"));
+	});
+	afterEach(() => {
+		fs.rmSync(repoRoot, { force: true, recursive: true });
+	});
 
 	it("rejects path traversal", () => {
 		assert.throws(
@@ -24,17 +31,21 @@ describe("normalizeSeedPaths", () => {
 	});
 
 	it("normalizes separators to forward slashes", () => {
-		// On Windows, path.sep is backslash; normalize to forward slash
+		fs.mkdirSync(path.join(repoRoot, "foo"), { recursive: true });
+		fs.writeFileSync(path.join(repoRoot, "foo/bar.txt"), "x");
 		const result = normalizeSeedPaths(["foo/bar.txt"], repoRoot);
 		assert.equal(result[0], "foo/bar.txt");
 	});
 
 	it("deduplicates entries", () => {
+		fs.writeFileSync(path.join(repoRoot, "a.txt"), "x");
+		fs.writeFileSync(path.join(repoRoot, "b.txt"), "x");
 		const result = normalizeSeedPaths(["a.txt", "a.txt", "b.txt"], repoRoot);
 		assert.deepEqual(result, ["a.txt", "b.txt"]);
 	});
 
 	it("skips empty and whitespace-only entries", () => {
+		fs.writeFileSync(path.join(repoRoot, "a.txt"), "x");
 		const result = normalizeSeedPaths(["", "  ", "a.txt"], repoRoot);
 		assert.deepEqual(result, ["a.txt"]);
 	});
@@ -115,34 +126,45 @@ describe("overlaySeedPaths", () => {
 });
 
 describe("per-step seedPaths merging", () => {
+	let repoRoot: string;
+	beforeEach(() => {
+		repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "seed-merge-"));
+	});
+	afterEach(() => {
+		fs.rmSync(repoRoot, { force: true, recursive: true });
+	});
+
+	function makeStep(seedPaths?: string[]): WorkflowStep {
+		return { id: "s1", role: "executor", task: "do it", seedPaths };
+	}
+
 	it("merges global + step seedPaths without duplicates", () => {
+		for (const f of ["shared.txt", "config.json", "step-file.txt"]) {
+			fs.writeFileSync(path.join(repoRoot, f), "x");
+		}
 		const global = ["shared.txt", "config.json"];
-		const step: WorkflowStep[] = [
-			{ id: "s1", role: "executor", task: "do it", seedPaths: ["step-file.txt", "config.json"] },
-		];
-		const merged = normalizeSeedPaths([...global, ...(step[0].seedPaths ?? [])], "/fake/repo");
+		const step = [makeStep(["step-file.txt", "config.json"])];
+		const merged = normalizeSeedPaths([...global, ...(step[0].seedPaths ?? [])], repoRoot);
 		assert.deepEqual(merged, ["shared.txt", "config.json", "step-file.txt"]);
 	});
 
 	it("works with step-level only (no global)", () => {
-		const step: WorkflowStep[] = [
-			{ id: "s1", role: "executor", task: "do it", seedPaths: ["step-only.txt"] },
-		];
-		const merged = normalizeSeedPaths([...(step[0].seedPaths ?? [])], "/fake/repo");
+		fs.writeFileSync(path.join(repoRoot, "step-only.txt"), "x");
+		const step = [makeStep(["step-only.txt"])];
+		const merged = normalizeSeedPaths([...(step[0].seedPaths ?? [])], repoRoot);
 		assert.deepEqual(merged, ["step-only.txt"]);
 	});
 
 	it("works with global only (no step seedPaths)", () => {
+		fs.writeFileSync(path.join(repoRoot, "shared.txt"), "x");
 		const global = ["shared.txt"];
-		const step: WorkflowStep[] = [
-			{ id: "s1", role: "executor", task: "do it" },
-		];
-		const merged = normalizeSeedPaths([...global, ...(step[0].seedPaths ?? [])], "/fake/repo");
+		const step = [makeStep()];
+		const merged = normalizeSeedPaths([...global, ...(step[0].seedPaths ?? [])], repoRoot);
 		assert.deepEqual(merged, ["shared.txt"]);
 	});
 
 	it("both empty yields empty", () => {
-		const merged = normalizeSeedPaths([], "/fake/repo");
+		const merged = normalizeSeedPaths([], repoRoot);
 		assert.deepEqual(merged, []);
 	});
 });

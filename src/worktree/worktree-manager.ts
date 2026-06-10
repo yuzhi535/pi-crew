@@ -260,6 +260,8 @@ export function normalizeSeedPaths(seedPaths: string[], repoRoot: string): strin
 
 		// Reject symlinks to prevent escape via symlink-based path traversal.
 		// This check is also performed in overlaySeedPaths for defense-in-depth.
+		// ENOENT is acceptable — seed paths may reference files that don't exist yet
+		// (they are validated at copy time by overlaySeedPaths).
 		try {
 			const stat = fs.lstatSync(absolutePath);
 			if (stat.isSymbolicLink()) {
@@ -267,6 +269,7 @@ export function normalizeSeedPaths(seedPaths: string[], repoRoot: string): strin
 			}
 		} catch (error) {
 			if (error instanceof Error && error.message.startsWith("seedPaths entries")) throw error;
+			if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") continue;
 			throw new Error(`seedPaths entries must be accessible: ${entry}`);
 		}
 

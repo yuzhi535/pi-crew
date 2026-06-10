@@ -86,7 +86,16 @@ export class WorkflowSandbox {
 		const safeEnv = Object.freeze(sanitizeEnvSecrets(process.env, {
 			allowList: [
 				"NODE_ENV",
-				"PI_CREW_*",
+				// Note: PI_CREW_* globs are not used here because isDangerousGlob
+				// flags them as potentially matching secret env vars (PI_CREW_token,
+				// PI_CREW_api_key, etc.). Instead, list the specific PI_CREW env vars
+				// that sandboxed code legitimately needs.
+				"PI_CREW_DEPTH",
+				"PI_CREW_INHERIT_PROJECT_CONTEXT",
+				"PI_CREW_INHERIT_SKILLS",
+				"PI_CREW_MOCK_LIVE_SESSION",
+				"PI_CREW_SKIP_HOME_CHECK",
+				"PI_CREW_WARM_POOL_SIZE",
 				"PATH",
 				"PATH_SEPARATOR",
 				"USERPROFILE",

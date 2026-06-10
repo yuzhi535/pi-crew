@@ -115,21 +115,32 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 			fs.closeSync(fd);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: target path ancestor is a symlink: " + resolvedAccumulated);
-			// ENOENT means component doesn't exist — that's OK for target ancestors.
-			// Only existing symlinks are a security risk.
+			// ENOENT means component doesn't exist — that's OK. Only existing symlinks
+			// are a security risk (symlinks to attacker-controlled targets). Non-existent
+			// paths can be created by the caller and don't pose a symlink risk.
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			// For the final component (target itself), ENOENT is expected for non-existent targets.
 			if (i === resolvedParts.length - 1) continue;
-			throw new Error(`Cannot validate path safety: ${resolvedAccumulated} does not exist: ${error instanceof Error ? error.message : String(error)}`);
+			// For non-final components (parent directories), ENOENT is also acceptable —
+			// the caller will create them before the write operation if needed.
+			// We only need to ensure no existing path component is a symlink.
+			continue;
 		}
 	}
 
 	// Open the target with O_NOFOLLOW to catch any symlinks.
+	// ENOENT is acceptable for write operations — the file may not exist yet.
 	let targetFd: number;
 	try {
 		targetFd = fs.openSync(resolved, O_RDONLY | O_NOFOLLOW);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: target path is a symlink: " + resolved);
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			// Target doesn't exist yet — that's OK for write operations.
+			// All ancestors have been validated above (no symlinks).
+			// The caller will create the file with atomic primitives.
+			return resolved;
+		}
 		throw new Error(`Cannot open ${resolved}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 

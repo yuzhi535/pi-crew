@@ -14,8 +14,17 @@ export function userPiRoot(): string {
 	// Reject symlinks to prevent confusion attacks where PI_TEAMS_HOME points to
 	// an attacker-controlled target via a user-owned symlink.
 	// We use lstatSync (does NOT follow) to detect symlinks before they are resolved.
-	const lstats = fs.lstatSync(resolved);
-	if (lstats.isSymbolicLink()) {
+	// ENOENT is acceptable — the directory may not exist yet (caller will create it).
+	let isSymlink = false;
+	try {
+		const lstats = fs.lstatSync(resolved);
+		isSymlink = lstats.isSymbolicLink();
+	} catch (err: unknown) {
+		if (err instanceof Error && "code" in err && err.code !== "ENOENT") throw err;
+		// Path doesn't exist yet — caller will create it. Skip further validation.
+		return resolved;
+	}
+	if (isSymlink) {
 		throw new Error(
 			`userPiRoot: PI_TEAMS_HOME path "${resolved}" is a symlink. ` +
 			"Symlinks are not supported for PI_TEAMS_HOME to prevent confusion attacks. " +
@@ -38,13 +47,8 @@ export function userPiRoot(): string {
 		if (err instanceof Error && "code" in err && err.code !== "ENOENT") {
 			throw err;
 		}
-		// ENOENT from lstatSync means the path does not exist. We cannot validate
-		// symlink safety on a non-existent path, so throw rather than silently
-		// returning an unvalidated path.
-		throw new Error(
-			`userPiRoot: PI_TEAMS_HOME path "${resolved}" does not exist and cannot be validated. ` +
-			"Set PI_TEAMS_HOME to a path that exists and is owned by the current user.",
-		);
+		// ENOENT from statSync means the directory was deleted between lstat and stat
+		// (race condition). This is acceptable — caller will handle.
 	}
 
 	return resolved;

@@ -211,6 +211,30 @@ describe("reconcileStaleRun", () => {
 describe("reconcileOrphanedTempWorkspaces", () => {
 	const tempDirs: string[] = [];
 
+	beforeEach(() => {
+		// Clean up any existing pi-crew-* dirs in /tmp so the test workspace
+		// falls within the ORPHAN_TEMP_SCAN_BATCH_SIZE=50 limit. Without this,
+		// hundreds of orphaned dirs from past test runs push the test workspace
+		// beyond the batch window, causing repaired=0.
+		try {
+			const entries = fs.readdirSync(os.tmpdir(), { withFileTypes: true });
+			for (const entry of entries) {
+				if (entry.isDirectory() && entry.name.startsWith("pi-crew-")) {
+					try {
+						fs.rmSync(path.join(os.tmpdir(), entry.name), {
+							recursive: true,
+							force: true,
+						});
+					} catch {
+						/* ignore — best-effort cleanup */
+					}
+				}
+			}
+		} catch {
+			/* ignore */
+		}
+	});
+
 	afterEach(() => {
 		// Clean up any temp dirs created during tests
 		for (const dir of tempDirs.splice(0)) {
