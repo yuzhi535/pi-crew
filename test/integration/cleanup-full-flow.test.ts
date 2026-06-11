@@ -47,6 +47,14 @@ function rmrf(p: string): void {
 	}
 }
 
+// Track spawned child processes for cleanup
+const spawnedPids: number[] = [];
+test.after(() => {
+	for (const pid of spawnedPids) {
+		try { process.kill(pid, 9); } catch { /* already dead */ }
+	}
+});
+
 function touchDir(dir: string, ageMs: number): void {
 	fs.mkdirSync(dir, { recursive: true });
 	const past = new Date(Date.now() - ageMs);
@@ -120,6 +128,7 @@ test("full cleanup flow: orphan temp dirs + legacy /tmp + orphan workers", () =>
 		detached: false,
 	});
 	const workerPid = worker.pid!;
+	spawnedPids.push(workerPid);
 
 	// Register with dead parent (registered 2 hours ago so it's stale)
 	registerWorker(workerPid, "session-DEAD", "run-dead", 999999, { registeredAt: Date.now() - 2 * 60 * 60 * 1000 });
@@ -163,6 +172,7 @@ test("full cleanup flow: concurrent session protection", () => {
 		detached: false,
 	});
 	const workerPid = worker.pid!;
+	spawnedPids.push(workerPid);
 
 	// Register with current process as parent (alive)
 	registerWorker(workerPid, "session-CONCURRENT", "run-concurrent", process.pid);
@@ -216,6 +226,7 @@ test("full cleanup flow: dead worker pruned, not killed", async () => {
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	const fakeWorkerPid = fakeWorker.pid!;
+	spawnedPids.push(fakeWorkerPid);
 
 	// Register the fake worker with a dead parent
 	registerWorker(fakeWorkerPid, "session-DEAD", "run-dead", 999998);
