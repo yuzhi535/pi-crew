@@ -41,6 +41,11 @@ function resolveWindowsCanonical(p: string): string {
 		if (real.startsWith("\\\\?\\")) real = real.slice(4);
 		return real;
 	} catch {
+		// Fallback: try realpathSync (non-native) which may succeed where .native fails
+		try {
+			const real = fs.realpathSync(p);
+			return real;
+		} catch { /* proceed to ancestor walk */ }
 		// Walk up to find the deepest existing ancestor
 		const parts: string[] = [];
 		let current = p;
@@ -54,6 +59,14 @@ function resolveWindowsCanonical(p: string): string {
 				}
 				return real;
 			} catch {
+				// Also try non-native for ancestor
+				try {
+					let real = fs.realpathSync(current);
+					for (const part of parts.reverse()) {
+						real = path.join(real, part);
+					}
+					return real;
+				} catch { /* keep walking */ }
 				parts.push(path.basename(current));
 				current = path.dirname(current);
 			}

@@ -145,7 +145,12 @@ function ensureRunMailbox(manifest: TeamRunManifest): void {
 	safeMailboxDir(manifest, true);
 	for (const direction of ["inbox", "outbox"] as const) {
 		const filePath = mailboxFile(manifest, direction, undefined, true);
-		if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, "", "utf-8");
+		if (!fs.existsSync(filePath)) {
+			// Ensure parent dir exists (may have been lost due to race or
+			// Windows path normalization mismatch)
+			fs.mkdirSync(path.dirname(filePath), { recursive: true });
+			fs.writeFileSync(filePath, "", "utf-8");
+		}
 	}
 	const delivery = deliveryFile(manifest, true);
 	if (!fs.existsSync(delivery)) fs.writeFileSync(delivery, `${JSON.stringify({ messages: {}, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf-8");

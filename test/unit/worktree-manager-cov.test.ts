@@ -116,9 +116,10 @@ describe("findGitRoot", () => {
 			initGitRepo(repo);
 			const root = findGitRoot(repo);
 			// On Windows, findGitRoot returns long-name form from git while
-			// createTrackedTempDir may return short-name form. Compare insensitively.
+			// createTrackedTempDir may return short-name form. Compare insensitively
+			// and normalize path separators.
 			if (process.platform === "win32") {
-				assert.equal(root.toLowerCase(), repo.toLowerCase());
+				assert.equal(root.replace(/\\/g, "/").toLowerCase(), repo.replace(/\\/g, "/").toLowerCase());
 			} else {
 				assert.equal(root, repo);
 			}
@@ -135,7 +136,7 @@ describe("findGitRoot", () => {
 			fs.mkdirSync(sub, { recursive: true });
 			const root = findGitRoot(sub);
 			if (process.platform === "win32") {
-				assert.equal(root.toLowerCase(), repo.toLowerCase());
+				assert.equal(root.replace(/\\/g, "/").toLowerCase(), repo.replace(/\\/g, "/").toLowerCase());
 			} else {
 				assert.equal(root, repo);
 			}
