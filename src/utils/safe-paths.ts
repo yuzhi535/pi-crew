@@ -166,23 +166,30 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 	// races that occurred between the initial O_NOFOLLOW validation and the
 	// realpathSync call. An attacker could have replaced a validated ancestor
 	// with a symlink during this window.
-	const realPathParts = realTarget.split(path.sep);
-	let realPathAccumulated = "";
-	if (realPathParts[0] === "") realPathAccumulated = "/";
-	for (let i = 1; i < realPathParts.length; i++) {
-		if (realPathParts[i] === "") continue;
-		realPathAccumulated = path.join(realPathAccumulated, realPathParts[i]);
+	//
+	// Skip the final path component (realTarget itself) — we just successfully
+	// realpathSync'd it, so it exists. Re-validating it can spuriously fail on
+	// Windows where the resolved path uses short-name (8.3) form that
+	// openSync cannot reopen, or where the realpathSync result differs in
+	// case/separator form from the original.
+	//
+	// Walk via path.dirname which is portable across all platforms and
+	// correctly handles extended-length (\\?\), UNC (\\server\share), and
+	// short-name paths on Windows without manual parsing.
+	let ancestor = path.dirname(realTarget);
+	while (ancestor && ancestor !== path.dirname(ancestor)) {
 		try {
-			const fd = fs.openSync(realPathAccumulated, O_RDONLY | O_NOFOLLOW);
+			const fd = fs.openSync(ancestor, O_RDONLY | O_NOFOLLOW);
 			fs.closeSync(fd);
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: TOCTOU race detected, path became a symlink: " + realPathAccumulated);
+			if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: TOCTOU race detected, path became a symlink: " + ancestor);
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			// ENOENT on an ancestor of realTarget after realpathSync is concerning
 			// — the path existed when we validated it but now doesn't. This could
 			// indicate a race or attack. For safety, treat this as an error.
-			throw new Error(`Cannot validate resolved path: ${realPathAccumulated} disappeared after realpathSync: ${error instanceof Error ? error.message : String(error)}`);
+			throw new Error(`Cannot validate resolved path: ${ancestor} disappeared after realpathSync: ${error instanceof Error ? error.message : String(error)}`);
 		}
+		ancestor = path.dirname(ancestor);
 	}
 
 	// Verify the resolved real path is still within baseDir.
