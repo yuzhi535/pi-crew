@@ -2,10 +2,11 @@ import { test, describe } from "node:test";
 import assert from "node:assert";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { AtomicWriter } from "../../src/state/atomic-write-v2.ts";
 
 describe("AtomicWriter", () => {
-  const tmpDir = fs.mkdtempSync("/tmp/atomic-test-");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "atomic-test-"));
   const writer = new AtomicWriter(tmpDir);
 
   test.afterEach(() => {

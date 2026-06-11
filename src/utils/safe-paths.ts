@@ -16,7 +16,15 @@ export function resolveContainedPath(baseDir: string, targetPath: string): strin
 	}
 	const base = path.resolve(baseDir);
 	const resolved = path.isAbsolute(targetPath) ? path.resolve(targetPath) : path.resolve(base, targetPath);
-	const relative = path.relative(base, resolved);
+	// On Windows, paths are case-insensitive but path.relative does case-sensitive
+	// string compare. Normalize case for the comparison so paths differing only
+	// in case (e.g. C:\Users\RUNNER~1 vs C:\Users\runneradmin) are treated as
+	// the same directory.
+	const baseCompare = process.platform === "win32" ? base.toLowerCase() : base;
+	const resolvedCompare = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+	const relative = process.platform === "win32"
+		? path.relative(baseCompare, resolvedCompare)
+		: path.relative(base, resolved);
 	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
 	return resolved;
 }
@@ -193,7 +201,14 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 	}
 
 	// Verify the resolved real path is still within baseDir.
-	const relative = path.relative(realBase, realTarget);
+	// On Windows, paths are case-insensitive but path.relative does case-sensitive
+	// string compare. Normalize case so paths differing only in case (e.g. C:\Users\RUNNER~1
+	// vs C:\Users\runneradmin) are treated as the same directory.
+	const baseCompare = process.platform === "win32" ? realBase.toLowerCase() : realBase;
+	const targetCompare = process.platform === "win32" ? realTarget.toLowerCase() : realTarget;
+	const relative = process.platform === "win32"
+		? path.relative(baseCompare, targetCompare)
+		: path.relative(realBase, realTarget);
 	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
 	return realTarget;
 }
