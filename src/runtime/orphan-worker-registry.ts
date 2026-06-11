@@ -23,6 +23,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execSync } from "node:child_process";
 import { userPiRoot } from "../utils/paths.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import { withFileLockSync } from "../state/locks.ts";
@@ -110,7 +111,6 @@ function getProcessStartTimeLinux(pid: number): number | undefined {
 function getProcessStartTimeMacOS(pid: number): number | undefined {
 	// Use sysctl to get process start time on macOS
 	// KERN_PROC_PID returns a kinfo_proc structure with p_starttime
-	const { execSync } = require("child_process");
 	try {
 		// Use ps to get process start time - format: Mon Day Time or Mon Day Year
 		// For cross-platform consistency, we use 'lstart' which gives full timestamp
@@ -128,7 +128,6 @@ function getProcessStartTimeMacOS(pid: number): number | undefined {
 function getProcessStartTimeWindows(pid: number): number | undefined {
 	// Use Windows API via JSDrive's winattr or native code
 	// For Node.js without native modules, use tasklist /v and parse output
-	const { execSync } = require("child_process");
 	try {
 		// /v verbose, /fo csv, /nh no header
 		const output = execSync(

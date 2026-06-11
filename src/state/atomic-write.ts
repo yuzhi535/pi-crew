@@ -54,8 +54,14 @@ export function isSymlinkSafePath(filePath: string): boolean {
 				if (dirStat.isSymbolicLink()) {
 					// Resolve and verify ownership on Unix
 					const realDir = fs.realpathSync(dir);
-					// Issue 1 fix: use resolved baseDir for boundary verification
-					if (!realDir.startsWith(baseDir + path.sep) && realDir !== baseDir) return false;
+					// Issue 1 fix: use resolved baseDir for boundary verification.
+					// Accept if realDir is inside baseDir, equals baseDir, or is an
+					// ancestor of baseDir (e.g. /var/folders → /private/var/folders
+					// on macOS where /var → /private/var is a system symlink).
+					const realDirNorm = realDir.endsWith(path.sep) ? realDir : realDir + path.sep;
+					const baseDirNorm = baseDir.endsWith(path.sep) ? baseDir : baseDir + path.sep;
+					const isAncestor = baseDirNorm.startsWith(realDirNorm) || baseDir === realDir;
+					if (!isAncestor && !realDirNorm.startsWith(baseDirNorm)) return false;
 					const realStat = fs.statSync(realDir);
 					if (!realStat.isDirectory()) return false;
 					if (typeof process.getuid === "function" && realStat.uid !== process.getuid()) return false;

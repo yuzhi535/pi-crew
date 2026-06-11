@@ -16,17 +16,24 @@ export function resolveContainedPath(baseDir: string, targetPath: string): strin
 	}
 	const base = path.resolve(baseDir);
 	const resolved = path.isAbsolute(targetPath) ? path.resolve(targetPath) : path.resolve(base, targetPath);
-	// On Windows, paths are case-insensitive but path.relative does case-sensitive
-	// string compare. Normalize case for the comparison so paths differing only
-	// in case (e.g. C:\Users\RUNNER~1 vs C:\Users\runneradmin) are treated as
-	// the same directory.
-	const baseCompare = process.platform === "win32" ? base.toLowerCase() : base;
-	const resolvedCompare = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+	// On Windows, paths are case-insensitive and short-name (8.3) aliases may
+	// differ from long-name forms (e.g. C:\Users\RUNNER~1 vs C:\Users\runneradmin).
+	// Use realpathSync.native to normalize both paths to their canonical form
+	// before comparison. On non-Windows, path.resolve is sufficient.
+	const baseNorm = process.platform === "win32" ? tryRealPath(base) : base;
+	const resolvedNorm = process.platform === "win32" ? tryRealPath(resolved) : resolved;
+	const baseCompare = process.platform === "win32" ? baseNorm.toLowerCase() : baseNorm;
+	const resolvedCompare = process.platform === "win32" ? resolvedNorm.toLowerCase() : resolvedNorm;
 	const relative = process.platform === "win32"
 		? path.relative(baseCompare, resolvedCompare)
 		: path.relative(base, resolved);
 	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
 	return resolved;
+}
+
+/** Best-effort realpathSync — returns the original path on failure. */
+function tryRealPath(p: string): string {
+	try { return fs.realpathSync.native(p); } catch { return p; }
 }
 
 /**

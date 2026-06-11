@@ -71,6 +71,9 @@ export class FileCheckpointStore implements CheckpointStore {
 		const dirFd = fs.openSync(this.checkpointDir(), "r");
 		try {
 			fs.fsyncSync(dirFd);
+		} catch {
+			// EPERM on Windows: opening a directory and fsync-ing it is not supported
+			// on all Windows configurations. Best-effort — the rename is still atomic.
 		} finally {
 			fs.closeSync(dirFd);
 		}

@@ -18,7 +18,10 @@ const tracked = new Set<string>();
 
 /** Create a temp dir that will be auto-cleaned after all tests. */
 export function createTrackedTempDir(prefix: string): string {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	// On macOS, os.tmpdir() may return a symlinked path (e.g. /var/folders/.../T/)
+	// that atomicWriteFile refuses to write through. Resolve to the real path.
+	const realTmp = fs.realpathSync(os.tmpdir());
+	const dir = fs.mkdtempSync(path.join(realTmp, prefix));
 	tracked.add(dir);
 	return dir;
 }

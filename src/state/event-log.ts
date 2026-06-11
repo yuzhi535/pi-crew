@@ -530,6 +530,8 @@ function appendEventInsideLock(eventsPath: string, event: AppendTeamEvent): Team
 		const fd = fs.openSync(eventsPath, "r+");
 		try {
 			fs.fsyncSync(fd);
+		} catch {
+			// EPERM on Windows CI: best-effort flush
 		} finally {
 			fs.closeSync(fd);
 		}

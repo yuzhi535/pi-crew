@@ -519,7 +519,7 @@ async function main(): Promise<void> {
 		console.log(
 			`[background-runner] DEBUG: discoverAgents done, ${agents.length} agents`,
 		);
-		fs.fsyncSync(fs.openSync(manifest.eventsPath, "a")); // FORCE flush so we see this before death
+		try { fs.fsyncSync(fs.openSync(manifest.eventsPath, "a")); } catch { /* best-effort */ } // FORCE flush so we see this before death
 		console.log(
 			`[background-runner] DEBUG: calling directTeamAndWorkflowFromRun`,
 		);

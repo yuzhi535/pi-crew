@@ -10,7 +10,7 @@ import { toolResult } from "../../src/extension/tool-result.ts";
 import { createRunManifest, updateRunStatus } from "../../src/state/state-store.ts";
 
 /** Retry rmSync on Windows EBUSY — child processes may hold file handles briefly. */
-function rmSyncRetry(target: string, opts: fs.RmOptions & { recursive?: boolean; force?: boolean } = {}, retries = 5, delayMs = 200): void {
+function rmSyncRetry(target: string, opts: fs.RmOptions & { recursive?: boolean; force?: boolean } = {}, retries = 10, delayMs = 500): void {
 	for (let attempt = 0; attempt <= retries; attempt++) {
 		try {
 			fs.rmSync(target, opts);

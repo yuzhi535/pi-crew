@@ -123,8 +123,13 @@ export function createSafeTempDir(base: string, prefix: string): string {
 	// Verify base dir itself is not a symlink before realpathSync.
 	// Issue #1 fix: if baseDir itself is a symlink, realpathSync would
 	// resolve to an attacker-controlled location.
-	const baseStat = fs.lstatSync(base);
-	if (baseStat.isSymbolicLink()) throw new Error("Refusing to create temp dir in symlinked base: " + base);
+	try {
+		const baseStat = fs.lstatSync(base);
+		if (baseStat.isSymbolicLink()) throw new Error("Refusing to create temp dir in symlinked base: " + base);
+	} catch (e) {
+		if (e instanceof Error && e.message.includes("symlink")) throw e;
+		// ENOENT: base doesn't exist yet — will be created below.
+	}
 	// Create base dir only AFTER all ancestor symlink checks pass.
 	if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
 	// Issue #1 fix: re-validate the FULL ancestor chain immediately after
