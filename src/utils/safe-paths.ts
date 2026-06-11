@@ -39,6 +39,8 @@ function resolveWindowsCanonical(p: string): string {
 	try {
 		let real = fs.realpathSync.native(p);
 		if (real.startsWith("\\\\?\\")) real = real.slice(4);
+		// Guard against NTFS internal paths (e.g. C:\$Extend\$Deleted)
+		if (real.includes("$Extend") || real.includes("$Deleted")) throw new Error("NTFS internal path");
 		return real;
 	} catch {
 		// Fallback: try realpathSync (non-native) which may succeed where .native fails
@@ -53,6 +55,8 @@ function resolveWindowsCanonical(p: string): string {
 			try {
 				let real = fs.realpathSync.native(current);
 				if (real.startsWith("\\\\?\\")) real = real.slice(4);
+				// Guard against NTFS internal paths
+				if (real.includes("$Extend") || real.includes("$Deleted")) throw new Error("NTFS internal path");
 				// Found existing ancestor — join with remaining parts
 				for (const part of parts.reverse()) {
 					real = path.join(real, part);
