@@ -24,7 +24,7 @@ export function createTrackedTempDir(prefix: string): string {
 	let dir = fs.mkdtempSync(path.join(realTmp, prefix));
 	// On Windows, mkdtempSync may still return a short-name (8.3) path.
 	// Resolve again to get the canonical long-name form.
-	try { dir = fs.realpathSync(dir); } catch { /* keep as-is */ }
+	try { dir = fs.realpathSync.native(dir); if (dir.startsWith("\\\\?\\")) dir = dir.slice(4); } catch { /* keep as-is */ }
 	tracked.add(dir);
 	return dir;
 }
