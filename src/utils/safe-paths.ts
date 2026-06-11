@@ -33,7 +33,17 @@ export function resolveContainedPath(baseDir: string, targetPath: string): strin
 
 /** Best-effort realpathSync — returns the original path on failure. */
 function tryRealPath(p: string): string {
-	try { return fs.realpathSync.native(p); } catch { return p; }
+	try {
+		let real = fs.realpathSync.native(p);
+		// On Windows, realpathSync.native may return an extended-length path
+		// prefixed with \\?\ (e.g. \\?\C:\Users\...). path.relative does NOT
+		// handle these correctly — it returns "../\\?\..." instead of the
+		// expected relative path. Strip the \\?\ prefix for comparison.
+		if (process.platform === "win32" && real.startsWith("\\\\?\\")) {
+			real = real.slice(4);
+		}
+		return real;
+	} catch { return p; }
 }
 
 /**
@@ -103,6 +113,10 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 		// that no symlinks exist in the path at open time. Any TOCTOU race would cause
 		// the O_NOFOLLOW open to fail before we reach this point.
 		realBase = fs.realpathSync.native(baseDir);
+		// Strip Windows extended-length prefix (\\?\) for path.relative compatibility.
+		if (process.platform === "win32" && realBase.startsWith("\\\\?\\")) {
+			realBase = realBase.slice(4);
+		}
 	} catch (error) {
 		// baseDir MUST exist and be resolvable for the containment guarantee to hold.
 		// Callers creating new directories must create baseDir atomically (e.g.,
@@ -165,6 +179,10 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 		// that no symlinks exist in the path at open time. Any TOCTOU race would cause
 		// the O_NOFOLLOW open to fail before we reach this point.
 		realTarget = fs.realpathSync.native(resolved);
+		// Strip Windows extended-length prefix (\\?\) for path.relative compatibility.
+		if (process.platform === "win32" && realTarget.startsWith("\\\\?\\")) {
+			realTarget = realTarget.slice(4);
+		}
 	} catch (targetError) {
 		if ((targetError as NodeJS.ErrnoException).code === "ENOENT") {
 			// Target doesn't exist yet — this is OK for write operations.
