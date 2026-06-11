@@ -25,12 +25,7 @@ export function resolveContainedPath(baseDir: string, targetPath: string): strin
 	const relative = process.platform === "win32"
 		? path.relative(baseNorm.toLowerCase(), resolvedNorm.toLowerCase())
 		: path.relative(base, resolved);
-	if (relative.startsWith("..") || path.isAbsolute(relative)) {
-		if (process.platform === "win32" && targetPath === "mailbox") {
-			console.error(`[safe-paths] mailbox DEBUG: base=${base} resolved=${resolved} baseNorm=${baseNorm} resolvedNorm=${resolvedNorm} relative=${relative}`);
-		}
-		throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
-	}
+	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
 	return resolved;
 }
 
@@ -166,6 +161,8 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 			fs.closeSync(fd);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: target path ancestor is a symlink: " + resolvedAccumulated);
+			// EPERM on Windows when opening a directory — skip validation
+			if ((error as NodeJS.ErrnoException).code === "EPERM" && process.platform === "win32") continue;
 			// ENOENT means component doesn't exist — that's OK. Only existing symlinks
 			// are a security risk (symlinks to attacker-controlled targets). Non-existent
 			// paths can be created by the caller and don't pose a symlink risk.
@@ -186,6 +183,8 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 		targetFd = fs.openSync(resolved, O_RDONLY | O_NOFOLLOW);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error("Refusing to resolve: target path is a symlink: " + resolved);
+		// EPERM on Windows when opening a directory — treat as non-existent
+		if ((error as NodeJS.ErrnoException).code === "EPERM" && process.platform === "win32") return resolved;
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 			// Target doesn't exist yet — that's OK for write operations.
 			// All ancestors have been validated above (no symlinks).

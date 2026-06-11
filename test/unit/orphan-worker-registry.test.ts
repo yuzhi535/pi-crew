@@ -33,6 +33,14 @@ function rmrf(p: string): void {
 	}
 }
 
+// Track spawned child processes for cleanup
+const spawnedPids: number[] = [];
+test.after(() => {
+	for (const pid of spawnedPids) {
+		try { process.kill(pid, 9); } catch { /* already dead */ }
+	}
+});
+
 function writeRawRegistry(entries: unknown[]): void {
 	const p = path.join(REGISTRY_FILE, "..", "orphan-workers.json");
 	fs.writeFileSync(p, JSON.stringify(entries));
@@ -150,7 +158,7 @@ test("cleanupOrphanWorkers keeps current session's workers (concurrent session s
 			stdio: "ignore",
 		});
 		const livePid = child.pid!;
-		// Use current process's PID as "parent" so the parent-alive check
+		spawnedPids.push(livePid);
 		// triggers (which would normally keep the entry). Then verify the
 		// current-session check kicks in FIRST.
 		registerWorker(livePid, "session-MINE", "run-1", process.pid);
@@ -186,7 +194,7 @@ setInterval(() => {}, 1000);`,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		const livePid = child.pid!;
-
+		spawnedPids.push(livePid);
 		// Register with dead parent (so it gets killed) and old timestamp.
 		const past = Date.now() - 25 * 60 * 60 * 1000; // 25h ago
 		const entries = [
@@ -233,6 +241,7 @@ test("cleanupOrphanWorkers keeps workers with alive parentPid (concurrent sessio
 			{ stdio: "ignore" },
 		);
 		const livePid = child.pid!;
+		spawnedPids.push(livePid);
 		// Register: sessionId=OTHER, parentPid=process.pid (still alive)
 		const past = Date.now() - 25 * 60 * 60 * 1000; // very old
 		const entries = [
@@ -294,6 +303,7 @@ test("cleanupOrphanWorkers prunes (not kills) when startTime mismatches (PID rec
 			stdio: "ignore",
 		});
 		const livePid = child.pid!;
+		spawnedPids.push(livePid);
 
 		// Write a registry entry with a startTime that is guaranteed NOT to match
 		// the real process startTime. This simulates PID recycling: the OS gave

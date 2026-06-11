@@ -128,7 +128,7 @@ describe("findGitRoot", () => {
 			const sub = path.join(repo, "src", "deep");
 			fs.mkdirSync(sub, { recursive: true });
 			const root = findGitRoot(sub);
-			assert.equal(fs.realpathSync(root), fs.realpathSync(repo));
+			assert.equal(fs.realpathSync.native(root), fs.realpathSync.native(repo));
 		} finally {
 			removeTrackedTempDir(repo);
 		}
