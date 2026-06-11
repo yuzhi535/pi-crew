@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.6.3] — Pre-Publish Review: 87 Test Fixes, Heartbeat Fix, ENOENT Crash Fix, Scheduler Lifecycle (2026-06-11)
+
+### Highlights
+- **87 pre-existing test failures resolved** — 0 failures across 4,792 tests in 506 test files
+- **Heartbeat false-positive dead detection fixed** — `message_start` added to progress flush events; PID liveness gate uses `task.checkpoint.childPid` fallback
+- **ENOENT crash on prune/forget race fixed** — 4-layer defense in `persistSingleTaskUpdate`, `persistHeartbeat`, `saveRunTasks`, and `upsertCrewAgent`
+- **Scheduled job lifecycle completed** — spawned runs tracked via `spawnedRunIds[]`, auto-cancelled on job removal, manifests stamped with `schedulerJobId` for traceability
+- **Pre-push review**: 56 unpushed commits reviewed (116 files, +9,599/−980 lines), 1 release blocker found and fixed
+- **Full-feature smoke test**: 58 integration tests covering all pi-crew actions
+
+### Bug Fixes
+- **`89ed975`** — Heartbeat watcher: added `message_start` to `shouldFlushProgressEvent()` so LLM stream start updates `lastActivityAt`. Previously, an 8m53s LLM response (365 file reads, no tool calls) triggered false `heartbeat_dead` at 300s threshold.
+- **`9c1bf1f`** — Heartbeat watcher: PID liveness gate uses `task.heartbeat?.pid ?? task.checkpoint?.childPid` fallback. Review team discovered the gate was dead code because `createWorkerHeartbeat(taskId)` never receives PID.
+- **`2bbbb99`** — ENOENT crash: `persistSingleTaskUpdate` recheck stat wrapped in try/catch; `persistHeartbeat` catches ENOENT; `saveRunTasks` guards with `statSync(stateRoot)`; `upsertCrewAgent` skips if stateRoot gone.
+- **`08df7ce`** — Release blocker: `src/errors.ts` enum→const object, `src/state/health-store.ts` parameter property — both incompatible with Node 22 `--experimental-strip-types`.
+- **`3e0b957`** — Sandbox constructor escape detection strengthened.
+- **`dd279bc`** — EBADF (missing O_WRONLY flag), re-entrant sync locks, worktree list parsing, env-filter provider keys.
+- **`38b8f5a`** — Create `transcripts/` directory before child-pi appends.
+- **`d893434`** — Child-pi: remove API key allowlist; child Pi uses same config as parent.
+
+### Test Fixes (87 total)
+- **`1ab7926`** — 33 failures: state-store mtime CAS, locks race, discovery, atomic-write, config-schema, blob-store, env-filter, sandbox, security-hardening, worktree
+- **`bba0bed`** — 3 failures: blob dedup, auto-recovery cap, transcript append
+- **`03dd9b3`** — 14 failures: team-runner, retry-runner, hooks, stale-reconciler, resume-checkpoint, dynamic-script-runner, adaptive-implementation
+- **`a91c316`** — 5 failures: re-entrant sync locks (`withRunLockSync`), `registerWorker()` optional `registeredAt`, `phase8-smoke` PI_TEAMS_HOME isolation, `test-integration-check` PI_CREW_ALLOW_MOCK, `test-bugs-all.mjs` graceful skip
+- **`952c14d`** — 58 full-feature smoke tests added
+
+### Features
+- **`14269f0`** — Scheduler tracks spawned runs: `ScheduledJob.spawnedRunIds[]`, `CrewScheduler.recordSpawnedRun()`, `remove()` calls `runCancelFn` per spawned run, manifests stamped with `schedulerJobId`/`schedulerName`.
+- **`e499570`** — Plugin registry system for framework context injection (Next.js, Vite, Vitest).
+- **`84170c3`** — Team runner integrates plugin registry for framework-aware task context.
+- **`ee466a8`** — Health score system with penalty-based scoring and time-series snapshots.
+- **`daa53ab`** — Atomic write v2 with fsync + rename pattern for crash-safe state persistence.
+- **`6c01f2c`** — CrewError taxonomy: E001–E006 structured error codes.
+- **`2ce143f`** — State-store uses CrewError for structured errors.
+- **`0cd4853`** — Stable task IDs via `stableIdFromContent` for cross-run consistency.
+- **`ff3da92`** — Health snapshot saved on run completion.
+
+### Stats
+- 84 commits since v0.6.1
+- 180 files changed (+16,312 / −1,929 lines)
+- 366 source files, ~70K lines TypeScript
+- 506 test files, ~66K lines TypeScript
+- 4,792 tests, 0 failures
+
+
 ## [0.6.3] — Post-Release Hardening: Cleanup, Safe-Paths, State-Store Race (2026-06-08)
 
 ### Highlights

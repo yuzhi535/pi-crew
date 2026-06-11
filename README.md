@@ -9,26 +9,24 @@ npm: pi-crew
 repo: https://github.com/baphuongna/pi-crew
 ```
 
-**v0.6.1**: See [CHANGELOG.md](CHANGELOG.md).
+**v0.6.3**: See [CHANGELOG.md](CHANGELOG.md).
 
-### Security highlights (v0.6.1)
+### Highlights (v0.6.2 → v0.6.3)
 
-- **42+ security issues fixed** — 7 CRITICAL, 10 HIGH, 11 MEDIUM, 14 post-restart findings
-- **Timing-safe token comparison** — constant-time compare for lock tokens and request IDs
-- **Environment leak prevention** — `sanitizeEnvSecrets()` on all child process spawns
-- **Shell injection hardened** — `execFileSync` with array args; blocked `String.fromCharCode` bypass
-- **ReDoS-free secret redaction** — linear-time scanning in `redaction.ts`
-- **Sandbox prototype isolation** — `Object.freeze` scoped to VM context; `constructor` pattern blocked
-- **Symlink traversal prevention** — `fs.realpathSync` before path containment checks
-- **Safe-bash line-continuation hardening** — `$\n(evil)` command substitution bypass blocked
-- **Path traversal mitigated** — `resolveContainedPath`/`resolveRealContainedPath` across all file ops
-- **Memory leaks capped** — Maps, Sets, arrays bounded with eviction across all modules
-- **Event log race conditions fixed** — sync/async queue unification
-- **Subagent record sanitization** — allow-listed field persistence
-- **~1,900 new tests**, 113 test files — total suite ~4,600 tests, 0 failures
-- **42+ audit rounds, 160+ issues fixed** across all severity levels
-
-See [SECURITY-ISSUES.md](SECURITY-ISSUES.md) for the full list (SEC-001 – SEC-007 all marked fixed).
+- **84 commits** since v0.6.1 — 180 files changed (+16,312 / −1,929 lines)
+- **4,792 tests**, 506 test files — **0 failures** across the entire suite
+- **366 source files**, ~70K lines of TypeScript
+- **Scheduled job lifecycle** — spawned runs are tracked, cancelling a job kills its runs
+- **Heartbeat false-positive fix** — PID liveness gate prevents dead detection during long LLM responses
+- **ENOENT crash fix** — prune/forget race no longer crashes pi when persisting to deleted runs
+- **Plugin registry** — extensible framework context injection for Next.js, Vite, Vitest
+- **Health score system** — penalty-based scoring with time-series snapshots
+- **CrewError taxonomy** — E001–E006 structured error codes replacing raw throws
+- **Atomic write v2** — fsync + rename pattern for crash-safe state persistence
+- **Pre-push review**: 56 unpushed commits reviewed, 1 release blocker found and fixed
+- **Security**: sandbox constructor escape strengthened; env-filter provider key handling fixed
+- **State-store race fix** — manifest/tasks mtime false positive eliminated
+- **Orphan worker/temp cleanup** — 4-layer defense with session-scoped tracking
 
 ---
 
@@ -50,6 +48,9 @@ See [SECURITY-ISSUES.md](SECURITY-ISSUES.md) for the full list (SEC-001 – SEC-
 - **Adaptive plan fanout** — single `assess` step lets a planner pick the smallest effective crew
 - **Adaptive workflows** — `implementation`, `review`, `parallel-research`, `research` workflows ship in `workflows/`
 - **Hardened secrets** — linear-time detection covers PEM keys, Authorization headers, Bearer tokens, and `key=value` patterns
+- **Scheduled runs** — `schedule`/`scheduled` actions with cron, interval, and one-shot support; spawned runs tracked and auto-cancelled on job removal
+- **Plugin system** — framework-aware context injection (Next.js, Vite, Vitest) via plugin registry
+- **Health scoring** — penalty-based run health with time-series snapshots
 
 ---
 
@@ -255,11 +256,18 @@ Requirements:
 { "action": "artifacts", "runId": "team_..." }
 { "action": "cancel", "runId": "team_..." }
 { "action": "resume", "runId": "team_..." }
+{ "action": "retry", "runId": "team_..." }
+{ "action": "steer", "runId": "team_...", "taskId": "01_explore", "message": "Focus on src/ only" }
+{ "action": "respond", "runId": "team_...", "message": "Answer" }
+{ "action": "wait", "runId": "team_..." }
 
 // Discovery
 { "action": "list" }
-{ "action": "get", "resource": "team", "name": "default" }
+{ "action": "get", "resource": "team", "team": "default" }
+{ "action": "get", "resource": "agent", "agent": "explorer" }
+{ "action": "get", "resource": "workflow", "workflow": "review" }
 { "action": "recommend", "goal": "Refactor auth flow" }
+{ "action": "search", "goal": "heartbeat detection" }
 
 // Resource management
 { "action": "create", "resource": "agent", "config": { "name": "api-reviewer", ... } }
@@ -281,12 +289,34 @@ Requirements:
 { "action": "autonomy", "profile": "assisted" }
 
 // Advanced
-{ "action": "api", "runId": "team_...", "operation": "read-manifest" }
+{ "action": "api", "runId": "team_...", "config": { "operation": "read-manifest" } }
 { "action": "plan", "team": "default", "goal": "..." }
+{ "action": "orchestrate", "planPath": "plan.md", "team": "implementation", "goal": "..." }
+{ "action": "parallel", "config": { "tasks": [{"goal": "...", "agent": "explorer"}] } }
 { "action": "worktrees", "runId": "team_..." }
+{ "action": "graph", "runId": "team_..." }
+{ "action": "explain", "runId": "team_..." }
+{ "action": "health" }
+{ "action": "doctor" }
+{ "action": "cache" }
+{ "action": "invalidate", "runId": "team_..." }
+
+// Scheduled runs
+{ "action": "schedule", "team": "fast-fix", "goal": "Run tests", "cron": "0 9 * * MON" }
+{ "action": "schedule", "team": "default", "goal": "...", "interval": 3600000 }
+{ "action": "schedule", "team": "research", "goal": "...", "once": "+10m" }
+{ "action": "scheduled" }
+
+// Diagnostics & settings
+{ "action": "config" }
+{ "action": "settings" }
+{ "action": "autonomy" }
+{ "action": "anchor" }
+{ "action": "onboard" }
+{ "action": "auto-summarize" }
 ```
 
-📖 Full actions reference (28 actions): [docs/actions-reference.md](docs/actions-reference.md)
+📖 Full actions reference (40+ actions): [docs/actions-reference.md](docs/actions-reference.md)
 
 ---
 
@@ -381,13 +411,13 @@ Your system prompt here.
 ```bash
 cd pi-crew
 npm install          # dependencies
-npm test             # unit + integration tests
+npm test             # unit + integration tests (~4,800 tests)
 npm run typecheck    # tsc --noEmit
 npm run ci           # full CI-equivalent check
 npm pack --dry-run   # package verification
 ```
 
-CI runs on: `ubuntu-latest` · `windows-latest` · `macos-latest`
+Stats: **366 source files** (70K lines) · **506 test files** (66K lines) · **4,792 tests, 0 failures**
 
 ---
 
