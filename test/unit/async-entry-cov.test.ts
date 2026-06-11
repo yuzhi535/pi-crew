@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import * as path from "node:path";
 import {
 	resolveJitiRegisterPath,
 	nodeSupportsStripTypes,
@@ -16,13 +17,13 @@ describe("resolveJitiRegisterPath", () => {
 
 	it("returns path when jiti-register.mjs exists", () => {
 		const fakePath = "/fake/node_modules/jiti/lib/jiti-register.mjs";
-		const result = resolveJitiRegisterPath("/fake", (p) => p === fakePath);
+		const result = resolveJitiRegisterPath("/fake", (p) => path.normalize(p) === path.normalize(fakePath));
 		assert.equal(result, fakePath);
 	});
 
 	it("walks upward to find jiti", () => {
 		const deepPath = "/a/b/node_modules/jiti/lib/jiti-register.mjs";
-		const result = resolveJitiRegisterPath("/a/b/c/d", (p) => p === deepPath);
+		const result = resolveJitiRegisterPath("/a/b/c/d", (p) => path.normalize(p) === path.normalize(deepPath));
 		assert.equal(result, deepPath);
 	});
 });
@@ -57,7 +58,7 @@ describe("resolveTypeScriptLoader", () => {
 	it("returns jiti loader when jiti is found", () => {
 		const result = resolveTypeScriptLoader({
 			packageRoot: "/fake",
-			exists: (p) => p === "/fake/node_modules/jiti/lib/jiti-register.mjs",
+			exists: (p) => path.normalize(p) === path.normalize("/fake/node_modules/jiti/lib/jiti-register.mjs"),
 		});
 		assert.ok(result);
 		assert.equal(result!.kind, "jiti");

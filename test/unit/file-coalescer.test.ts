@@ -128,6 +128,9 @@ describe("readJsonFileCoalesced", () => {
 
 		// Update the file (change mtime)
 		fs.writeFileSync(filePath, '{"v":2}', "utf-8");
+		// Force mtime change (Windows has coarse mtime granularity)
+		const now = new Date();
+		fs.utimesSync(filePath, now, new Date(now.getTime() + 1000));
 
 		readJsonFileCoalesced(filePath, 60_000, () => {
 			readCount++;

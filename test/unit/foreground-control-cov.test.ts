@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import {
 	foregroundControlPath,
 	readForegroundControlStatus,
@@ -29,13 +30,11 @@ function makeManifest(stateRoot: string, overrides: Partial<TeamRunManifest> = {
 	};
 }
 
-import * as path from "node:path";
-
 describe("foregroundControlPath", () => {
 	it("returns path inside stateRoot", () => {
 		const manifest = makeManifest("/tmp/test-state");
 		const p = foregroundControlPath(manifest);
-		assert.equal(p, "/tmp/test-state/foreground-control.json");
+			assert.equal(p, path.join("/tmp/test-state", "foreground-control.json"));
 	});
 });
 

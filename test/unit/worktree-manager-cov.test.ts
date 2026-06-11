@@ -115,7 +115,7 @@ describe("findGitRoot", () => {
 		try {
 			initGitRepo(repo);
 			const root = findGitRoot(repo);
-			assert.equal(path.resolve(root), path.resolve(repo));
+			assert.equal(fs.realpathSync(root), fs.realpathSync(repo));
 		} finally {
 			removeTrackedTempDir(repo);
 		}
@@ -128,7 +128,7 @@ describe("findGitRoot", () => {
 			const sub = path.join(repo, "src", "deep");
 			fs.mkdirSync(sub, { recursive: true });
 			const root = findGitRoot(sub);
-			assert.equal(path.resolve(root), path.resolve(repo));
+			assert.equal(fs.realpathSync(root), fs.realpathSync(repo));
 		} finally {
 			removeTrackedTempDir(repo);
 		}

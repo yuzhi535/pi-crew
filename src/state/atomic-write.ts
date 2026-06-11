@@ -79,15 +79,19 @@ export function isSymlinkSafePath(filePath: string): boolean {
 					// System directories like /private/var/folders on macOS are owned
 					// by root but are safe to use (the OS manages them). Skip uid check
 					// for directories not owned by the current user only when the real
-					// path is inside a known system temp directory.
+					// path is inside or is an ancestor of a known system temp directory.
 					if (typeof process.getuid === "function" && realStat.uid !== process.getuid()) {
 						const systemTmp = (typeof os.tmpdir === "function" ? os.tmpdir() : "/tmp").toLowerCase();
-						// On macOS, os.tmpdir() returns /var/folders/... which resolves
-						// to /private/var/folders/... — check both forms.
 						let realSystemTmp = systemTmp;
 						try { realSystemTmp = fs.realpathSync(systemTmp).toLowerCase(); } catch { /* ok */ }
 						const realDirLower = realDir.toLowerCase();
-						if (!realDirLower.startsWith(systemTmp) && !realDirLower.startsWith(realSystemTmp)) {
+						const dirNorm = realDirLower.endsWith(path.sep) ? realDirLower : realDirLower + path.sep;
+						const tmpNorm = realSystemTmp.endsWith(path.sep) ? realSystemTmp : realSystemTmp + path.sep;
+						// Accept if realDir is inside tmpdir OR is an ancestor of tmpdir
+						// (e.g. /private/var/folders is an ancestor of /private/var/folders/.../T/)
+						const isInsideTmp = dirNorm.startsWith(tmpNorm) || realDirLower.startsWith(systemTmp);
+						const isAncestorOfTmp = tmpNorm.startsWith(dirNorm) || realSystemTmp.startsWith(realDirLower);
+						if (!isInsideTmp && !isAncestorOfTmp) {
 							return false;
 						}
 					}
