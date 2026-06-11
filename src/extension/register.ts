@@ -109,6 +109,7 @@ import {
 import { registerSubagentTools } from "./registration/subagent-tools.ts";
 import { registerTeamTool } from "./registration/team-tool.ts";
 import { handleTeamTool } from "./team-tool.ts";
+import { persistScheduledJobUpdate } from "./team-tool/handle-schedule.ts";
 
 let _cachedOTLPExporter: typeof OTLPExporterType | undefined;
 async function importOTLPExporter(): Promise<typeof OTLPExporterType> {
@@ -1426,19 +1427,60 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 					runParams = { action: "run", team: "default", goal: job.prompt };
 				}
 				if (runParams.action !== "run") return `scheduled-${job.id}-${Date.now()}`;
+				const agentId = `scheduled-${job.id}-${Date.now()}`;
 				setImmediate(async () => {
 					try {
-						await handleTeamTool(
+						const runResult = await handleTeamTool(
 							{ action: "run", team: runParams.team, goal: runParams.goal, async: true },
 							{ cwd: ctx.cwd, sessionId },
 						);
+						// Track the runId so remove() can cancel spawned runs
+						const runId = runResult?.details?.runId;
+						if (runId && typeof runId === "string") {
+							crewScheduler?.recordSpawnedRun(job.id, runId);
+							// Update run manifest with scheduler provenance for traceability
+							try {
+								const cwd = ctx.cwd ?? process.cwd();
+								const loaded = loadRunManifestById(cwd, runId);
+								if (loaded) {
+									const { atomicWriteJson } = await import("../state/atomic-write.ts");
+									atomicWriteJson(loaded.manifest.stateRoot + "/manifest.json", {
+										...loaded.manifest,
+										schedulerJobId: job.id,
+										schedulerName: job.name,
+									});
+								}
+							} catch { /* best-effort provenance tracking */ }
+						}
+						// Persist updated job with spawnedRunIds to settings
+						try {
+							const updatedJob = crewScheduler?.list().find((j) => j.id === job.id);
+							if (updatedJob) persistScheduledJobUpdate(ctx.cwd, updatedJob);
+						} catch { /* best-effort */ }
+						// Update run count
+						crewScheduler?.update(job.id, {
+							runCount: job.runCount + 1,
+							lastRun: new Date().toISOString(),
+							lastStatus: "success",
+						});
 					} catch (err) {
 						logInternalError("scheduler.execute", err);
+						crewScheduler?.update(job.id, { lastStatus: "error" });
 					}
 				});
-				return `scheduled-${job.id}-${Date.now()}`;
+				return agentId;
 			},
 			finalizer: () => {},
+			runCancelFn: (runId: string) => {
+				try {
+					handleTeamTool(
+						{ action: "cancel", runId, confirm: true },
+						{ cwd: ctx.cwd, sessionId },
+					).catch((err) => logInternalError("scheduler.runCancelFn", err, `runId=${runId}`));
+				} catch (err) {
+					logInternalError("scheduler.runCancelFn.sync", err, `runId=${runId}`);
+				}
+			},
 		});
 		// Wire scheduler into handle-schedule.ts so handlers can add/list jobs.
 		// Uses a global symbol so the module doesn't need a direct circular import.

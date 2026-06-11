@@ -15,11 +15,13 @@ export interface ScheduledJob {
 	lastStatus?: "success" | "error" | "running";
 	nextRun?: string;
 	runCount: number;
+	/** Run IDs spawned by this job. Used to cancel runs when job is removed. */
+	spawnedRunIds?: string[];
 }
 
 export type ScheduleChangeEvent =
 	| { type: "added"; job: ScheduledJob }
-	| { type: "removed"; jobId: string }
+	| { type: "removed"; jobId: string; spawnedRunIds?: string[] }
 	| { type: "updated"; job: ScheduledJob }
 	| { type: "fired"; jobId: string; agentId: string; name: string }
 	| { type: "error"; jobId: string; error: string };
@@ -30,17 +32,21 @@ export class CrewScheduler {
 	private emit?: (event: ScheduleChangeEvent) => void;
 	private executor?: (job: ScheduledJob) => string;
 	private finalizer?: (jobId: string, agentId: string) => void;
+	private runCancelFn?: (runId: string) => void;
 
 	start(
 		options: {
 			emit: (event: ScheduleChangeEvent) => void;
 			executor: (job: ScheduledJob) => string;
 			finalizer: (jobId: string, agentId: string) => void;
+			/** Optional callback to cancel a spawned run by runId. */
+			runCancelFn?: (runId: string) => void;
 		},
 	): void {
 		this.emit = options.emit;
 		this.executor = options.executor;
 		this.finalizer = options.finalizer;
+		this.runCancelFn = options.runCancelFn;
 	}
 
 	stop(): void {
@@ -52,6 +58,7 @@ export class CrewScheduler {
 		this.emit = undefined;
 		this.executor = undefined;
 		this.finalizer = undefined;
+		this.runCancelFn = undefined;
 	}
 
 	add(job: ScheduledJob): void {
@@ -61,9 +68,17 @@ export class CrewScheduler {
 	}
 
 	remove(id: string): boolean {
+		const job = this.jobs.get(id);
+		const spawnedRunIds = job?.spawnedRunIds;
 		this.disarm(id);
+		// Cancel all spawned runs that are still active
+		if (spawnedRunIds && this.runCancelFn) {
+			for (const runId of spawnedRunIds) {
+				try { this.runCancelFn(runId); } catch { /* best-effort */ }
+			}
+		}
 		const ok = this.jobs.delete(id);
-		if (ok) this.emit?.({ type: "removed", jobId: id });
+		if (ok) this.emit?.({ type: "removed", jobId: id, spawnedRunIds });
 		return ok;
 	}
 
@@ -80,6 +95,14 @@ export class CrewScheduler {
 
 	list(): ScheduledJob[] {
 		return [...this.jobs.values()];
+	}
+
+	/** Record a runId spawned by a job. Call this after executor fires. */
+	recordSpawnedRun(jobId: string, runId: string): void {
+		const job = this.jobs.get(jobId);
+		if (!job) return;
+		const spawnedRunIds = [...(job.spawnedRunIds ?? []), runId];
+		this.jobs.set(jobId, { ...job, spawnedRunIds });
 	}
 
 	private arm(job: ScheduledJob): void {

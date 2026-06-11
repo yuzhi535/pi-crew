@@ -163,6 +163,43 @@ function persistScheduledJob(cwd: string, job: import("../../runtime/scheduler.t
 	}
 }
 
+/** Update an existing scheduled job in persistent settings. */
+export function persistScheduledJobUpdate(cwd: string, job: import("../../runtime/scheduler.ts").ScheduledJob): void {
+	try {
+		const settings = loadCrewSettings(cwd);
+		const existingJobs: import("../../runtime/scheduler.ts").ScheduledJob[] = Array.isArray(
+			(settings as Record<string, unknown>).scheduledJobs,
+		)
+			? ((settings as Record<string, unknown>).scheduledJobs as import("../../runtime/scheduler.ts").ScheduledJob[])
+			: [];
+		const updated = existingJobs.map((j) => j.id === job.id ? job : j);
+		saveCrewSettings(
+			{ ...settings, scheduledJobs: updated } as Parameters<typeof saveCrewSettings>[0],
+			cwd,
+		);
+	} catch {
+		/* best-effort persistence */
+	}
+}
+
+/** Remove a scheduled job from persistent settings. */
+function persistScheduledJobRemove(cwd: string, jobId: string): void {
+	try {
+		const settings = loadCrewSettings(cwd);
+		const existingJobs: import("../../runtime/scheduler.ts").ScheduledJob[] = Array.isArray(
+			(settings as Record<string, unknown>).scheduledJobs,
+		)
+			? ((settings as Record<string, unknown>).scheduledJobs as import("../../runtime/scheduler.ts").ScheduledJob[])
+			: [];
+		saveCrewSettings(
+			{ ...settings, scheduledJobs: existingJobs.filter((j) => j.id !== jobId) } as Parameters<typeof saveCrewSettings>[0],
+			cwd,
+		);
+	} catch {
+		/* best-effort persistence */
+	}
+}
+
 export function handleListScheduled(_params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	const scheduler = getCrewScheduler();
 	if (!scheduler) return result("Scheduler not running.", { action: "scheduled", status: "error" }, true);
@@ -177,6 +214,9 @@ export function handleListScheduled(_params: TeamToolParamsValue, ctx: TeamConte
 			`    Next run: ${job.nextRun ?? "(unscheduled)"}`,
 			`    Runs: ${job.runCount}, Last: ${job.lastRun ?? "(never)"} [${job.lastStatus ?? "?"}]`,
 		);
+		if (job.spawnedRunIds && job.spawnedRunIds.length > 0) {
+			lines.push(`    Spawned runs: ${job.spawnedRunIds.join(", ")}`);
+		}
 	}
 	return result(lines.join("\n"), { action: "scheduled", status: "ok" });
 }
