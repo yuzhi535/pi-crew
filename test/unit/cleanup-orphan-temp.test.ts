@@ -25,7 +25,9 @@ import {
 } from "../../src/runtime/pi-args.ts";
 
 function mkdtemp(prefix: string): string {
-	return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	let dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	try { dir = fs.realpathSync(dir); } catch { /* keep as-is */ }
+	return dir;
 }
 
 function touchDir(dir: string, ageMs: number): void {

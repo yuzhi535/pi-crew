@@ -112,7 +112,8 @@ test("handleExplain: requires runId", () => {
 });
 
 test("handleExplain: explains full run without taskId", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "explain-test-"));
+  let tmp = fs.mkdtempSync(path.join(os.tmpdir(), "explain-test-"));
+  try { tmp = fs.realpathSync(tmp); } catch { /* keep */ }
   const runId = `test_explain_${Date.now()}`;
   const crewRoot = path.join(tmp, ".crew");
   const stateRoot = path.join(crewRoot, "state", "runs", runId);

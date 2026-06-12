@@ -26,7 +26,11 @@ import {
 } from "../../src/runtime/subagent-manager.ts";
 import type { PiTeamsToolResult } from "../../src/extension/tool-result.ts";
 
-const makeTempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "subagent-test-"));
+const makeTempDir = () => {
+	let dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-test-"));
+	try { dir = fs.realpathSync(dir); } catch { /* keep as-is */ }
+	return dir;
+};
 
 const makeResult = (text: string, runId?: string): PiTeamsToolResult => {
 	const details: Record<string, unknown> = {};

@@ -77,6 +77,7 @@ describe("getRunMetricsSummary", () => {
 
 	beforeEach(() => {
 		tmpDir = createTrackedTempDir("pi-crew-metrics-summary-");
+		fs.mkdirSync(path.join(tmpDir, ".crew"), { recursive: true });
 	});
 
 	afterEach(() => {

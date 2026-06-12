@@ -239,7 +239,7 @@ test("async save helpers persist run manifest and tasks", async () => {
 });
 
 test("createRunManifest resolves project root from parent .git directory", () => {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-gitroot-"));
+	const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-gitroot-")));
 	const subDir = path.join(root, "services", "api");
 	const workspace = path.join(root, ".crew");
 	fs.mkdirSync(path.join(root, ".git"), { recursive: true });

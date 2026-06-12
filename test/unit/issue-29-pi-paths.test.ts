@@ -29,14 +29,16 @@ import { projectCrewRoot } from "../../src/utils/paths.ts";
 
 /** Make a temp dir that mimics a .pi-based project (no .crew/). */
 function makePiProject(): string {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-issue-29-"));
+	let dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-issue-29-"));
+	try { dir = fs.realpathSync(dir); } catch { /* keep as-is */ }
 	fs.mkdirSync(path.join(dir, ".pi"), { recursive: true });
 	return dir;
 }
 
 /** Make a temp dir that mimics a .crew-based project (no .pi/). */
 function makeCrewProject(): string {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-issue-29-"));
+	let dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-issue-29-"));
+	try { dir = fs.realpathSync(dir); } catch { /* keep as-is */ }
 	fs.mkdirSync(path.join(dir, ".crew"), { recursive: true });
 	return dir;
 }
@@ -70,7 +72,8 @@ test("issue #29 — projectCrewRoot returns .crew/ when .crew/ exists (precedenc
 });
 
 test("issue #29 — projectCrewRoot returns .pi/teams/ when both .pi/ and .crew/ exist (existing .crew wins)", () => {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-issue-29-"));
+	let dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-issue-29-"));
+	try { dir = fs.realpathSync(dir); } catch { /* keep as-is */ }
 	fs.mkdirSync(path.join(dir, ".pi"), { recursive: true });
 	fs.mkdirSync(path.join(dir, ".crew"), { recursive: true });
 	try {
