@@ -2,7 +2,7 @@ import { allAgents, discoverAgents } from "../../agents/discover-agents.ts";
 import { allTeams, discoverTeams } from "../../teams/discover-teams.ts";
 import { allWorkflows, discoverWorkflows } from "../../workflows/discover-workflows.ts";
 import { loadConfig } from "../../config/config.ts";
-import { findGitRoot } from "../../worktree/worktree-manager.ts";
+import { findGitRoot, assertCleanLeader } from "../../worktree/worktree-manager.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 import { writeArtifact } from "../../state/artifact-store.ts";
 import { registerActiveRun, unregisterActiveRun } from "../../state/active-run-registry.ts";
@@ -97,7 +97,36 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 				resolvedCtx = { ...ctx, cwd: gitRoot };
 			}
 		} catch {
-			// cwd is not in a git repo — will be handled later if worktree mode is needed
+			// cwd is not in a git repo — validate below if worktree mode is needed
+		}
+	}
+
+	// WORKTREE PRECONDITION CHECK: validate git repo exists and is clean
+	// BEFORE creating the run manifest, so we return a friendly error
+	// instead of crashing mid-execution in prepareTaskWorkspace.
+	if (params.workspaceMode === "worktree") {
+		let gitRoot: string | undefined;
+		try {
+			gitRoot = findGitRoot(resolvedCtx.cwd);
+		} catch {
+			// not a git repo
+		}
+		if (!gitRoot) {
+			return result(
+				`Worktree mode requires a git repository. '${resolvedCtx.cwd}' is not inside a git repo.\nUse workspaceMode: 'single' or run from a git repository.`,
+				{ action: "run", status: "error" },
+				true,
+			);
+		}
+		try {
+			assertCleanLeader(gitRoot);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			return result(
+				`${msg}\nCommit or stash changes before using worktree mode, or use workspaceMode: 'single'.`,
+				{ action: "run", status: "error" },
+				true,
+			);
 		}
 	}
 
