@@ -336,7 +336,13 @@ export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskSt
 	// Resolve through realpath to handle Windows short-name vs long-name alias.
 	// git worktree uses long-name paths on Windows, so we must match.
 	let resolvedWorktreeRoot = worktreeRoot;
-	try { resolvedWorktreeRoot = fs.realpathSync.native(worktreeRoot); } catch { try { resolvedWorktreeRoot = fs.realpathSync(worktreeRoot); } catch { /* keep as-is */ } }
+	try {
+		resolvedWorktreeRoot = fs.realpathSync.native(worktreeRoot);
+		// Strip Windows extended-length prefix (\\?\) for path.join compatibility
+		if (resolvedWorktreeRoot.startsWith("\\\\?\\")) resolvedWorktreeRoot = resolvedWorktreeRoot.slice(4);
+	} catch {
+		try { resolvedWorktreeRoot = fs.realpathSync(worktreeRoot); } catch { /* keep as-is */ }
+	}
 	const sanitizedTaskId = sanitizeBranchPart(task.id);
 	const worktreePath = path.join(resolvedWorktreeRoot, sanitizedTaskId);
 	const branch = `pi-crew/${sanitizeBranchPart(manifest.runId)}/${sanitizeBranchPart(task.id)}`;
