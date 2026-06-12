@@ -310,25 +310,29 @@ export function resolveRealContainedPath(baseDir: string, targetPath: string): s
 
 	// Verify the resolved real path is still within baseDir.
 	// Verify the resolved real path is still within baseDir.
-	// On Windows, short-name (RUNNER~1) and long-name (runneradmin) aliases
-	// can cause false negatives. Use realpathSync.native on both paths
-	// and strip \\?\ prefix for consistent comparison.
-	let compareBase = realBase;
-	let compareTarget = realTarget;
 	if (process.platform === "win32") {
+		// Windows: realpathSync.native may return different short/long-name forms
+		// for the same physical directory. Re-resolve both through .native
+		// to get consistent long-name forms, then compare case-insensitively.
+		let compBase = realBase;
+		let compTarget = realTarget;
 		try {
 			const rb = fs.realpathSync.native(realBase);
-			compareBase = rb.startsWith("\\\\?\\") ? rb.slice(4) : rb;
+			compBase = rb.startsWith("\\\\?\\") ? rb.slice(4) : rb;
+		} catch { /* use realBase as-is */ }
+		try {
 			const rt = fs.realpathSync.native(realTarget);
-			compareTarget = rt.startsWith("\\\\?\\") ? rt.slice(4) : rt;
-		} catch { /* fallback to case-insensitive compare */ }
-		compareBase = compareBase.toLowerCase();
-		compareTarget = compareTarget.toLowerCase();
+			compTarget = rt.startsWith("\\\\?\\") ? rt.slice(4) : rt;
+		} catch { /* use realTarget as-is */ }
+		const normBase = compBase.replace(/\\/g, "/").toLowerCase();
+		const normTarget = compTarget.replace(/\\/g, "/").toLowerCase();
+		if (!normTarget.startsWith(normBase + "/") && normBase !== normTarget) {
+			throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
+		}
+	} else {
+		const relative = path.relative(realBase, realTarget);
+		if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
 	}
-	const relative = process.platform === "win32"
-		? path.relative(compareBase, compareTarget)
-		: path.relative(realBase, realTarget);
-	if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Path is outside ${baseDir}: ${targetPath}`);
 	return realTarget;
 }
 
