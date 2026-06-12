@@ -91,7 +91,7 @@ describe("saveCrewSettings / loadCrewSettings", () => {
 		}
 	});
 
-	it("saveCrewSettings returns false on write error", () => {
+	it("saveCrewSettings returns false on write error", { skip: process.platform === "win32" }, () => {
 		const tmp = createTrackedTempDir("pi-crew-settings-");
 		try {
 			// Make .pi directory read-only

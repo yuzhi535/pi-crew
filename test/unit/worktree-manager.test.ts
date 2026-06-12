@@ -7,6 +7,12 @@ import { execFileSync } from "node:child_process";
 import { prepareTaskWorkspace, findGitRoot, assertCleanLeader } from "../../src/worktree/worktree-manager.ts";
 import type { TeamRunManifest, TeamTaskState } from "../../src/state/types.ts";
 
+function makeRepoTemp(prefix: string): string {
+	let dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	try { dir = fs.realpathSync(dir); } catch { /* keep */ }
+	return dir;
+}
+
 function initGitRepo(dir: string) {
 	execFileSync("git", ["init", "-q", "--initial-branch=main"], { cwd: dir });
 	fs.writeFileSync(path.join(dir, ".gitignore"), ".crew\n", "utf-8");
@@ -48,7 +54,7 @@ function minimalTask(id: string, cwd: string): TeamTaskState {
 }
 
 test("prepareTaskWorkspace recovers when branch exists but worktree dir is gone", () => {
-	const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-wt-"));
+	const repo = makeRepoTemp("pi-crew-wt-");
 	initGitRepo(repo);
 	// Pre-create the branch (simulating leftover from crashed run)
 	execFileSync("git", ["branch", "pi-crew/run1/task1"], { cwd: repo });
@@ -62,7 +68,7 @@ test("prepareTaskWorkspace recovers when branch exists but worktree dir is gone"
 });
 
 test("prepareTaskWorkspace reuses existing valid worktree", () => {
-	const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-wt-"));
+	const repo = makeRepoTemp("pi-crew-wt-");
 	initGitRepo(repo);
 	const manifest = minimalManifest(repo, "run2");
 	const task = minimalTask("task2", repo);
@@ -77,7 +83,7 @@ test("prepareTaskWorkspace reuses existing valid worktree", () => {
 });
 
 test("prepareTaskWorkspace skips linkNodeModules when source is a file", () => {
-	const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-wt-fn-"));
+	const repo = makeRepoTemp("pi-crew-wt-fn-");
 	initGitRepo(repo);
 	// Place a FILE at node_modules instead of a directory, then commit it so repo is clean
 	fs.writeFileSync(path.join(repo, "node_modules"), "not a dir", "utf-8");
@@ -97,7 +103,7 @@ test("prepareTaskWorkspace skips linkNodeModules when source is a file", () => {
 });
 
 test("assertCleanLeader throws when repo has uncommitted changes", () => {
-	const repo = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-wt-"));
+	const repo = makeRepoTemp("pi-crew-wt-");
 	initGitRepo(repo);
 	fs.writeFileSync(path.join(repo, "dirty.txt"), "x", "utf-8");
 	assert.throws(() => assertCleanLeader(repo), /clean leader/);

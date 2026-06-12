@@ -259,7 +259,22 @@ export const __test__renameWithRetryAsync = renameWithRetryAsync;
 
 export function atomicWriteFile(filePath: string, content: string, expectedHash?: string): void {
 	if (!isSymlinkSafePath(filePath)) throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	try {
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	} catch (error) {
+		// Windows EPERM: can occur when path uses short-name form (RUNNER~1) but
+		// the directory already exists in long-name form. Retry with realpath.
+		if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+			try {
+				const realDir = fs.realpathSync(path.dirname(filePath));
+				if (realDir !== path.dirname(filePath)) {
+					fs.mkdirSync(realDir, { recursive: true });
+				}
+			} catch { /* ignore — will fail at write time with better error */ }
+		} else {
+			throw error;
+		}
+	}
 	const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;
 	// Write temp with restrictive permissions
 	const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;

@@ -11,7 +11,8 @@ import type { TeamRunManifest, TeamTaskState } from "../../src/state/types.ts";
 import { createRunSnapshotCache } from "../../src/ui/run-snapshot-cache.ts";
 
 function tempCwd(prefix: string): string {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	let cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	try { cwd = fs.realpathSync(cwd); } catch { /* keep as-is */ }
 	fs.mkdirSync(path.join(cwd, ".crew"), { recursive: true });
 	return cwd;
 }

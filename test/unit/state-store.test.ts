@@ -9,6 +9,13 @@ import { createManifestCache } from "../../src/runtime/manifest-cache.ts";
 import type { TeamConfig } from "../../src/teams/team-config.ts";
 import type { WorkflowConfig } from "../../src/workflows/workflow-config.ts";
 
+
+/** Resolve temp dir through realpath to handle macOS /var → /private/var symlink. */
+function makeResolvedTempDir(prefix: string): string {
+	let dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	try { dir = fs.realpathSync(dir); } catch { /* keep as-is */ }
+	return dir;
+}
 const team: TeamConfig = {
 	name: "default",
 	description: "default",
@@ -60,7 +67,7 @@ function removeDirectoryLink(linkPath: string): void {
 
 function withIsolatedHome<T>(fn: () => T): T {
 	const previousHome = process.env.PI_TEAMS_HOME;
-	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-home-"));
+	const home = makeResolvedTempDir("pi-crew-state-home-");
 	process.env.PI_TEAMS_HOME = home;
 	try {
 		return fn();
@@ -72,7 +79,8 @@ function withIsolatedHome<T>(fn: () => T): T {
 }
 
 test("createRunManifest writes manifest and tasks", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-test-"));
+	let cwd = makeResolvedTempDir("pi-crew-state-test-");
+	try { cwd = fs.realpathSync(cwd); } catch { /* keep */ }
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "test" });
@@ -88,7 +96,7 @@ test("createRunManifest writes manifest and tasks", () => {
 });
 
 test("loadRunManifestById rejects unsafe run ids and manifest path mismatches", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-safe-runid-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-safe-runid-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "safe" });
@@ -104,7 +112,7 @@ test("loadRunManifestById rejects unsafe run ids and manifest path mismatches", 
 });
 
 test("loadRunManifestById rejects symlinked artifact roots outside artifact parent", (t) => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-artifact-symlink-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-artifact-symlink-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "symlink artifact root" });
@@ -130,7 +138,7 @@ test("loadRunManifestById rejects symlinked artifact roots outside artifact pare
 });
 
 test("loadRunManifestById revalidates cached artifact root containment", (t) => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-cache-symlink-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-cache-symlink-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "cache symlink artifact root" });
@@ -158,7 +166,7 @@ test("loadRunManifestById revalidates cached artifact root containment", (t) => 
 
 test("runtime manifest cache rejects tampered manifest paths", () => {
 	withIsolatedHome(() => {
-		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-runtime-manifest-cache-safe-"));
+		const cwd = makeResolvedTempDir("pi-crew-runtime-manifest-cache-safe-");
 		fs.mkdirSync(path.join(cwd, ".crew"));
 		try {
 			const created = createRunManifest({ cwd, team, workflow, goal: "runtime cache safe" });
@@ -180,7 +188,7 @@ test("runtime manifest cache rejects tampered manifest paths", () => {
 });
 
 test("loadRunManifestById resolves symlinks to canonical paths in manifest", (t) => {
-	const parent = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-workspace-link-"));
+	const parent = makeResolvedTempDir("pi-crew-state-workspace-link-");
 	const realRoot = path.join(parent, "real-workspace");
 	const linkRoot = path.join(parent, "linked-workspace");
 	fs.mkdirSync(path.join(realRoot, ".crew"), { recursive: true });
@@ -205,7 +213,7 @@ test("loadRunManifestById resolves symlinks to canonical paths in manifest", (t)
 });
 
 test("loadRunManifestById cache invalidates after task save", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-cache-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-cache-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "cache" });
@@ -221,7 +229,7 @@ test("loadRunManifestById cache invalidates after task save", () => {
 });
 
 test("async save helpers persist run manifest and tasks", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-async-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-async-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "async" });
@@ -259,7 +267,7 @@ test("createRunManifest resolves project root from parent .git directory", () =>
 // --- New tests appended below ---
 
 test("saveRunManifest persists manifest synchronously", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-save-manifest-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-save-manifest-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "save-manifest" });
@@ -274,7 +282,7 @@ test("saveRunManifest persists manifest synchronously", () => {
 });
 
 test("createRunPaths generates correct directory structure", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-paths-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-paths-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const paths = createRunPaths(cwd);
@@ -290,7 +298,7 @@ test("createRunPaths generates correct directory structure", () => {
 });
 
 test("createRunPaths accepts a custom run ID", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-custom-id-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-custom-id-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const paths = createRunPaths(cwd, "my_custom_run_123");
@@ -302,7 +310,7 @@ test("createRunPaths accepts a custom run ID", () => {
 });
 
 test("createRunPaths rejects unsafe run IDs", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-unsafe-id-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-unsafe-id-");
 	try {
 		assert.throws(() => createRunPaths(cwd, "../traversal"), /Invalid runId/);
 		assert.throws(() => createRunPaths(cwd, "run with spaces"), /Invalid runId/);
@@ -312,7 +320,7 @@ test("createRunPaths rejects unsafe run IDs", () => {
 });
 
 test("createTasksFromWorkflow builds tasks for each step", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-tasks-wf-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-tasks-wf-");
 	try {
 		const multiStepWorkflow: WorkflowConfig = {
 			...workflow,
@@ -335,7 +343,7 @@ test("createTasksFromWorkflow builds tasks for each step", () => {
 });
 
 test("createTasksFromWorkflow uses agent from team roles", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-tasks-agent-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-tasks-agent-");
 	try {
 		const customTeam: TeamConfig = {
 			name: "custom",
@@ -363,7 +371,7 @@ test("createTasksFromWorkflow uses agent from team roles", () => {
 });
 
 test("updateRunStatus transitions queued to running", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-update-status-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-update-status-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "status transition" });
@@ -381,7 +389,7 @@ test("updateRunStatus transitions queued to running", () => {
 });
 
 test("updateRunStatus throws on invalid transitions", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-bad-transition-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-bad-transition-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "bad transition" });
@@ -395,7 +403,7 @@ test("updateRunStatus throws on invalid transitions", () => {
 });
 
 test("updateRunStatus preserves previous summary when no new summary provided", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-summary-preserve-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-summary-preserve-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "summary preserve" });
@@ -409,7 +417,7 @@ test("updateRunStatus preserves previous summary when no new summary provided", 
 });
 
 test("loadRunManifestByIdAsync loads manifest asynchronously", async () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-async-load-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-async-load-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	try {
 		const created = createRunManifest({ cwd, team, workflow, goal: "async load" });
@@ -424,7 +432,7 @@ test("loadRunManifestByIdAsync loads manifest asynchronously", async () => {
 });
 
 test("manifest cache is LRU bounded", () => {
-	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-state-cache-bounds-"));
+	const cwd = makeResolvedTempDir("pi-crew-state-cache-bounds-");
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	const previousMax = DEFAULT_CACHE.manifestMaxEntries;
 	try {
