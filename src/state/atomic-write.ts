@@ -259,18 +259,31 @@ export const __test__renameWithRetryAsync = renameWithRetryAsync;
 
 export function atomicWriteFile(filePath: string, content: string, expectedHash?: string): void {
 	if (!isSymlinkSafePath(filePath)) throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
+	// On Windows, resolve parent dir through realpathSync to handle short-name
+	// vs long-name path alias (e.g. RUNNER~1 vs runneradmin). Without this,
+	// mkdirSync may succeed but openSync fails with ENOENT because the OS
+	// sees the paths as different locations.
+	let dirPath = path.dirname(filePath);
+	if (process.platform === "win32") {
+		try {
+			const realDir = fs.realpathSync(dirPath);
+			if (realDir !== dirPath) dirPath = realDir;
+		} catch {
+			// dirPath may not exist yet — mkdirSync will create it
+		}
+		filePath = path.join(dirPath, path.basename(filePath));
+	}
 	try {
-		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.mkdirSync(dirPath, { recursive: true });
 	} catch (error) {
-		// Windows EPERM: can occur when path uses short-name form (RUNNER~1) but
-		// the directory already exists in long-name form. Retry with realpath.
 		if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
 			try {
-				const realDir = fs.realpathSync(path.dirname(filePath));
-				if (realDir !== path.dirname(filePath)) {
+				const realDir = fs.realpathSync(dirPath);
+				if (realDir !== dirPath) {
 					fs.mkdirSync(realDir, { recursive: true });
+					dirPath = realDir;
 				}
-			} catch { /* ignore — will fail at write time with better error */ }
+			} catch { /* ignore – will fail at write time with better error */ }
 		} else {
 			throw error;
 		}

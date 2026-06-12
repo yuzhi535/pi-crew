@@ -333,8 +333,12 @@ export function prepareTaskWorkspace(manifest: TeamRunManifest, task: TeamTaskSt
 	const sanitizedRunId = manifest.runId.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^-+|-+$/g, "") || "run";
 	const worktreeRoot = path.join(projectCrewRoot(manifest.cwd), DEFAULT_PATHS.state.worktreesSubdir, sanitizedRunId);
 	fs.mkdirSync(worktreeRoot, { recursive: true });
+	// Resolve through realpath to handle Windows short-name vs long-name alias.
+	// git worktree uses long-name paths on Windows, so we must match.
+	let resolvedWorktreeRoot = worktreeRoot;
+	try { resolvedWorktreeRoot = fs.realpathSync(worktreeRoot); } catch { /* keep as-is */ }
 	const sanitizedTaskId = sanitizeBranchPart(task.id);
-	const worktreePath = path.join(worktreeRoot, sanitizedTaskId);
+	const worktreePath = path.join(resolvedWorktreeRoot, sanitizedTaskId);
 	const branch = `pi-crew/${sanitizeBranchPart(manifest.runId)}/${sanitizeBranchPart(task.id)}`;
 	// Use `git worktree list --porcelain` to atomically verify the worktree exists.
 	// This avoids a TOCTOU race between fs.existsSync and git branch verification.
