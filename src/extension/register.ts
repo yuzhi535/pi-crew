@@ -61,7 +61,7 @@ import {
 	type CrewWidgetState,
 	stopCrewWidget,
 	updateCrewWidget,
-} from "../ui/crew-widget.ts";
+} from "../ui/widget/index.ts";
 import { summarizeHeartbeats } from "../ui/heartbeat-aggregator.ts";
 import {
 	requestRender,
@@ -1194,6 +1194,17 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 
 	pi.on("session_start", (_event, ctx) => {
 		runArtifactCleanup(ctx.cwd);
+
+		// Restore brief mode state from session entries
+		try {
+			const entries = ctx.sessionManager?.getEntries?.();
+			if (entries) {
+				import("../ui/tool-renderers/brief-mode.ts").then(({ restoreBriefState }) => {
+					restoreBriefState(entries);
+				}).catch(() => {/* non-critical */});
+			}
+		} catch { /* non-critical */ }
+
 		time("register.session-start");
 		cleanedUp = false;
 		sessionGeneration++;

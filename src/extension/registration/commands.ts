@@ -571,6 +571,31 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 	pi.registerCommand("team-help", { description: "Show pi-crew command help", handler: async (_args: string, ctx: ExtensionCommandContext) => {
 		await notifyCommandResult(ctx, piTeamsHelp());
 	} });
+
+	// Brief mode command — toggle compact tool output display
+	pi.registerCommand("crew-brief", {
+		description: "Toggle brief tool output mode: on | off | status",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const { isBrief, setBrief, BRIEF_ENTRY_TYPE, makeBriefEntry } = await import("../../ui/tool-renderers/brief-mode.ts");
+			const trimmed = args.trim();
+
+			if (trimmed === "on") {
+				setBrief(true);
+				pi.appendEntry(BRIEF_ENTRY_TYPE, { enabled: true });
+				ctx.ui.notify("Brief mode: on — tool output will show compact summaries", "info");
+				return;
+			}
+			if (trimmed === "off") {
+				setBrief(false);
+				pi.appendEntry(BRIEF_ENTRY_TYPE, { enabled: false });
+				ctx.ui.notify("Brief mode: off — full tool output restored", "info");
+				return;
+			}
+			// status (default)
+			ctx.ui.notify(`Brief mode: ${isBrief() ? "on" : "off"}`, "info");
+		},
+	});
+
 	time("register.commands");
 	printTimings();
 }
