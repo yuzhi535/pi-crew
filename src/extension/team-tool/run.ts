@@ -118,15 +118,19 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 				true,
 			);
 		}
-		try {
-			assertCleanLeader(gitRoot);
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			return result(
-				`${msg}\nCommit or stash changes before using worktree mode, or use workspaceMode: 'single'.`,
-				{ action: "run", status: "error" },
-				true,
-			);
+		// Check if clean leader is required (can be disabled via config)
+		const preCheckConfig = loadConfig(resolvedCtx.cwd);
+		if (preCheckConfig.config.requireCleanWorktreeLeader !== false) {
+			try {
+				assertCleanLeader(gitRoot);
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				return result(
+					`${msg}\nCommit or stash changes before using worktree mode, or use workspaceMode: 'single'.`,
+					{ action: "run", status: "error" },
+					true,
+				);
+			}
 		}
 	}
 
