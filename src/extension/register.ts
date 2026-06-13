@@ -1986,9 +1986,11 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 
 	registerCleanupHandler(pi);
 
-	// Brief tool overrides — re-register built-in tools (read, bash, edit, write, find, grep, ls)
-	// with themed renderCall/renderResult and brief-mode compact display.
-	registerBriefToolOverrides(pi, process.cwd());
+	// Brief tool overrides DISABLED: re-registering built-in tools replaced Pi's
+	// superior native renderers (syntax highlighting, diff views, full file
+	// content) with inferior custom ones, and caused renderCall/renderResult
+	// to duplicate path/command info. Pi's native rendering is better.
+	// To re-enable, uncomment: registerBriefToolOverrides(pi, process.cwd());
 
 	registerTeamCommands(pi, {
 		startForegroundRun,
