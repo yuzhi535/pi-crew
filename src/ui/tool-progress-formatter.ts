@@ -66,6 +66,9 @@ export function formatCompactToolProgress(input: ToolProgressInput): string {
 	const head = input.agentId ? `agent=${input.agentId}` : "agent";
 	const lines: string[] = [`${head} status=${input.status} elapsed=${elapsedSec}s`];
 
+	const counts = taskCounts(input.tasks);
+	if (counts) lines.push(`  ${counts}`);
+
 	const active = pickActiveAgent(input.agents);
 	if (active) {
 		const turns = active.progress?.turns ?? 0;
@@ -77,12 +80,11 @@ export function formatCompactToolProgress(input: ToolProgressInput): string {
 		}
 		const recent = active.progress?.recentOutput?.at(-1);
 		if (recent && recent.trim()) lines.push(`  ${trimLine(recent)}`);
-	} else if (input.runId) {
-		const counts = taskCounts(input.tasks);
-		lines.push(counts ? `  run=${input.runId} ${counts}` : `  run=${input.runId} (starting)`);
+	} else if (input.runId && !counts) {
+		lines.push(`  run=${input.runId} (starting)`);
 	} else if (input.error) {
 		lines.push(`  error: ${trimLine(input.error)}`);
-	} else {
+	} else if (!counts) {
 		lines.push("  waiting for run to start");
 	}
 	return lines.join("\n");
