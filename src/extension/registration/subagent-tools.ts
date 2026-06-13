@@ -38,7 +38,6 @@ export function registerSubagentTools(pi: ExtensionAPI, subagentManager: Subagen
 	const agentTool: ToolDefinition = {
 		name: "Agent",
 		label: "Agent",
-		renderShell: "self",
 		description: "Launch a real pi-crew subagent. Uses pi-crew's durable child-process runtime by default; set run_in_background=true for parallel/background work, then use get_subagent_result.",
 		promptSnippet: "Use Agent to delegate focused work to a real pi-crew subagent. Use run_in_background=true for parallel work and get_subagent_result to join results.",
 		promptGuidelines: [

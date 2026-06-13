@@ -101,7 +101,7 @@ function progressBar(ratio: number, barWidth: number, theme: CrewTheme): string 
  *  Frame uses full totalWidth.
  */
 function buildFrame(contentLines: string[], totalWidth: number, theme: CrewTheme, borderSlot: "success" | "error" | "border" | "borderAccent" = "border"): string {
-	const frameW = totalWidth;
+	const frameW = totalWidth - 2; // available after Box(1,1) padding
 	const innerW = frameW - 2;    // │ chars
 	const top = theme.fg(borderSlot, `╭${"─".repeat(innerW)}╮`);
 	const bottom = theme.fg(borderSlot, `╰${"─".repeat(innerW)}╯`);
@@ -142,20 +142,25 @@ export const teamToolRenderer: ToolRenderer = {
 			contentLines.push(padVisual(` ${theme.fg("dim", previewText)}`, innerW));
 		}
 
-		return new Text(buildFrame(contentLines, w, theme, "borderAccent"), 0, 0);
+		return buildFrame(contentLines, w, theme, "borderAccent");
 	},
 
 	renderResult(result, _options, theme, ctx) {
 		try {
-			return renderTeamResult(result, _options, theme, ctx);
+			const text = renderTeamResult(result, _options, theme, ctx);
+			// Reuse lastComponent to prevent stacked frames during streaming
+			if (ctx.lastComponent instanceof Text) {
+				(ctx.lastComponent as any).text = text;
+				return ctx.lastComponent;
+			}
+			return new Text(text, 0, 0);
 		} catch {
-			// Fallback to avoid Pi's catch hiding everything
 			return new Text(statusIcon("completed", theme) + " done", 0, 0);
 		}
 	},
 };
 
-function renderTeamResult(result: Record<string, unknown>, options: unknown, theme: CrewTheme, ctx: ToolRenderContext): Text {
+function renderTeamResult(result: Record<string, unknown>, options: unknown, theme: CrewTheme, ctx: ToolRenderContext): string {
 	const d = (result.details ?? result) as Record<string, unknown>;
 	const records = (d.agentRecords ?? d.results) as CrewAgentRecord[] | undefined;
 	const action = typeof d.action === "string" ? d.action : "";
@@ -200,7 +205,7 @@ function renderTeamResult(result: Record<string, unknown>, options: unknown, the
 		}
 
 		if (contentLines.length > 0) {
-			return new Text(buildFrame(contentLines, w, theme, "borderAccent"), 0, 0);
+			return buildFrame(contentLines, w, theme, "borderAccent");
 		}
 	}
 
@@ -209,7 +214,7 @@ function renderTeamResult(result: Record<string, unknown>, options: unknown, the
 	if (isBrief() && !ctx.expanded && action !== "run") {
 		const briefText = briefToolResult("team", result as { content?: unknown[] }, theme);
 		contentLines.push(padVisual(` ${briefText}`, innerW));
-		return new Text(buildFrame(contentLines, w, theme, bColor), 0, 0);
+		return buildFrame(contentLines, w, theme, bColor);
 	}
 
 	if (!ctx.expanded) {
@@ -239,7 +244,7 @@ function renderTeamResult(result: Record<string, unknown>, options: unknown, the
 		}
 	}
 
-	return new Text(buildFrame(contentLines, w, theme, bColor), 0, 0);
+	return buildFrame(contentLines, w, theme, bColor);
 }
 
 // ── Agent Tool Renderer ────────────────────────────────────────────────
@@ -263,19 +268,24 @@ export const agentToolRenderer: ToolRenderer = {
 			contentLines.push(padVisual(` ${theme.fg("dim", previewText)}`, innerW));
 		}
 
-		return new Text(buildFrame(contentLines, w, theme, "borderAccent"), 0, 0);
+		return buildFrame(contentLines, w, theme, "borderAccent");
 	},
 
 	renderResult(result, _options, theme, ctx) {
 		try {
-			return renderAgentResult(result, _options, theme, ctx);
+			const text = renderAgentResult(result, _options, theme, ctx);
+			if (ctx.lastComponent instanceof Text) {
+				(ctx.lastComponent as any).text = text;
+				return ctx.lastComponent;
+			}
+			return new Text(text, 0, 0);
 		} catch {
 			return new Text(statusIcon("completed", theme) + " agent done", 0, 0);
 		}
 	},
 };
 
-function renderAgentResult(result: Record<string, unknown>, options: unknown, theme: CrewTheme, ctx: ToolRenderContext): Text {
+function renderAgentResult(result: Record<string, unknown>, options: unknown, theme: CrewTheme, ctx: ToolRenderContext): string {
 	const d = (result.details ?? result) as Record<string, unknown>;
 	const results = d.results as Array<Record<string, unknown>> | undefined;
 	const w = (ctx.width || process.stdout.columns || 116);
@@ -291,14 +301,14 @@ function renderAgentResult(result: Record<string, unknown>, options: unknown, th
 		const spinner = theme.fg("warning", "◉");
 		const label = theme.fg("muted", "agent working...");
 		contentLines.push(padVisual(` ${spinner} ${label}`, innerW));
-		return new Text(buildFrame(contentLines, w, theme, "borderAccent"), 0, 0);
+		return buildFrame(contentLines, w, theme, "borderAccent");
 	}
 
 	// Brief mode: non-agent results get brief treatment
 	if (!results?.length && !d.agentId) {
 		const briefText = briefToolResult("agent", result as { content?: unknown[] }, theme);
 		contentLines.push(padVisual(` ${briefText}`, innerW));
-		return new Text(buildFrame(contentLines, w, theme, bColor), 0, 0);
+		return buildFrame(contentLines, w, theme, bColor);
 	}
 
 	if (!ctx.expanded) {
@@ -352,7 +362,7 @@ function renderAgentResult(result: Record<string, unknown>, options: unknown, th
 		}
 	}
 
-	return new Text(buildFrame(contentLines, w, theme, bColor), 0, 0);
+	return buildFrame(contentLines, w, theme, bColor);
 }
 
 // ── Card builders ──────────────────────────────────────────────────────
