@@ -12,8 +12,14 @@ test("AnimatedMascot animates frames over time", async () => {
 		closed += 1;
 	}, { frameIntervalMs: 20, autoCloseMs: 300, requestRender: () => {}, style: "cat", effect: "none" });
 	const first = mascot.render(60);
-	await wait(70);
-	const second = mascot.render(60);
+	// Poll until the frame advances. The animation interval is unref'd, so
+	// under CI load (--test-concurrency) timers can be delayed; a fixed wait
+	// is flaky. Polling is robust: finishes fast normally, waits longer under load.
+	let second = mascot.render(60);
+	for (let i = 0; i < 30 && first.join("\n") === second.join("\n"); i++) {
+		await wait(20);
+		second = mascot.render(60);
+	}
 	assert.notEqual(first.join("\n"), second.join("\n"));
 	mascot.dispose();
 	assert.equal(closed, 0);
@@ -53,8 +59,12 @@ test("AnimatedMascot armin style renders XBM grid and resolves effect", async ()
 	const initial = mascot.render(48);
 	assert.ok(initial.some((line) => line.includes("ARMIN SAYS HI")), "should include greeting");
 	assert.ok(initial.some((line) => line.includes("effect: scanline")), "should expose effect hint");
-	await wait(120);
-	const later = mascot.render(48);
+	// Poll until grid advances (unref'd interval is flaky under CI load).
+	let later = mascot.render(48);
+	for (let i = 0; i < 30 && initial.join("\n") === later.join("\n"); i++) {
+		await wait(20);
+		later = mascot.render(48);
+	}
 	assert.notEqual(initial.join("\n"), later.join("\n"), "armin grid should advance over time");
 	mascot.dispose();
 });
