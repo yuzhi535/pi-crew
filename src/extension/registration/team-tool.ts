@@ -1,4 +1,4 @@
-import { writeFileSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "../../config/config.ts";
 import { TeamToolParams, type TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
@@ -128,12 +128,9 @@ interface TeamToolProgressBinder {
 }
 
 function startTeamToolProgressBinder(onUpdate: OnUpdate | undefined): TeamToolProgressBinder {
-	const _log = (msg: string) => { try { writeFileSync('/tmp/pi-crew-progress.log', `[${new Date().toISOString()}] ${msg}\n`, { flag: 'a' }); } catch {} };
 	if (!onUpdate) {
-		_log('no onUpdate');
 		return { attach: () => {}, stop: () => {} };
 	}
-	_log('binder created');
 	const startedAt = Date.now();
 	let cwd: string | undefined;
 	let runId: string | undefined;
@@ -142,7 +139,6 @@ function startTeamToolProgressBinder(onUpdate: OnUpdate | undefined): TeamToolPr
 			if (!cwd || !runId) {
 				const elapsed = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
 				const msg = `team status=starting elapsed=${elapsed}s`;
-				_log(`TICK no-attach: ${msg}`);
 				onUpdate({ content: [{ type: "text", text: msg }] });
 				return;
 			}
@@ -150,11 +146,9 @@ function startTeamToolProgressBinder(onUpdate: OnUpdate | undefined): TeamToolPr
 			if (!loaded) {
 				const elapsed = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
 				const msg = `team run=${runId} elapsed=${elapsed}s (manifest pending)`;
-				_log(`TICK no-manifest: ${msg}`);
 				onUpdate({ content: [{ type: "text", text: msg }] });
 				return;
 			}
-			_log(`TICK manifest: status=${loaded.manifest.status} tasks=${loaded.tasks?.length}`);
 			let agents;
 			try { agents = readCrewAgents(loaded.manifest); } catch { /* ignore */ }
 			const text = formatCompactToolProgress({
@@ -166,10 +160,8 @@ function startTeamToolProgressBinder(onUpdate: OnUpdate | undefined): TeamToolPr
 				tasks: loaded.tasks,
 				agents,
 			});
-			_log(`TICK progress: ${text.slice(0, 120)}`);
 			onUpdate({ content: [{ type: "text", text }] });
 		} catch (error) {
-			_log(`TICK error: ${error}`);
 			logInternalError("team-tool.progress", error, `runId=${runId ?? ""}`);
 		}
 	};

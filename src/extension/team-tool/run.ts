@@ -254,6 +254,7 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		const asyncManifest = { ...effectiveManifest, async: { pid: spawned.pid, logPath: spawned.logPath, spawnedAt: new Date().toISOString() } };
 		atomicWriteJson(paths.manifestPath, asyncManifest);
 		void appendEventAsync(effectiveManifest.eventsPath, { type: "async.spawned", runId: effectiveManifest.runId, data: { pid: spawned.pid, logPath: spawned.logPath } });
+		ctx.onRunStarted?.(effectiveManifest.runId);
 		scheduleBackgroundEarlyExitGuard(resolvedCtx.cwd, effectiveManifest.runId, spawned.pid, spawned.logPath);
 		// Wait for the async run to complete and return actual results.
 		try {
