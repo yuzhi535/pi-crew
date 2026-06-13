@@ -283,10 +283,10 @@ function renderTeamResult(result: Record<string, unknown>, options: unknown, the
 // ── Agent Tool Renderer ────────────────────────────────────────────────
 
 export const agentToolRenderer: ToolRenderer = {
-	renderCall(args, theme, _ctx) {
+	renderCall(args, theme, ctx) {
 		const agentName = args.agent as string ?? args.subagent_type as string ?? "";
 		const prompt = (args.prompt ?? args.task ?? "") as string;
-		const w = (_ctx.width || process.stdout.columns || 116);
+		const w = (ctx.width || process.stdout.columns || 116);
 		const innerW = w - 4;
 
 		const contentLines: string[] = [];
