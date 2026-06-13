@@ -166,34 +166,35 @@ function renderTeamResult(result: Record<string, unknown>, options: unknown, the
 	const bColor = borderColorForStatus(status);
 	const contentLines: string[] = [];
 
-	// isPartial = tool still streaming — show live progress
+	// isPartial = tool still streaming — show LIVE progress
 	const isPartial = (options as Record<string, unknown>)?.isPartial === true;
 	if (isPartial && !ctx.expanded) {
 		const content = extractContentText(result?.content);
 		const parsed = parseStreamingProgress(content);
 
 		if (parsed) {
-			// Parsed progress from progress binder
 			const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 			const frameIdx = Math.floor(Date.now() / 80) % spinnerFrames.length;
 			const spinner = theme.fg("accent", spinnerFrames[frameIdx]!);
+			const elapsed = formatDuration(parsed.elapsedMs);
 
-			if (parsed.completed != null && parsed.total != null) {
-				// Task progress available
-				const ratio = parsed.total > 0 ? parsed.completed / parsed.total : 0;
+			if (parsed.completed != null && parsed.total != null && parsed.total > 0) {
+				// ── Real task progress ──
+				const ratio = parsed.completed / parsed.total;
 				const barW = Math.min(innerW - 22, 30);
 				const bar = progressBar(ratio, barW, theme);
 				const count = theme.fg("muted", ` ${parsed.completed}/${parsed.total}`);
-				contentLines.push(padVisual(` ${spinner} ${theme.fg("toolTitle", theme.bold("crew run"))}  ${theme.fg("dim", formatDuration(parsed.elapsedMs))}`, innerW));
+				contentLines.push(padVisual(` ${spinner} ${theme.fg("toolTitle", theme.bold("crew run"))}  ${theme.fg("dim", elapsed)}`, innerW));
 				contentLines.push(padVisual(`   ${bar}${count}`, innerW));
-				if (parsed.status) contentLines.push(padVisual(`   ${theme.fg("dim", parsed.status)}`, innerW));
-			} else if (parsed.elapsedMs > 0) {
-				// Only elapsed — starting phase
-				const elapsed = formatDuration(parsed.elapsedMs);
+				if (parsed.activeAgent) contentLines.push(padVisual(`   ${theme.fg("dim", parsed.activeAgent)}`, innerW));
+			} else {
+				// ── Starting phase — animated indeterminate bar ──
+				const barW = Math.min(innerW - 20, 30);
+				const scanBar = renderScanBar(barW, parsed.elapsedMs, theme);
 				contentLines.push(padVisual(` ${spinner} ${theme.fg("muted", "crew starting")}  ${theme.fg("dim", elapsed)}`, innerW));
+				contentLines.push(padVisual(`   ${scanBar}`, innerW));
 			}
 		} else if (content) {
-			// Fallback: show streaming text
 			const preview = truncLine(content.split("\n").filter(Boolean).pop() ?? "", innerW - 4);
 			contentLines.push(padVisual(` ${theme.fg("warning", "◉")} ${theme.fg("dim", preview)}`, innerW));
 		}
@@ -367,48 +368,34 @@ interface Metrics {
 function appendRunCard(lines: string[], records: CrewAgentRecord[], status: string, runId: string, theme: CrewTheme, innerW: number): void {
 	const completed = records.filter((r) => r.status === "completed").length;
 	const total = records.length;
-	const ratio = total > 0 ? completed / total : 0;
 	const duration = computeTotalDuration(records);
 	const tokens = computeTotalTokens(records);
 
-	// Line 1: status badge + title + id
+	// Line 1: badge + summary
 	const badge = statusBadge(status, theme);
 	const title = theme.fg("toolTitle", theme.bold("crew run"));
 	const idTag = theme.fg("dim", shortId(runId));
 	lines.push(padVisual(` ${badge} ${title}  ${idTag}`, innerW));
 
-	// Line 2: progress bar + count
-	const barW = Math.min(innerW - 20, 30);
-	const bar = progressBar(ratio, barW, theme);
-	const count = theme.fg("muted", ` ${completed}/${total}`);
-	lines.push(padVisual(` ${bar}${count}`, innerW));
-
-	// Line 3: metrics
-	const metricParts: string[] = [];
-	if (duration > 0) metricParts.push(formatDuration(duration));
-	if (tokens > 0) metricParts.push(`${formatTokens(tokens)} tok`);
-	if (metricParts.length) {
-		lines.push(padVisual(` ${theme.fg("dim", metricParts.join(" · "))}`, innerW));
-	}
+	// Line 2: compact metrics
+	const parts: string[] = [];
+	parts.push(`${completed}/${total} done`);
+	if (duration > 0) parts.push(formatDuration(duration));
+	if (tokens > 0) parts.push(`${formatTokens(tokens)} tok`);
+	lines.push(padVisual(`   ${theme.fg("dim", parts.join(" · "))}`, innerW));
 }
 
 function appendMetricsCard(lines: string[], m: Metrics, status: string, runId: string, theme: CrewTheme, innerW: number): void {
-	const ratio = m.taskCount ? (m.completedCount ?? 0) / m.taskCount : 0;
-
 	const badge = statusBadge(status, theme);
 	const title = theme.fg("toolTitle", theme.bold("crew run"));
 	const idTag = theme.fg("dim", shortId(runId));
 	lines.push(padVisual(` ${badge} ${title}  ${idTag}`, innerW));
 
-	const barW = Math.min(innerW - 20, 30);
-	const bar = progressBar(ratio, barW, theme);
-	const count = theme.fg("muted", ` ${m.completedCount ?? 0}/${m.taskCount ?? 0}`);
-	lines.push(padVisual(` ${bar}${count}`, innerW));
-
 	const parts: string[] = [];
+	if (m.completedCount != null && m.taskCount) parts.push(`${m.completedCount}/${m.taskCount} done`);
 	if (m.durationMs) parts.push(formatDuration(m.durationMs));
 	if (m.totalTokens) parts.push(`${formatTokens(m.totalTokens)} tok`);
-	if (parts.length) lines.push(padVisual(` ${theme.fg("dim", parts.join(" · "))}`, innerW));
+	if (parts.length) lines.push(padVisual(`   ${theme.fg("dim", parts.join(" · "))}`, innerW));
 }
 
 function appendSimpleCard(lines: string[], status: string, runId: string, theme: CrewTheme, innerW: number): void {
@@ -494,6 +481,7 @@ interface StreamingProgress {
 	completed: number | null;
 	total: number | null;
 	status: string | null;
+	activeAgent: string | null;
 }
 
 function parseStreamingProgress(text: string): StreamingProgress | null {
@@ -503,19 +491,45 @@ function parseStreamingProgress(text: string): StreamingProgress | null {
 	const elapsedMatch = text.match(/elapsed=(\d+)s/);
 	const elapsedMs = elapsedMatch ? parseInt(elapsedMatch[1]!, 10) * 1000 : 0;
 
-	// Format from formatCompactToolProgress: "Crew agents · 2/3 done · runId"
+	// Format from formatCompactToolProgress: "tasks completed=2 running=1"
+	const taskMatch = text.match(/tasks[^\n]*(?:completed|done)=(\d+)[^\n]*(?:running|waiting|queued)=(\d+)/);
 	const doneMatch = text.match(/(\d+)\/(\d+)\s+done/);
-	if (doneMatch) {
-		return { elapsedMs, completed: parseInt(doneMatch[1]!, 10), total: parseInt(doneMatch[2]!, 10), status: text.split("·")[0]?.trim() ?? null };
-	}
 
-	// Format: "team status=starting elapsed=Ns"
+	// Active agent: "  explorer->explorer turn=5 tokens=1234"
+	const agentMatch = text.match(/\s+(\w+)->(\w+)\s+turn=/);
+	const activeAgent = agentMatch ? `${agentMatch[1]}/${agentMatch[2]}` : null;
+
+	// Current tool: "  tool: bash (#3)"
+	const toolMatch = text.match(/tool:\s+(\S+)/);
+	const toolInfo = toolMatch ? ` · ${toolMatch[1]}` : "";
+
+	if (doneMatch) {
+		return { elapsedMs, completed: parseInt(doneMatch[1]!, 10), total: parseInt(doneMatch[2]!, 10), status: null, activeAgent: (activeAgent ?? "") + toolInfo };
+	}
+	if (taskMatch) {
+		const done = parseInt(taskMatch[1]!, 10);
+		const running = parseInt(taskMatch[2]!, 10);
+		const total = done + running;
+		return { elapsedMs, completed: done, total, status: null, activeAgent: (activeAgent ?? "") + toolInfo };
+	}
 	if (elapsedMs > 0) {
 		const statusMatch = text.match(/status=(\w+)/);
-		return { elapsedMs, completed: null, total: null, status: statusMatch?.[1] ?? null };
+		return { elapsedMs, completed: null, total: null, status: statusMatch?.[1] ?? null, activeAgent };
 	}
 
 	return null;
+}
+
+/** Animated scanning bar for indeterminate progress. */
+function renderScanBar(barWidth: number, elapsedMs: number, theme: CrewTheme): string {
+	const pos = Math.floor((elapsedMs / 400) % (barWidth + 6)) - 3; // bounce range
+	const segW = Math.max(3, Math.floor(barWidth * 0.3));
+	let bar = "";
+	for (let i = 0; i < barWidth; i++) {
+		const inSeg = i >= pos && i < pos + segW;
+		bar += inSeg ? theme.fg("accent", "█") : theme.fg("dim", "░");
+	}
+	return bar;
 }
 
 function computeTotalDuration(records: CrewAgentRecord[]): number {
