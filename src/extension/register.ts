@@ -1992,6 +1992,18 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	// to duplicate path/command info. Pi's native rendering is better.
 	// To re-enable, uncomment: registerBriefToolOverrides(pi, process.cwd());
 
+	// Resilient edit (Phase 2): OPT-IN via CREW_RESILIENT_EDIT=1.
+	// Wraps the native edit tool with the cascading replace() fallback so that
+	// slightly-wrong oldText (indentation drift, whitespace) still matches.
+	// Auto-disables if pi-diff is loaded (it has its own replace integration).
+	if (process.env.CREW_RESILIENT_EDIT === "1") {
+		import("../runtime/resilient-edit.ts")
+			.then(({ wrapEditWithResilientReplace }) => {
+				wrapEditWithResilientReplace(pi);
+			})
+			.catch(() => { /* non-critical */ });
+	}
+
 	registerTeamCommands(pi, {
 		startForegroundRun,
 		abortForegroundRun,

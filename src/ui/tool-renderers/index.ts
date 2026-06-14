@@ -102,16 +102,25 @@ function progressBar(ratio: number, barWidth: number, theme: CrewTheme): string 
  *  With renderShell="self", Pi no longer wraps in Box(1,1).
  *  Frame uses full totalWidth.
  */
-function buildFrame(contentLines: string[], totalWidth: number, theme: CrewTheme, borderSlot: "success" | "error" | "border" | "borderAccent" = "border"): string {
+import { deriveCardBackground, padWithBackground } from "../card-colors.ts";
+
+/** Create a rounded-corner framed card.
+ *  With renderShell="self", Pi no longer wraps in Box(1,1).
+ *  Frame uses full totalWidth.
+ *  When bgSlot is provided, the interior is filled with a subtle status-tinted
+ *  background derived from the theme (mixBg at 8% intensity).
+ */
+function buildFrame(contentLines: string[], totalWidth: number, theme: CrewTheme, borderSlot: "success" | "error" | "border" | "borderAccent" = "border", bgSlot?: "success" | "error" | "border" | "borderAccent"): string {
 	const frameW = totalWidth - 2; // available after Box(1,1) padding
 	const innerW = frameW - 2;    // │ chars
 	const top = theme.fg(borderSlot, `╭${"─".repeat(innerW)}╮`);
 	const bottom = theme.fg(borderSlot, `╰${"─".repeat(innerW)}╯`);
 	const v = theme.fg(borderSlot, "│");
+	const bg = bgSlot ? deriveCardBackground(theme, bgSlot) : "";
 
 	const lines: string[] = [top];
 	for (const line of contentLines) {
-		const padded = padVisual(line, innerW);
+		const padded = bg ? padWithBackground(line, innerW, bg) : padVisual(line, innerW);
 		lines.push(v + padded + v);
 	}
 	lines.push(bottom);
@@ -120,28 +129,32 @@ function buildFrame(contentLines: string[], totalWidth: number, theme: CrewTheme
 
 /** Build frame TOP: top border + content lines, NO bottom border.
  *  Pairs with buildFrameBottom() so renderCall + renderResult merge into ONE frame. */
-function buildFrameTop(contentLines: string[], totalWidth: number, theme: CrewTheme, borderSlot: "success" | "error" | "border" | "borderAccent" = "border"): string {
+function buildFrameTop(contentLines: string[], totalWidth: number, theme: CrewTheme, borderSlot: "success" | "error" | "border" | "borderAccent" = "border", bgSlot?: "success" | "error" | "border" | "borderAccent"): string {
 	const frameW = totalWidth - 2;
 	const innerW = frameW - 2;
 	const top = theme.fg(borderSlot, `╭${"─".repeat(innerW)}╮`);
 	const v = theme.fg(borderSlot, "│");
+	const bg = bgSlot ? deriveCardBackground(theme, bgSlot) : "";
 	const lines: string[] = [top];
 	for (const line of contentLines) {
-		lines.push(v + padVisual(line, innerW) + v);
+		const padded = bg ? padWithBackground(line, innerW, bg) : padVisual(line, innerW);
+		lines.push(v + padded + v);
 	}
 	return lines.join("\n");
 }
 
 /** Build frame BOTTOM: content lines + bottom border, NO top border.
  *  Pairs with buildFrameTop() so renderCall + renderResult merge into ONE frame. */
-function buildFrameBottom(contentLines: string[], totalWidth: number, theme: CrewTheme, borderSlot: "success" | "error" | "border" | "borderAccent" = "border"): string {
+function buildFrameBottom(contentLines: string[], totalWidth: number, theme: CrewTheme, borderSlot: "success" | "error" | "border" | "borderAccent" = "border", bgSlot?: "success" | "error" | "border" | "borderAccent"): string {
 	const frameW = totalWidth - 2;
 	const innerW = frameW - 2;
 	const v = theme.fg(borderSlot, "│");
 	const bottom = theme.fg(borderSlot, `╰${"─".repeat(innerW)}╯`);
+	const bg = bgSlot ? deriveCardBackground(theme, bgSlot) : "";
 	const lines: string[] = [];
 	for (const line of contentLines) {
-		lines.push(v + padVisual(line, innerW) + v);
+		const padded = bg ? padWithBackground(line, innerW, bg) : padVisual(line, innerW);
+		lines.push(v + padded + v);
 	}
 	lines.push(bottom);
 	return lines.join("\n");
@@ -180,7 +193,7 @@ export const teamToolRenderer: ToolRenderer = {
 			contentLines.push(padVisual(` ${theme.fg("dim", previewText)}`, innerW));
 		}
 
-		return new Text(buildFrameTop(contentLines, w, theme, borderFromContext(ctx)), 0, 0);
+		return new Text(buildFrameTop(contentLines, w, theme, borderFromContext(ctx), borderFromContext(ctx)), 0, 0);
 	},
 
 	renderResult(result, _options, theme, ctx) {
@@ -238,7 +251,7 @@ function renderTeamResult(result: Record<string, unknown>, options: unknown, the
 		}
 
 		if (contentLines.length > 0) {
-			return buildFrameBottom(contentLines, w, theme, "borderAccent");
+			return buildFrameBottom(contentLines, w, theme, "borderAccent", "borderAccent");
 		}
 	}
 
@@ -247,7 +260,7 @@ function renderTeamResult(result: Record<string, unknown>, options: unknown, the
 	if (isBrief() && !ctx.expanded && action !== "run") {
 		const briefText = briefToolResult("team", result as { content?: unknown[] }, theme);
 		contentLines.push(padVisual(` ${briefText}`, innerW));
-		return buildFrameBottom(contentLines, w, theme, bColor);
+		return buildFrameBottom(contentLines, w, theme, bColor, bColor);
 	}
 
 	if (!ctx.expanded) {
@@ -277,7 +290,7 @@ function renderTeamResult(result: Record<string, unknown>, options: unknown, the
 		}
 	}
 
-	return buildFrameBottom(contentLines, w, theme, bColor);
+	return buildFrameBottom(contentLines, w, theme, bColor, bColor);
 }
 
 // ── Agent Tool Renderer ────────────────────────────────────────────────
@@ -301,7 +314,7 @@ export const agentToolRenderer: ToolRenderer = {
 			contentLines.push(padVisual(` ${theme.fg("dim", previewText)}`, innerW));
 		}
 
-		return new Text(buildFrameTop(contentLines, w, theme, borderFromContext(ctx)), 0, 0);
+		return new Text(buildFrameTop(contentLines, w, theme, borderFromContext(ctx), borderFromContext(ctx)), 0, 0);
 	},
 
 	renderResult(result, _options, theme, ctx) {
@@ -330,14 +343,14 @@ function renderAgentResult(result: Record<string, unknown>, options: unknown, th
 		const spinner = theme.fg("warning", "◉");
 		const label = theme.fg("muted", "agent working...");
 		contentLines.push(padVisual(` ${spinner} ${label}`, innerW));
-		return buildFrameBottom(contentLines, w, theme, "borderAccent");
+		return buildFrameBottom(contentLines, w, theme, "borderAccent", "borderAccent");
 	}
 
 	// Brief mode: non-agent results get brief treatment
 	if (!results?.length && !d.agentId) {
 		const briefText = briefToolResult("agent", result as { content?: unknown[] }, theme);
 		contentLines.push(padVisual(` ${briefText}`, innerW));
-		return buildFrameBottom(contentLines, w, theme, bColor);
+		return buildFrameBottom(contentLines, w, theme, bColor, bColor);
 	}
 
 	if (!ctx.expanded) {
@@ -391,7 +404,7 @@ function renderAgentResult(result: Record<string, unknown>, options: unknown, th
 		}
 	}
 
-	return buildFrameBottom(contentLines, w, theme, bColor);
+	return buildFrameBottom(contentLines, w, theme, bColor, bColor);
 }
 
 // ── Card builders ──────────────────────────────────────────────────────
