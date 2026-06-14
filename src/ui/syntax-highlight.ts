@@ -52,10 +52,11 @@ void loadShiki();
 // so highlighting always works regardless of which Pi theme is active.
 
 const DEFAULT_SHIKI_THEME = "github-dark";
+export { DEFAULT_SHIKI_THEME };
 const FG_MUTED_FALLBACK = "\x1b[38;2;139;148;158m";
 
 /** Map common Pi/theme names to Shiki bundled theme names. */
-const THEME_ALIASES: Record<string, string> = {
+export const THEME_ALIASES: Record<string, string> = {
 	"dark": "github-dark",
 	"light": "github-light",
 	"crew-dark": "github-dark",
@@ -74,7 +75,7 @@ const THEME_ALIASES: Record<string, string> = {
 };
 
 /** Validate that a theme name is a real Shiki bundled theme. */
-function isValidShikiTheme(name: string): boolean {
+export function isValidShikiTheme(name: string): boolean {
 	return Object.prototype.hasOwnProperty.call(bundledThemes, name);
 }
 
@@ -84,7 +85,24 @@ function resolveShikiTheme(): string {
 	if (env) {
 		return isValidShikiTheme(env) ? env : DEFAULT_SHIKI_THEME;
 	}
-	// 2. Read Pi's settings.json theme, map to Shiki if possible.
+	// 2. pi-crew config `ui.shikiTheme` override.
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		const pathMod = require("node:path");
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		const fsMod = require("node:fs");
+		// Resolve pi-crew config: try CWD then home.
+		const { loadConfig } = require("../config/config.ts");
+		const cwd = process.cwd();
+		const loaded = loadConfig(cwd);
+		const uiConfig = (loaded.config as { ui?: { shikiTheme?: string } }).ui;
+		const cfgTheme = uiConfig?.shikiTheme;
+		if (cfgTheme && isValidShikiTheme(cfgTheme)) return cfgTheme;
+		void fsMod; void pathMod;
+	} catch {
+		// config not loadable in this context — fall through
+	}
+	// 3. Read Pi's settings.json theme, map to Shiki if possible.
 	try {
 		const home = process.env.HOME;
 		if (!home) return DEFAULT_SHIKI_THEME;

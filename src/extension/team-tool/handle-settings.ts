@@ -4,6 +4,13 @@ import { configPatchFromConfig } from "../team-tool/config-patch.ts";
 import { result } from "../team-tool/context.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { suggestConfigKey } from "../../config/suggestions.ts";
+import {
+	formatThemesListing,
+	discoverPiThemes,
+	setPiTheme,
+	listShikiThemesGrouped,
+} from "../../ui/theme-discovery.ts";
+import { isValidShikiTheme } from "../../ui/syntax-highlight.ts";
 
 // ---------------------------------------------------------------------------
 // Effective defaults — values used when config key is not set
@@ -244,6 +251,9 @@ const USAGE = [
 	"  json                  Show full effective config as JSON",
 	"  schema                Show all known config keys (schema reference)",
 	"  paths                 Show config file paths (user + project)",
+	"  themes                Browse theme gallery (Pi UI + Shiki code themes)",
+	"  theme <name>          Switch the Pi UI theme (restart Pi to apply)",
+	"  shiki <name>          Override the Shiki syntax-highlight theme",
 	"  get <key>             Get a specific config value",
 	"  set <key> <value>     Set a config value",
 	"  unset <key>           Remove a config value",
@@ -317,6 +327,96 @@ export function handleSettings(params: { config?: Record<string, unknown> }, ctx
 		}
 		lines.push(`  Write scope:     ${scope} (${scope === "project" ? projectConfigPath(ctx.cwd) : loaded.path})`);
 		return result(lines.join("\n"), { ...OK, path: loaded.path } as never);
+	}
+
+	// team-settings themes — browse the theme gallery
+	if (args === "themes" || args === "theme-gallery") {
+		return result(formatThemesListing(), { ...OK } as never);
+	}
+
+	// team-settings theme <name> — switch the Pi UI theme
+	if (args === "theme" || args.startsWith("theme ")) {
+		const name = args === "theme" ? "" : args.slice(6).trim();
+		if (!name) {
+			const available = discoverPiThemes().map((t) => t.name).join(", ");
+			return result(
+				`Usage: team-settings theme <name>\n\nAvailable Pi themes: ${available}\n\nBrowse all: team-settings themes`,
+				{ ...ERR },
+				true,
+			);
+		}
+		const available = discoverPiThemes();
+		const exists = available.some((t) => t.name === name);
+		if (!exists) {
+			const hint = available.map((t) => t.name).join(", ");
+			return result(
+				`Unknown Pi theme: ${name}\n\nAvailable: ${hint}\n\nCustom themes live in ~/.pi/agent/themes/<name>.json`,
+				{ ...ERR },
+				true,
+			);
+		}
+		try {
+			const savedTo = setPiTheme(name);
+			return result(
+				[
+					`✓ Pi theme set to '${name}'`,
+					`  Written to: ${savedTo}`,
+					`  Restart Pi (or reload) to apply the new UI colors.`,
+					``,
+					`The Shiki code-highlight theme will auto-resolve from this Pi theme.`,
+				].join("\n"),
+				{ ...OK, theme: name } as never,
+			);
+		} catch (error) {
+			return result(error instanceof Error ? error.message : String(error), { ...ERR }, true);
+		}
+	}
+
+	// team-settings shiki <name> — override the Shiki syntax-highlight theme
+	if (args === "shiki" || args === "shiki-theme" || args.startsWith("shiki ") || args.startsWith("shiki-theme ")) {
+		const raw = args.replace(/^shiki(-theme)?\s*/, "").trim();
+		if (!raw) {
+			const groups = listShikiThemesGrouped();
+			const total = groups.reduce((n, g) => n + g.themes.length, 0);
+			const sample = groups.flatMap((g) => g.themes).slice(0, 20).join(", ");
+			return result(
+				[
+					`Usage: team-settings shiki <theme-name>`,
+					``,
+					`${total} Shiki themes available. Popular: ${sample}...`,
+					``,
+					`Clear override: team-settings unset ui.shikiTheme`,
+					`Browse all: team-settings themes`,
+				].join("\n"),
+				{ ...ERR },
+				true,
+			);
+		}
+		if (!isValidShikiTheme(raw)) {
+			return result(
+				`Invalid Shiki theme: '${raw}' is not in the Shiki bundle.\nBrowse valid names: team-settings themes`,
+				{ ...ERR },
+				true,
+			);
+		}
+		try {
+			const patch: Record<string, unknown> = {};
+			setNested(patch, "ui.shikiTheme", raw);
+			const converted = configPatchFromConfig(patch);
+			const saved = updateConfig(converted, { cwd: ctx.cwd, scope });
+			return result(
+				[
+					`✓ Shiki syntax-highlight theme set to '${raw}'`,
+					`  Saved to: ${saved.path}`,
+					`  Applies to code blocks on next render.`,
+					``,
+					`Clear override: team-settings unset ui.shikiTheme`,
+				].join("\n"),
+				{ ...OK, shikiTheme: raw } as never,
+			);
+		} catch (error) {
+			return result(error instanceof Error ? error.message : String(error), { ...ERR }, true);
+		}
 	}
 
 	// team-settings scope [user|project]

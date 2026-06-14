@@ -983,6 +983,7 @@ function parseUiConfig(value: unknown): CrewUiConfig | undefined {
 			]),
 			obj.mascotEffect,
 		),
+		shikiTheme: parseWithSchema(Type.String(), obj.shikiTheme),
 	};
 	return Object.values(ui).some((entry) => entry !== undefined)
 		? ui
