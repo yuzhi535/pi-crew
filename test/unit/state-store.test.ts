@@ -21,6 +21,30 @@ function makeResolvedTempDir(prefix: string): string {
 	}
 	return dir;
 }
+
+/**
+ * Retry a file operation a few times on Windows to ride out the brief window
+ * where a freshly-created file is locked by the OS / real-time AV scanner
+ * (EPERM/EBUSY). On non-Windows this is a passthrough. node:test runs files
+ * concurrently in one process; under load the Windows runner can take a few
+ * ms to release a just-renamed file handle.
+ */
+function retryWinFs<T>(fn: () => T): T {
+	let lastError: unknown;
+	for (let attempt = 0; attempt < 6; attempt++) {
+		try {
+			return fn();
+		} catch (error) {
+			lastError = error;
+			const code = (error as NodeJS.ErrnoException).code;
+			if (process.platform !== "win32" || (code !== "EPERM" && code !== "EBUSY" && code !== "EAGAIN")) throw error;
+			// brief backoff on Windows AV/lock window
+			const end = Date.now() + Math.min(40, 1 * 2 ** attempt);
+			while (Date.now() < end) { /* spin */ }
+		}
+	}
+	throw lastError;
+}
 const team: TeamConfig = {
 	name: "default",
 	description: "default",
@@ -107,8 +131,8 @@ test("loadRunManifestById rejects unsafe run ids and manifest path mismatches", 
 		const created = createRunManifest({ cwd, team, workflow, goal: "safe" });
 		assert.throws(() => loadRunManifestById(cwd, "../outside"), /Invalid runId/);
 		const manifestPath = path.join(created.paths.stateRoot, "manifest.json");
-		const raw = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-		fs.writeFileSync(manifestPath, `${JSON.stringify({ ...raw, artifactsRoot: path.join(cwd, "outside") }, null, 2)}\n`, "utf-8");
+		const raw = JSON.parse(retryWinFs(() => fs.readFileSync(manifestPath, "utf-8")));
+		retryWinFs(() => fs.writeFileSync(manifestPath, `${JSON.stringify({ ...raw, artifactsRoot: path.join(cwd, "outside") }, null, 2)}\n`, "utf-8"));
 		__test__clearManifestCache();
 		assert.equal(loadRunManifestById(cwd, created.manifest.runId), undefined);
 	} finally {
