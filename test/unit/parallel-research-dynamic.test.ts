@@ -22,6 +22,18 @@ test("parallel-research dynamically fans out Source/pi-* projects into shard tas
 		assert.equal(loaded.tasks.filter((task) => task.status === "completed" && task.role === "explorer").length >= 4, true);
 		assert.equal(loaded.tasks.some((task) => task.stepId === "synthesize" && task.dependsOn.length === shardTasks.length), true);
 	} finally {
-		fs.rmSync(cwd, { recursive: true, force: true });
+		// Retry cleanup: the run may leave behind files written asynchronously
+		// (manifest-cache flush, snapshot writes) that race the recursive delete,
+		// causing transient ENOTEMPTY/EBUSY on busy CI runners.
+		for (let attempt = 0; attempt < 5; attempt++) {
+			try {
+				fs.rmSync(cwd, { recursive: true, force: true });
+				break;
+			} catch (err) {
+				if (attempt === 4 || !/ENOTEMPTY|EBUSY|EPERM/.test(String((err as NodeJS.ErrnoException).code ?? ""))) throw err;
+				// brief backoff then retry
+				fs.rmSync(cwd, { recursive: true, force: true });
+			}
+		}
 	}
 });
