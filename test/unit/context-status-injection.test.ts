@@ -112,13 +112,15 @@ test("handleContextEvent: returns undefined when cwd has no in-flight runs", () 
 	// If something was injected, it must be an ambient-status note whose runs do
 	// NOT include our nonexistent cwd (i.e. no false attribution).
 	assert.ok(res.messages, "result must have messages");
-	const injected = res.messages.find(
-		(m) => typeof m.content !== "string" &&
-			Array.isArray(m.content) &&
-			m.content.some((p: { text?: string }) => typeof p.text === "string" && p.text.includes(AMBIENT_STATUS_SENTINEL)),
-	);
+	const injected = res.messages.find((m) => {
+		const content = (m as { content?: unknown }).content;
+		return Array.isArray(content) &&
+			content.some((p) => typeof (p as { text?: string })?.text === "string" &&
+				((p as { text: string }).text.includes(AMBIENT_STATUS_SENTINEL)));
+	});
 	if (injected) {
-		const text = (injected.content as Array<{ text?: string }>).map((p) => p.text ?? "").join("\n");
+		const content = (injected as { content: Array<{ text?: string }> }).content;
+		const text = content.map((p) => p.text ?? "").join("\n");
 		assert.ok(
 			!/\/nonexistent\/empty\/cwd\/for\/test/.test(text),
 			"ambient status must not attribute runs to our nonexistent cwd",

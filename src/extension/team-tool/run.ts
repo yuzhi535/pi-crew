@@ -219,6 +219,24 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	registerActiveRun(updatedManifest);
 
 	const loadedConfig = loadConfig(resolvedCtx.cwd);
+	// DX (Round 16 F4): surface config errors/warnings instead of silently
+	// proceeding with defaults. Non-blocking: emit a config.warning event so
+	// it shows in the run timeline and status, and log it. A malformed config
+	// (bad JSON / wrong types) should not be a silent no-op — doctor/config
+	// actions already surface these; run should too.
+	const configIssues = [
+		...(loadedConfig.error ? [`Config error: ${loadedConfig.error}`] : []),
+		...(loadedConfig.warnings ?? []),
+	];
+	if (configIssues.length > 0) {
+		void appendEventAsync(updatedManifest.eventsPath, {
+			type: "config.warning",
+			runId: updatedManifest.runId,
+			message: `Loaded config from ${loadedConfig.path || "(defaults)"} with ${configIssues.length} issue(s): ${configIssues.join("; ")}`,
+			data: { error: loadedConfig.error, warnings: loadedConfig.warnings, path: loadedConfig.path },
+		}).catch((error) => logInternalError("team-tool.run.configWarning", error, `runId=${updatedManifest.runId}`));
+		logInternalError("team-tool.run.configWarning", new Error(`config issues: ${configIssues.join("; ")}`), `runId=${updatedManifest.runId} path=${loadedConfig.path ?? "(defaults)"}`);
+	}
 	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
 	const runtime = await resolveCrewRuntime(executedConfig);
 	const runtimeResolution = runtimeResolutionState(runtime);
