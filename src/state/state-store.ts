@@ -17,6 +17,37 @@ import type { WorkflowConfig } from "../workflows/workflow-config.ts";
 import { toPiSessionId } from "../utils/session-utils.ts";
 import { HealthStore } from "./health-store.ts";
 
+/**
+ * stat() the manifest with a brief retry on Windows for the AV-scan window.
+ *
+ * On the GitHub Actions windows-latest runner, Windows Defender real-time
+ * scanning can make a freshly-written manifest.json briefly invisible to
+ * statSync (ENOENT) even though the write succeeded and the file is on disk.
+ * loadRunManifestById is called right after createRunManifest in tests and in
+ * production (e.g. refreshPersistedSubagentRecord), so without a retry the
+ * caller sees a phantom "missing" run.
+ *
+ * On non-Windows, ENOENT means the file genuinely doesn't exist — passthrough
+ * (throw immediately) with no retry. On Windows, ENOENT/EPERM/EBUSY/EAGAIN get
+ * a handful of short retries (~30ms worst case) before giving up and throwing
+ * so the caller's catch returns undefined as before.
+ */
+function statManifestWithWindowsRetry(manifestPath: string): fs.Stats {
+	if (process.platform !== "win32") return fs.statSync(manifestPath);
+	const retryable = new Set(["ENOENT", "EPERM", "EBUSY", "EAGAIN"]);
+	for (let attempt = 0; attempt < 5; attempt++) {
+		try {
+			return fs.statSync(manifestPath);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (!retryable.has(code ?? "")) throw error;
+			const end = Date.now() + Math.min(8, 1 * 2 ** attempt);
+			while (Date.now() < end) { /* brief spin to ride out the AV scan window */ }
+		}
+	}
+	return fs.statSync(manifestPath); // last attempt — let caller's catch handle ENOENT
+}
+
 export interface RunPaths {
 	runId: string;
 	stateRoot: string;
@@ -506,7 +537,7 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 
 	let manifestStat: fs.Stats;
 	try {
-		manifestStat = fs.statSync(manifestPath);
+		manifestStat = statManifestWithWindowsRetry(manifestPath);
 	} catch {
 		return undefined;
 	}

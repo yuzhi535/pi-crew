@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.7.5] — Ambient context status + perf hardening + error taxonomy (2026-06-15)
+
+Three workstreams from the Round 11 API-gap and Round 15 perf/error audits: a new `context`-event feature, three performance fixes, and a full error-taxonomy expansion.
+
+### Features
+
+- **Ambient crew-status injection (GAP-2)** — registers Pi's `context` event handler so the parent agent stays continuously aware of in-flight crew runs on every LLM call, without calling the `team` tool. Injects a compact status note (runId/team/status/goal, capped at 3 inline) before the last message. **Transient and safe**: Pi uses the result only for that call (`agent-loop.ts:283-289`) — it never mutates persistent `state.messages`, so there's no accumulation or history corruption. No-op when zero runs are active. Toggle: `reliability.ambientStatusInjection`.
+
+### Performance (Round 15 audit)
+
+- **P1 (CRITICAL): throttle `persistSingleTaskUpdate` in `onJsonEvent`** — previously every child JSON event did a full locked read-parse-write of `tasks.json`; a 200-event task produced 200 such cycles. Now throttled to 500ms (in-memory progress stays fresh every event; final state force-flushed on completion).
+- **P4: `buildWorkspaceTree` TTL cache (30s)** — workers in a run share a cwd, so the recursive walk was repeated once per task.
+- **P5: `readKnowledge` mtime+size cache** — fired on every agent start (main + every worker), re-reading the same file N×/run.
+
+### Error experience (Round 15 audit)
+
+- **E1: extended CrewError taxonomy E007–E012** — the taxonomy previously covered only file I/O and discovery. The most common *runtime* failures (child timeout, model exhaustion, pre-step failure, event-log lock timeout, depth limit, stale run) now throw structured `CrewError`s with a machine-readable code, a default actionable help hint, and context. Wired into all six throw sites (`task-runner.ts`, `event-log.ts`, `pipeline-runner.ts`, `stale-reconciler.ts`).
+- **E2: model fallback exhaustion surfaces the full chain tried** ("All N candidates exhausted (tried: a → b → c). Last failure: …") instead of only the last attempt's raw error.
+- **E3: stale-reconcile error explains the heartbeat mechanism + remediation** instead of the bare "Stale run reconciled: <reason>".
+
+### Tests
+
+- +20 tests (context-status-injection: 11, errors E007–E012: 9). 4800+ pass / 0 fail.
+
+### Research
+
+This release was driven by the Round 11 Pi-API gap audit and the Round 15 performance/cost + error-experience audit, documented in `research-findings/`.
+
 ## [0.7.4] — Editor autocomplete + settings shortcut (2026-06-15)
 
 Round 13 UX quick wins round-out: the remaining two Pi extension API integrations plus a hard-won CI reliability fix after the state-store test flake re-emerged on Windows and macOS.
