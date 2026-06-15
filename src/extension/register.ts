@@ -111,6 +111,8 @@ import {
 import { registerSubagentTools } from "./registration/subagent-tools.ts";
 import { registerCrewMessageRenderers } from "./message-renderers.ts";
 import { registerCrewInputRouter } from "./crew-input-router.ts";
+import { registerCrewAutocomplete } from "./crew-autocomplete.ts";
+import { registerCrewShortcuts } from "./crew-shortcuts.ts";
 import { registerTeamTool } from "./registration/team-tool.ts";
 import { handleTeamTool } from "./team-tool.ts";
 import { persistScheduledJobUpdate } from "./team-tool/handle-schedule.ts";
@@ -214,6 +216,7 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	let sessionGeneration = 0;
 	let rpcHandle: PiCrewRpcHandle | undefined;
 	let cleanedUp = false;
+	let crewAutocompleteRegistered = false;
 	let manifestCache = createManifestCache(process.cwd());
 	let runSnapshotCache = createRunSnapshotCache(process.cwd());
 	let cacheCwd = process.cwd();
@@ -1219,6 +1222,14 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		sessionGeneration++;
 		const ownerGeneration = sessionGeneration;
 		currentCtx = ctx;
+		// Round 13 UX: register the crew natural-language autocomplete provider
+		// once we have a UI context. Guarded so repeated session_start events
+		// don't stack wrappers (each wrapper delegates, but stacking wastes
+		// call depth).
+		if (!crewAutocompleteRegistered) {
+			crewAutocompleteRegistered = true;
+			registerCrewAutocomplete(ctx);
+		}
 		if (widgetState.interval) clearInterval(widgetState.interval);
 		widgetState.interval = undefined;
 		notifyActiveRuns(ctx);
@@ -2048,4 +2059,10 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	// interactive input that starts with a crew/team keyword phrase; never
 	// shadows explicit slash commands.
 	registerCrewInputRouter(pi);
+
+	// Round 13 UX: keyboard shortcuts. alt+s opens the settings overlay
+	// (config + theme picker). Keys chosen to avoid Pi's built-in keymap.
+	// (The crew autocomplete provider is registered from session_start once
+	// a UI context is available — see the session_start handler below.)
+	registerCrewShortcuts(pi);
 }

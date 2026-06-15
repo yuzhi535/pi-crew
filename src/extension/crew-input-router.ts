@@ -12,16 +12,46 @@
  */
 import type { InputEvent, InputEventResult } from "@earendil-works/pi-coding-agent";
 
-/** Rules: phrase prefix (lowercased) → slash-command rewrite. */
-const ROUTING_RULES: ReadonlyArray<{ match: RegExp; command: string; needsArg?: boolean }> = [
-	// Inspection — no runId needed (lists all runs).
-	{ match: /^(crew|team)\s+status\b/i, command: "/team-status" },
-	{ match: /^(crew|team)\s+list\b/i, command: "/team-status" },
-	{ match: /^(crew|team)\s+(dashboard|board|panel)\b/i, command: "/team-dashboard" },
-	{ match: /^(crew|team)\s+(help|commands)\b/i, command: "/team-help" },
-	{ match: /^teams\b/i, command: "/teams" },
-	{ match: /^(crew|team)\s+(doctor|diagnos\w*)/i, command: "/team-doctor" },
+/**
+ * Natural-language crew phrases → slash-command mapping.
+ *
+ * Single source of truth shared by:
+ *  - the `input`-event router (rewrites submitted text), and
+ *  - the editor autocomplete provider (suggests phrases as you type).
+ *
+ * Each entry maps a phrase (what the user types) to a slash command.
+ * The router matches when submitted text STARTS WITH a phrase (word boundary);
+ * the autocomplete matches when the line starts with `crew `/`team ` and the
+ * partial word is a prefix of a phrase's keyword.
+ */
+export const CREW_PHRASES: ReadonlyArray<{ phrase: string; command: string }> = [
+	{ phrase: "crew status", command: "/team-status" },
+	{ phrase: "crew list", command: "/team-status" },
+	{ phrase: "crew dashboard", command: "/team-dashboard" },
+	{ phrase: "crew board", command: "/team-dashboard" },
+	{ phrase: "crew panel", command: "/team-dashboard" },
+	{ phrase: "crew help", command: "/team-help" },
+	{ phrase: "crew commands", command: "/team-help" },
+	{ phrase: "crew doctor", command: "/team-doctor" },
+	{ phrase: "crew diagnose", command: "/team-doctor" },
+	{ phrase: "teams", command: "/teams" },
 ];
+
+/**
+ * Build a case-insensitive anchored regex from a phrase. The leading `crew `
+ * keyword is treated as interchangeable with `team ` (so "crew status" matches
+ * both "crew status" and "team status"). Bare phrases like "teams" match
+ * verbatim.
+ */
+function phraseToRegex(phrase: string): RegExp {
+	const kw = phrase.match(/^(crew|team)\s+(.*)$/i);
+	if (kw) {
+		const rest = kw[2].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		return new RegExp(`^(?:crew|team)\\s+${rest}\\b`, "i");
+	}
+	const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`^${escaped}\\b`, "i");
+}
 
 /**
  * Try to rewrite a natural-language crew phrase into a slash command.
@@ -35,12 +65,12 @@ export function rewriteCrewInput(text: string): string | null {
 	// Never transform explicit slash commands or inputs that don't start with
 	// a crew/team keyword phrase.
 	if (trimmed.startsWith("/")) return null;
-	for (const rule of ROUTING_RULES) {
-		const match = trimmed.match(rule.match);
+	for (const entry of CREW_PHRASES) {
+		const match = trimmed.match(phraseToRegex(entry.phrase));
 		if (!match) continue;
 		// Carry any remaining args after the matched phrase forward.
 		const rest = trimmed.slice(match[0].length).trim();
-		return rest ? `${rule.command} ${rest}` : rule.command;
+		return rest ? `${entry.command} ${rest}` : entry.command;
 	}
 	return null;
 }

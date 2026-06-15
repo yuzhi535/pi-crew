@@ -154,6 +154,72 @@ function teamCommandContext(ctx: ExtensionCommandContext): ExtensionCommandConte
 	return withSessionId(ctx);
 }
 
+/**
+ * Open the pi-crew settings overlay (config editor + theme picker).
+ *
+ * Extracted from the `team-settings` command so it is reusable from a
+ * keyboard shortcut. Takes the base `ExtensionContext` (the shortcut
+ * handler's context) — uses only `hasUI`, `cwd`, and `ui` fields, so both
+ * `ExtensionContext` and `ExtensionCommandContext` satisfy it.
+ */
+export async function openTeamSettingsOverlay(ctx: ExtensionContext): Promise<void> {
+	if (!ctx.hasUI) return;
+	const [{ updateConfig, parseConfig }, { asCrewTheme }, { createSettingsOverlay }] = await Promise.all([
+		import("../../config/config.ts"),
+		import("../../ui/theme-adapter.ts"),
+		import("../../ui/settings-overlay.ts"),
+	]);
+	const loaded = loadConfig(ctx.cwd);
+	const config = loaded.config as Record<string, unknown>;
+	await ctx.ui.custom<undefined>((_tui, _theme, _keybindings, done) => {
+		const theme = asCrewTheme(_theme);
+		const { overlay } = createSettingsOverlay(config, theme, (id: string, value: unknown) => {
+			try {
+				const patch: Record<string, unknown> = {};
+				const keys = id.split(".");
+				let target: Record<string, unknown> = patch;
+				for (let i = 0; i < keys.length - 1; i++) {
+					if (!target[keys[i]!] || typeof target[keys[i]!] !== "object") target[keys[i]!] = {};
+					target = target[keys[i]!] as Record<string, unknown>;
+				}
+				target[keys[keys.length - 1]!] = value;
+				if (value === undefined) { updateConfig({}, { unsetPaths: [id] }); }
+				else { updateConfig(parseConfig(patch)); }
+			} catch (error) {
+				ctx.ui.notify(`Failed to save: ${error instanceof Error ? error.message : String(error)}`, "error");
+			}
+		}, () => done(undefined), async (action: string, value: unknown) => {
+			// Action callbacks (Pi theme switch) write to a different store
+			// than pi-crew config (e.g. ~/.pi/agent/settings.json).
+			try {
+				if (action === "piTheme" && typeof value === "string") {
+					// Live theme switch: ctx.ui.setTheme() swaps the global theme,
+					// persists it to settings.json, and triggers a UI redraw — no
+					// restart needed. Falls back to file-write + restart hint if
+					// the live API is unavailable (e.g. non-TUI mode).
+					if (typeof ctx.ui.setTheme === "function") {
+						const res = ctx.ui.setTheme(value);
+						if (res.success) {
+							ctx.ui.notify(`Theme: ${value} (applied live)`, "info");
+						} else {
+							const { setPiTheme } = await import("../../ui/theme-discovery.ts");
+							setPiTheme(value);
+							ctx.ui.notify(`Theme saved as '${value}' but failed to apply: ${res.error ?? "unknown"}. Restart Pi.`, "warning");
+						}
+					} else {
+						const { setPiTheme } = await import("../../ui/theme-discovery.ts");
+						setPiTheme(value);
+						ctx.ui.notify(`Pi theme set to '${value}'. Restart Pi to apply.`, "info");
+					}
+				}
+			} catch (error) {
+				ctx.ui.notify(`Failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+			}
+		});
+		return overlay;
+	}, { overlay: true, overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" } });
+}
+
 async function handleHealthDashboardAction(ctx: ExtensionCommandContext, selection: RunDashboardSelection): Promise<void> {
 	const loaded = loadRunManifestById(ctx.cwd, selection.runId); // NOTE: no withRunLock - best-effort only; concurrent writes may cause inconsistency
 	if (!loaded) {
@@ -353,60 +419,7 @@ export function registerTeamCommands(pi: ExtensionAPI, deps: RegisterTeamCommand
 	description: "View or update pi-crew settings: interactive UI or [list|get <key>|set <key> <value>|unset <key>|path|scope]",
 	handler: async (args: string, ctx: ExtensionCommandContext) => {
 		if (ctx.hasUI && !args.trim()) {
-			const [{ updateConfig, parseConfig }, { asCrewTheme }, { createSettingsOverlay }] = await Promise.all([
-				import("../../config/config.ts"),
-				import("../../ui/theme-adapter.ts"),
-				import("../../ui/settings-overlay.ts"),
-			]);
-			const loaded = loadConfig(ctx.cwd);
-			const config = loaded.config as Record<string, unknown>;
-			await ctx.ui.custom<undefined>((_tui, _theme, _keybindings, done) => {
-				const theme = asCrewTheme(_theme);
-				const { overlay } = createSettingsOverlay(config, theme, (id: string, value: unknown) => {
-					try {
-						const patch: Record<string, unknown> = {};
-						const keys = id.split(".");
-						let target: Record<string, unknown> = patch;
-						for (let i = 0; i < keys.length - 1; i++) {
-							if (!target[keys[i]!] || typeof target[keys[i]!] !== "object") target[keys[i]!] = {};
-							target = target[keys[i]!] as Record<string, unknown>;
-						}
-						target[keys[keys.length - 1]!] = value;
-						if (value === undefined) { updateConfig({}, { unsetPaths: [id] }); }
-						else { updateConfig(parseConfig(patch)); }
-					} catch (error) {
-						ctx.ui.notify(`Failed to save: ${error instanceof Error ? error.message : String(error)}`, "error");
-					}
-				}, () => done(undefined), async (action: string, value: unknown) => {
-					// Action callbacks (Pi theme switch) write to a different store
-					// than pi-crew config (e.g. ~/.pi/agent/settings.json).
-					try {
-						if (action === "piTheme" && typeof value === "string") {
-							// Live theme switch: ctx.ui.setTheme() swaps the global theme,
-							// persists it to settings.json, and triggers a UI redraw — no
-							// restart needed. Falls back to file-write + restart hint if
-							// the live API is unavailable (e.g. non-TUI mode).
-							if (typeof ctx.ui.setTheme === "function") {
-								const res = ctx.ui.setTheme(value);
-								if (res.success) {
-									ctx.ui.notify(`Theme: ${value} (applied live)`, "info");
-								} else {
-									const { setPiTheme } = await import("../../ui/theme-discovery.ts");
-									setPiTheme(value);
-									ctx.ui.notify(`Theme saved as '${value}' but failed to apply: ${res.error ?? "unknown"}. Restart Pi.`, "warning");
-								}
-							} else {
-								const { setPiTheme } = await import("../../ui/theme-discovery.ts");
-								setPiTheme(value);
-								ctx.ui.notify(`Pi theme set to '${value}'. Restart Pi to apply.`, "info");
-							}
-						}
-					} catch (error) {
-						ctx.ui.notify(`Failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-					}
-				});
-				return overlay;
-			}, { overlay: true, overlayOptions: { width: "90%", maxHeight: "85%", anchor: "center" } });
+			await openTeamSettingsOverlay(ctx);
 			return;
 		}
 		const result = await handleTeamTool({ action: "settings", config: { args: args.trim() } }, teamCommandContext(ctx));
