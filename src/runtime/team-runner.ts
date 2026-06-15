@@ -342,8 +342,11 @@ function failedTaskFrom(result: { tasks: TeamTaskState[] }, taskId: string): Tea
 	return result.tasks.find((item) => item.id === taskId && item.status === "failed");
 }
 
-function requiresPlanApproval(workflow: WorkflowConfig, runtimeConfig: CrewRuntimeConfig | undefined): boolean {
-	return workflow.name === "implementation" && runtimeConfig?.requirePlanApproval === true;
+function requiresPlanApproval(_workflow: WorkflowConfig, runtimeConfig: CrewRuntimeConfig | undefined): boolean {
+	// ROADMAP T1.2: plan-level HITL applies to ANY workflow when
+	// config.runtime.requirePlanApproval === true (not just 'implementation').
+	// The gate fires at the read-only → mutating (plan → execute) boundary.
+	return runtimeConfig?.requirePlanApproval === true;
 }
 
 function isPlanApprovalPending(manifest: TeamRunManifest): boolean {
@@ -357,6 +360,9 @@ function isMutatingTask(task: TeamTaskState): boolean {
 function ensurePlanApprovalRequested(manifest: TeamRunManifest, tasks: TeamTaskState[]): TeamRunManifest {
 	if (manifest.planApproval) return manifest;
 	const assessTask = tasks.find((task) => task.stepId === "assess" && task.status === "completed");
+	// ROADMAP T1.2: for non-adaptive workflows, fall back to the most recent
+	// completed read-only (planning) task as the plan reference.
+	const planTask = assessTask ?? [...tasks].reverse().find((t) => t.status === "completed" && !isMutatingTask(t));
 	const now = new Date().toISOString();
 	const updated: TeamRunManifest = {
 		...manifest,
@@ -366,12 +372,12 @@ function ensurePlanApprovalRequested(manifest: TeamRunManifest, tasks: TeamTaskS
 			status: "pending",
 			requestedAt: now,
 			updatedAt: now,
-			planTaskId: assessTask?.id,
-			planArtifactPath: assessTask?.resultArtifact?.path,
+			planTaskId: planTask?.id,
+			planArtifactPath: planTask?.resultArtifact?.path,
 		},
 	};
 	saveRunManifest(updated);
-	appendEvent(updated.eventsPath, { type: "plan.approval_required", runId: updated.runId, taskId: assessTask?.id, message: "Adaptive implementation plan requires explicit approval before mutating tasks run.", data: { planArtifactPath: assessTask?.resultArtifact?.path } });
+	appendEvent(updated.eventsPath, { type: "plan.approval_required", runId: updated.runId, taskId: planTask?.id, message: "Plan requires explicit approval before mutating tasks run. Use: team api op=approve-plan runId=...", data: { planArtifactPath: planTask?.resultArtifact?.path } });
 	return updated;
 }
 
@@ -381,6 +387,17 @@ function cancelPlanTasks(tasks: TeamTaskState[], reason: string): TeamTaskState[
 
 function hasPendingMutatingAdaptiveTask(tasks: TeamTaskState[]): boolean {
 	return tasks.some((task) => task.status === "queued" && task.adaptive && isMutatingTask(task));
+}
+
+/**
+ * ROADMAP T1.2: gate detection for ANY workflow (not just adaptive).
+ * Fires when there are pending mutating tasks whose prerequisites (read-only
+ * tasks) have completed — i.e. the plan→execute boundary.
+ */
+function hasPendingMutatingTaskAtBoundary(tasks: TeamTaskState[]): boolean {
+	const hasCompletedReadOnly = tasks.some((t) => t.status === "completed" && !isMutatingTask(t));
+	const hasPendingMutating = tasks.some((t) => t.status === "queued" && isMutatingTask(t));
+	return hasCompletedReadOnly && hasPendingMutating;
 }
 
 /**
@@ -516,7 +533,7 @@ async function executeTeamRunCore(
 	if (initialAdaptive.injected) {
 		manifest = requiresPlanApproval(workflow, input.runtimeConfig) ? ensurePlanApprovalRequested(manifest, tasks) : manifest;
 		queueIndex = buildTaskGraphIndex(tasks);
-	} else if (requiresPlanApproval(workflow, input.runtimeConfig) && hasPendingMutatingAdaptiveTask(tasks)) {
+	} else if (requiresPlanApproval(workflow, input.runtimeConfig) && (hasPendingMutatingAdaptiveTask(tasks) || hasPendingMutatingTaskAtBoundary(tasks))) {
 		manifest = ensurePlanApprovalRequested(manifest, tasks);
 	}
 	if (manifest.planApproval?.status === "cancelled") {
