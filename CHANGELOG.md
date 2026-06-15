@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.1] — Fix: Auto-Continue After Compaction (2026-06-15)
+
+### Bug Fix
+
+- **`a??`** — **Compaction resilience actually works now.** The v0.7.0 fix (O10) only *appended a resume-directive entry* after compaction, but appending an entry does **not trigger an agent turn** — the session still waited for user input, so the user still had to type "continue". The real root cause: Pi's threshold auto-compaction (`_runAutoCompaction` reason=`threshold` willRetry=`false`) returns `this.agent.hasQueuedMessages()`, which is `false` when nothing is queued → the agent loop ends → Pi waits for input (documented: "NO auto-retry, user continues manually").
+
+  **Fix**: after `session_compact` fires, call `pi.sendUserMessage(continuationPrompt)`. Per Pi's API, `sendUserMessage` *always triggers a turn*. The agent automatically runs a new turn, sees the resume directive, calls `team status`, and continues the in-flight crew task — **zero manual intervention**.
+
+  - `buildContinuationPrompt()`: action-oriented prompt ("Context was compacted while crew tasks were in-flight. Continue the work — do not wait for me.")
+  - `triggerContinuation(pi, ctx, runs)`: fire-and-forget `sendUserMessage`, best-effort error handling
+  - Wired in both the reactive path (`session_compact` handler) and proactive path (`startCompact.onComplete`)
+  - Only fires when in-flight crew runs exist; non-crew compaction unaffected
+  - 6 new unit tests
+
 ## [0.7.0] — Long-Term Roadmap: Compaction Resilience, Cost Visibility, Trust Trinity (2026-06-15)
 
 This release implements Phase 0 + Phase 1 of the pi-crew long-term roadmap (a 10-round research synthesis), plus the single-agent cliff hedge. The organizing principle: **build trust and cliff-resilience, stay lean, delete before adding.**
