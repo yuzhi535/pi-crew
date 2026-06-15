@@ -11,7 +11,7 @@ export interface WorkflowDiscoveryResult {
 	project: WorkflowConfig[];
 }
 
-const STEP_CONFIG_KEYS = new Set(["role", "dependsOn", "parallelGroup", "output", "reads", "model", "skills", "progress", "worktree", "verify", "task", "seedPaths", "preStepScript", "preStepArgs", "preStepTimeout"]);
+const STEP_CONFIG_KEYS = new Set(["role", "dependsOn", "parallelGroup", "output", "reads", "model", "skills", "progress", "worktree", "verify", "task", "seedPaths", "preStepScript", "preStepArgs", "preStepTimeout", "preStepOptional"]);
 
 function parseStepSection(id: string, body: string): WorkflowStep | undefined {
 	const lines = body.trim().split("\n");
@@ -54,6 +54,7 @@ function parseStepSection(id: string, body: string): WorkflowStep | undefined {
 		preStepScript: config.preStepScript || undefined,
 		preStepArgs: parseCsv(config.preStepArgs) || undefined,
 		preStepTimeout: parseOptionalInteger(config.preStepTimeout) ?? undefined,
+		preStepOptional: config.preStepOptional === "true" || config.preStepOptional === "1",
 	};
 }
 

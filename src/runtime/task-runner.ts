@@ -292,7 +292,16 @@ export async function runTeamTask(
 				const exitCode = (err as NodeJS.ErrnoException & { status?: number }).status;
 				// E1 (Round 15): structured CrewError with code E009 + help hint,
 				// instead of a raw Error. Surfaces the script path, exit code, and stderr.
-				throw errors.preStepFailed(input.step.preStepScript, exitCode, msg);
+				// Round 21 (E4): if preStepOptional is set, a failing hook is NON-FATAL.
+				// Log a warning + emit a 'warning' event, then proceed without the
+				// pre-step output rather than aborting the task (advisory hooks).
+				if (input.step.preStepOptional) {
+					const warnMsg = `[preStepOptional] pre-step hook '${input.step.preStepScript}' failed (exit ${exitCode ?? "?"}) but preStepOptional=true; continuing without its output.`;
+					try { appendEventFireAndForget(manifest.eventsPath, { type: "hook.pre_step_optional_failed", runId: manifest.runId, taskId: task.id, message: warnMsg, data: { script: input.step.preStepScript, exitCode: exitCode ?? null } }); } catch { /* best-effort event log */ }
+					preStepOutput = undefined;
+				} else {
+					throw errors.preStepFailed(input.step.preStepScript, exitCode, msg);
+				}
 			}
 		}
 

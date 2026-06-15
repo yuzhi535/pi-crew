@@ -117,7 +117,7 @@ code + a help hint inline. Common ones:
 | E006 | ResourceNotFound | agent/team/workflow not found | `team list` to see available resources |
 | E007 | ChildTimeout | a worker Pi didn't finish in time | raise `runtime.responseTimeoutMs` or simplify the task |
 | E008 | ModelExhausted | all fallback models failed | see "Model fallback exhausted" above |
-| E009 | PreStepFailed | a workflow pre-step hook failed | check the hook stderr in events; or set `preStepOptional` |
+| E009 | PreStepFailed | a workflow pre-step hook failed | check the hook stderr in events; set `preStepOptional: true` on the step to make it advisory (non-fatal) |
 | E010 | EventLogLockTimeout | event log locked under contention | transient; retry, or lower concurrency |
 | E011 | DepthLimitExceeded | crew nesting too deep | raise `crew.maxDepth` or flatten the call |
 | E012 | RunStale | run reconciled as stale | see "Stale async process" above |

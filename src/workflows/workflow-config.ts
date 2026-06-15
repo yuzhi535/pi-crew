@@ -25,6 +25,11 @@ export interface WorkflowStep {
 	preStepArgs?: string[];
 	/** Timeout in ms for preStepScript. Default: 30000. */
 	preStepTimeout?: number;
+	/** Round 21 (E4): if true, a failing preStepScript does NOT abort the task.
+	 * The failure is logged as a warning and the task proceeds without the
+	 * pre-step output. Use for advisory hooks (e.g. optional test runs) whose
+	 * failure shouldn't block the workflow. Default: false (fail-fast). */
+	preStepOptional?: boolean;
 }
 
 export interface WorkflowConfig {
