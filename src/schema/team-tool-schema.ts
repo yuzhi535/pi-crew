@@ -113,6 +113,11 @@ export const TeamToolParams = Type.Object({
 			description: "Concrete task text for direct role/agent execution.",
 		}),
 	),
+	singleAgent: Type.Optional(
+		Type.Boolean({
+			description: "When true (with action=plan), compose a single-agent sequential prompt for the workflow instead of a multi-agent plan. Cliff-resilient mode.",
+		}),
+	),
 	runId: Type.Optional(
 		Type.String({
 			description: "Run ID for status, cancel, or resume.",
@@ -308,6 +313,7 @@ export interface TeamToolParamsValue {
 	agent?: string;
 	goal?: string;
 	task?: string;
+	singleAgent?: boolean;
 	runId?: string;
 	taskId?: string;
 	message?: string;

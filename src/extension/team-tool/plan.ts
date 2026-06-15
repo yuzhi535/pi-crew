@@ -4,6 +4,7 @@ import { validateWorkflowForTeam } from "../../workflows/validate-workflow.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { result, type TeamContext } from "./context.ts";
+import { composeSingleAgentPrompt } from "../../runtime/single-agent-compose.ts";
 
 export function handlePlan(params: TeamToolParamsValue, ctx: TeamContext): PiTeamsToolResult {
 	const teamName = params.team ?? "default";
@@ -14,6 +15,12 @@ export function handlePlan(params: TeamToolParamsValue, ctx: TeamContext): PiTea
 	if (!workflow) return result(`Workflow '${workflowName}' not found.`, { action: "plan", status: "error" }, true);
 	const errors = validateWorkflowForTeam(workflow, team);
 	if (errors.length > 0) return result([`Workflow '${workflow.name}' is not valid for team '${team.name}':`, ...errors.map((error) => `- ${error}`)].join("\n"), { action: "plan", status: "error" }, true);
-	const lines = [`Team plan: ${team.name}`, `Workflow: ${workflow.name}`, `Goal: ${params.goal ?? params.task ?? "(not provided)"}`, "", "Steps:", ...workflow.steps.map((step, index) => `${index + 1}. ${step.id} [${step.role}]${step.dependsOn?.length ? ` after ${step.dependsOn.join(", ")}` : ""}`)];
+	const goal = params.goal ?? params.task ?? "(not provided)";
+	// ROADMAP T2.2: single-agent composition mode (cliff hedge).
+	if (params.singleAgent) {
+		const composed = composeSingleAgentPrompt(workflow, goal);
+		return result([`Single-agent plan for ${team.name} / ${workflow.name} (${composed.stepCount} phases composed into one sequential prompt):`, "", composed.prompt, "", "This prompt can be handed to a single agent to execute the entire workflow sequentially — pi-crew's cliff-resilient mode (survives single-agent domination)."].join("\n"), { action: "plan", status: "ok" });
+	}
+	const lines = [`Team plan: ${team.name}`, `Workflow: ${workflow.name}`, `Goal: ${goal}`, "", "Steps:", ...workflow.steps.map((step, index) => `${index + 1}. ${step.id} [${step.role}]${step.dependsOn?.length ? ` after ${step.dependsOn.join(", ")}` : ""}`)];
 	return result(lines.join("\n"), { action: "plan", status: "ok" });
 }
