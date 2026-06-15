@@ -212,14 +212,20 @@ describe("reconcileOrphanedTempWorkspaces", () => {
 	const tempDirs: string[] = [];
 
 	beforeEach(() => {
-		// Clean up any existing pi-crew-* dirs in /tmp so the test workspace
-		// falls within the ORPHAN_TEMP_SCAN_BATCH_SIZE=50 limit. Without this,
-		// hundreds of orphaned dirs from past test runs push the test workspace
-		// beyond the batch window, causing repaired=0.
+		// Clean up any existing pi-crew-test-* dirs (THIS test's own prefix only)
+		// in /tmp so the test workspace falls within the
+		// ORPHAN_TEMP_SCAN_BATCH_SIZE=50 limit. Without this, hundreds of orphaned
+		// dirs from past test runs push the test workspace beyond the batch
+		// window, causing repaired=0.
+		//
+		// Round 19 fix: previously this wiped ALL pi-crew-* dirs, which destroyed
+		// temp dirs belonging to CONCURRENTLY-running test files (node:test runs
+		// files concurrently in one process) → cross-file interference / flakes.
+		// Now scoped to our own 'pi-crew-test-' prefix only.
 		try {
 			const entries = fs.readdirSync(os.tmpdir(), { withFileTypes: true });
 			for (const entry of entries) {
-				if (entry.isDirectory() && entry.name.startsWith("pi-crew-")) {
+				if (entry.isDirectory() && entry.name.startsWith("pi-crew-test-")) {
 					try {
 						fs.rmSync(path.join(os.tmpdir(), entry.name), {
 							recursive: true,

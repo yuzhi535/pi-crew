@@ -13,6 +13,7 @@ test("foreground run with scheduler waits for completion and returns results", a
 	let scheduled = false;
 	// Use mock child-pi to simulate fast agent completion without real LLM calls
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	process.env.PI_CREW_ALLOW_MOCK = "1";
 	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
 	try {
@@ -38,12 +39,10 @@ test("foreground run with scheduler waits for completion and returns results", a
 		assert.match(text, /pi-crew run/, `Expected "pi-crew run" in result but got: ${text}`);
 		assert.ok(toolResult.details.runId, "Expected runId in details");
 	} finally {
-		if (previousMock === undefined) {
-			delete process.env.PI_TEAMS_MOCK_CHILD_PI;
-		} else {
-			process.env.PI_CREW_ALLOW_MOCK = "1";
-	process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
-		}
+		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		if (previousAllowMock === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = previousAllowMock;
 		clearRunPromisesForTest();
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

@@ -140,6 +140,7 @@ test("registered Agent tool can run a background subagent and join its result", 
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	const previousExecute = process.env.PI_TEAMS_EXECUTE_WORKERS;
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	const previousCrewRole = process.env.PI_CREW_ROLE;
 	const previousTeamsRole = process.env.PI_TEAMS_ROLE;
 	process.env.PI_TEAMS_EXECUTE_WORKERS = "1";
@@ -181,8 +182,9 @@ test("registered Agent tool can run a background subagent and join its result", 
 		if (previousExecute === undefined) delete process.env.PI_TEAMS_EXECUTE_WORKERS;
 		else process.env.PI_TEAMS_EXECUTE_WORKERS = previousExecute;
 		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
-		else process.env.PI_CREW_ALLOW_MOCK = "1";
-	process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		if (previousAllowMock === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = previousAllowMock;
 		if (previousCrewRole === undefined) delete process.env.PI_CREW_ROLE;
 		else process.env.PI_CREW_ROLE = previousCrewRole;
 		if (previousTeamsRole === undefined) delete process.env.PI_TEAMS_ROLE;
@@ -196,6 +198,7 @@ test("background subagent completion wakes the parent agent to join results", as
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	const previousExecute = process.env.PI_TEAMS_EXECUTE_WORKERS;
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	const previousCrewRole = process.env.PI_CREW_ROLE;
 	const previousTeamsRole = process.env.PI_TEAMS_ROLE;
 	process.env.PI_TEAMS_EXECUTE_WORKERS = "1";
@@ -225,8 +228,9 @@ test("background subagent completion wakes the parent agent to join results", as
 		if (previousExecute === undefined) delete process.env.PI_TEAMS_EXECUTE_WORKERS;
 		else process.env.PI_TEAMS_EXECUTE_WORKERS = previousExecute;
 		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
-		else process.env.PI_CREW_ALLOW_MOCK = "1";
-	process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		if (previousAllowMock === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = previousAllowMock;
 		if (previousCrewRole === undefined) delete process.env.PI_CREW_ROLE;
 		else process.env.PI_CREW_ROLE = previousCrewRole;
 		if (previousTeamsRole === undefined) delete process.env.PI_TEAMS_ROLE;
@@ -240,6 +244,7 @@ test("background subagent completion does not wake a newer session", async () =>
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	const previousExecute = process.env.PI_TEAMS_EXECUTE_WORKERS;
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	const previousCrewRole = process.env.PI_CREW_ROLE;
 	const previousTeamsRole = process.env.PI_TEAMS_ROLE;
 	process.env.PI_TEAMS_EXECUTE_WORKERS = "1";
@@ -263,8 +268,9 @@ test("background subagent completion does not wake a newer session", async () =>
 		if (previousExecute === undefined) delete process.env.PI_TEAMS_EXECUTE_WORKERS;
 		else process.env.PI_TEAMS_EXECUTE_WORKERS = previousExecute;
 		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
-		else process.env.PI_CREW_ALLOW_MOCK = "1";
-	process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		if (previousAllowMock === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = previousAllowMock;
 		if (previousCrewRole === undefined) delete process.env.PI_CREW_ROLE;
 		else process.env.PI_CREW_ROLE = previousCrewRole;
 		if (previousTeamsRole === undefined) delete process.env.PI_TEAMS_ROLE;
@@ -278,6 +284,7 @@ test("session_before_switch suppresses pending background subagent wakeup", asyn
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	const previousExecute = process.env.PI_TEAMS_EXECUTE_WORKERS;
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	const previousCrewRole = process.env.PI_CREW_ROLE;
 	const previousTeamsRole = process.env.PI_TEAMS_ROLE;
 	process.env.PI_TEAMS_EXECUTE_WORKERS = "1";
@@ -301,8 +308,9 @@ test("session_before_switch suppresses pending background subagent wakeup", asyn
 		if (previousExecute === undefined) delete process.env.PI_TEAMS_EXECUTE_WORKERS;
 		else process.env.PI_TEAMS_EXECUTE_WORKERS = previousExecute;
 		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
-		else process.env.PI_CREW_ALLOW_MOCK = "1";
-	process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		if (previousAllowMock === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = previousAllowMock;
 		if (previousCrewRole === undefined) delete process.env.PI_CREW_ROLE;
 		else process.env.PI_CREW_ROLE = previousCrewRole;
 		if (previousTeamsRole === undefined) delete process.env.PI_TEAMS_ROLE;

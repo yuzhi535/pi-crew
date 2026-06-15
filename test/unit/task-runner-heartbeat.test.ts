@@ -18,6 +18,7 @@ test("runTeamTask refreshes worker heartbeat while child JSON events stream", as
 		cwd = r.startsWith("\\\\?\\") ? r.slice(4) : r;
 	} catch { /* keep as-is */ }
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	process.env.PI_CREW_ALLOW_MOCK = "1";
 	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
 	try {
@@ -31,9 +32,13 @@ test("runTeamTask refreshes worker heartbeat while child JSON events stream", as
 		assert.ok(updated);
 		assert.notEqual(updated.lastSeenAt, staleHeartbeat.lastSeenAt);
 	} finally {
+		// Round 19 fix: restore BOTH vars correctly. Previously this restored
+		// the wrong var (PI_CREW_ALLOW_MOCK), set 'undefined' as a string, and
+		// never restored PI_CREW_ALLOW_MOCK → leaked into sibling tests.
 		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
-		else process.env.PI_CREW_ALLOW_MOCK = "1";
-	process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		if (previousAllowMock === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = previousAllowMock;
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });

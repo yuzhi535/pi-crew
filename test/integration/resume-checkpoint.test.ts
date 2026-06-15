@@ -14,6 +14,7 @@ function restoreEnv(name: string, previous: string | undefined): void {
 
 test("resume recovers running task with child-stdout-final checkpoint from transcript", async () => {
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	process.env.PI_CREW_ALLOW_MOCK = "1";
 	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-resume-transcript-"));
@@ -38,12 +39,14 @@ test("resume recovers running task with child-stdout-final checkpoint from trans
 		assert.equal(readEvents(after.manifest.eventsPath).some((event) => event.type === "task.checkpoint_recovered" && JSON.stringify(event.data).includes(task.id)), true);
 	} finally {
 		restoreEnv("PI_TEAMS_MOCK_CHILD_PI", previousMock);
+		restoreEnv("PI_CREW_ALLOW_MOCK", previousAllowMock);
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
 
 test("resume recovers running task with artifact-written checkpoint without rerunning worker", async () => {
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	process.env.PI_CREW_ALLOW_MOCK = "1";
 	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-resume-checkpoint-"));
@@ -73,6 +76,7 @@ test("resume recovers running task with artifact-written checkpoint without reru
 		assert.deepEqual(events[0]!.data, { taskIds: [task.id] });
 	} finally {
 		restoreEnv("PI_TEAMS_MOCK_CHILD_PI", previousMock);
+		restoreEnv("PI_CREW_ALLOW_MOCK", previousAllowMock);
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });

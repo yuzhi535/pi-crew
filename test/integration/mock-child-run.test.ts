@@ -11,6 +11,7 @@ test("executeWorkers can use mocked child Pi and record model attempts", async (
 	fs.mkdirSync(path.join(cwd, ".crew"));
 	const previousExecute = process.env.PI_TEAMS_EXECUTE_WORKERS;
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	process.env.PI_TEAMS_EXECUTE_WORKERS = "1";
 	process.env.PI_CREW_ALLOW_MOCK = "1";
 	process.env.PI_TEAMS_MOCK_CHILD_PI = "success";
@@ -24,11 +25,14 @@ test("executeWorkers can use mocked child Pi and record model attempts", async (
 		assert.ok(loaded?.tasks.every((task) => task.modelAttempts && task.modelAttempts.length >= 1));
 		assert.ok(fs.existsSync(path.join(cwd, ".crew", "artifacts", runId!, "logs", "01_explore.log")));
 	} finally {
+		// Round 19 fix: restore all THREE vars correctly (was restoring wrong var
+		// + setting 'undefined' as a string + never restoring PI_CREW_ALLOW_MOCK).
 		if (previousExecute === undefined) delete process.env.PI_TEAMS_EXECUTE_WORKERS;
 		else process.env.PI_TEAMS_EXECUTE_WORKERS = previousExecute;
 		if (previousMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
-		else process.env.PI_CREW_ALLOW_MOCK = "1";
-	process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
+		if (previousAllowMock === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = previousAllowMock;
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });

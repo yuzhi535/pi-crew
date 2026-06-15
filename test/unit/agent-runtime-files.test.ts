@@ -11,6 +11,7 @@ import { unregisterActiveRun } from "../../src/state/active-run-registry.ts";
 test("child-process runs maintain per-agent status, events, and output files", async () => {
 	const previousMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
 	const previousExecute = process.env.PI_TEAMS_EXECUTE_WORKERS;
+	const previousAllowMock = process.env.PI_CREW_ALLOW_MOCK;
 	process.env.PI_CREW_ALLOW_MOCK = "1";
 	process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
 	process.env.PI_TEAMS_EXECUTE_WORKERS = "1";
@@ -53,6 +54,8 @@ test("child-process runs maintain per-agent status, events, and output files", a
 		else process.env.PI_TEAMS_MOCK_CHILD_PI = previousMock;
 		if (previousExecute === undefined) delete process.env.PI_TEAMS_EXECUTE_WORKERS;
 		else process.env.PI_TEAMS_EXECUTE_WORKERS = previousExecute;
+		if (previousAllowMock === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = previousAllowMock;
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });
