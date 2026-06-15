@@ -156,6 +156,7 @@ import { handleParallel } from "./team-tool/parallel-dispatch.ts";
 import { handlePlan } from "./team-tool/plan.ts";
 import { handleRespond } from "./team-tool/respond.ts";
 import { handleStatus } from "./team-tool/status.ts";
+import { formatActionSuggestion } from "./action-suggestions.ts";
 
 export { handleApi } from "./team-tool/api.ts";
 export { handleRetry } from "./team-tool/cancel.ts";
@@ -1347,7 +1348,7 @@ export async function handleTeamTool(
 		}
 		default:
 			return result(
-				`Unknown action: ${action}`,
+				`Unknown action: ${action}${formatActionSuggestion(String(action))}`,
 				{ action: "unknown", status: "error" },
 				true,
 			);
