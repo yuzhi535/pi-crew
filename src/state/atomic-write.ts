@@ -282,30 +282,6 @@ export async function renameWithRetryAsync(tempPath: string, filePath: string, r
 /** Test alias for renameWithRetryAsync. */
 export const __test__renameWithRetryAsync = renameWithRetryAsync;
 
-/**
- * Verify a just-written file is visible to stat() before returning success.
- *
- * On Windows the FS cache / real-time AV scan can make a freshly-renamed
- * file briefly invisible to a subsequent existsSync/readFileSync, even though
- * the rename returned success. This retries a handful of times with a short
- * backoff so that atomicWriteFile's success contract ("the file is readable
- * at filePath") actually holds for the caller. If it never appears, we throw
- * — a write that 'succeeds' but can't be read is a genuine failure.
- */
-function verifyFileVisibleSync(filePath: string, retries = 6): void {
-	for (let attempt = 0; attempt < retries; attempt++) {
-		try {
-			if (fs.existsSync(filePath)) return;
-		} catch (error) {
-			// EBUSY / EPERM during AV scan: treat as not-yet-visible and retry.
-			const code = (error as NodeJS.ErrnoException).code;
-			if (code !== "EBUSY" && code !== "EPERM" && code !== "EAGAIN") throw error;
-		}
-		sleepSync(Math.min(50, 1 * 2 ** attempt)); // 1, 2, 4, 8, 16, 32ms (~63ms worst case)
-	}
-	throw new Error(`atomicWriteFile: file not visible after rename (retried ${retries}x): ${filePath}`);
-}
-
 export function atomicWriteFile(filePath: string, content: string, expectedHash?: string): void {
 	if (!isSymlinkSafePath(filePath)) throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
 	// On Windows the parent directory may be referenced via a short-name alias
@@ -369,18 +345,6 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 			}
 			// Issue 1 fix: use link+unlink instead of rename to avoid following symlinks
 			renameWithLinkSync(tempPath, filePath);
-			// Post-rename visibility verification (Windows hardening).
-			// On Windows under concurrency (e.g. node:test --test-concurrency=N, or
-			// Windows Defender real-time scanning), a successfully-renamed file can
-			// be briefly invisible to a subsequent fs.existsSync / fs.readFileSync
-			// while the FS cache flushes or the AV engine scans the new file. A
-			// write that returns success but leaves the file unreadable breaks
-			// every caller that stats after write (createRunManifest -> test assert,
-			// or production loadRunManifestById). Verify the file is visible with a
-			// short backoff retry before declaring success; throw if it never
-			// appears so callers see a clear write failure instead of a confusing
-			// later ENOENT.
-			verifyFileVisibleSync(filePath);
 		} catch (renameError) {
 			// Issue 4 fix: use finally block to guarantee temp file cleanup.
 			// Between the initial isSymlinkSafePath check and rename attempt,

@@ -26,7 +26,23 @@ if (args.length === 0) {
 
 // Always inject --test-force-exit to guarantee child exits (prevents pi hang).
 const hasForceExit = args.includes("--test-force-exit");
-const finalArgs = hasForceExit ? args : ["--test-force-exit", ...args];
+let finalArgs = hasForceExit ? args : ["--test-force-exit", ...args];
+
+// Windows hardening: node:test runs test FILES concurrently in one process
+// (--test-concurrency=N). On the GitHub Actions windows-latest runner, real-
+// time antivirus scanning of freshly-created temp files causes transient
+// EPERM/EBUSY on rename/rename-source inside atomicWriteFile. Under high
+// concurrency (4+) this happens often enough to exhaust the rename retries
+// (~1.6s of backoff) and fail write-then-stat tests (notably state-store's
+// createRunManifest assertions). Lowering cross-file concurrency on Windows
+// gives the FS / AV scanner room to flush, eliminating the contention storm.
+// mac/ubuntu are unaffected (no AV scan lock) and keep the requested value.
+if (process.platform === "win32") {
+	finalArgs = finalArgs.map((arg) => {
+		const m = /^--test-concurrency=(\d+)$/.exec(arg);
+		return m && Number(m[1]) > 2 ? "--test-concurrency=2" : arg;
+	});
+}
 
 const result = spawnSync(
 	process.execPath,
