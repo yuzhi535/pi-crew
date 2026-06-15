@@ -5,6 +5,7 @@ import { buildMemoryBlock } from "../agent-memory.ts";
 import { permissionForRole } from "../role-permission.ts";
 import { renderTaskPacket, HANDOFF_TEMPLATE } from "../task-packet.ts";
 import { buildWorkspaceTree } from "../workspace-tree.ts";
+import { buildKnowledgeFragment } from "../../extension/knowledge-injection.ts";
 
 /**
  * When loadMode is "lean", emit a tool guidance block that tells the worker
@@ -114,6 +115,11 @@ export async function renderTaskPrompt(manifest: TeamRunManifest, step: Workflow
 		treeBlock,
 		"",
 		toolGuidanceBlock(agent),
+		"",
+		// O4: project knowledge (.crew/knowledge.md) — workers don't load the
+		// pi-crew extension (spawned with --no-extensions), so before_agent_start
+		// never fires for them. Inject here so every worker sees project knowledge.
+		buildKnowledgeFragment(task.cwd),
 	].filter(Boolean).join("\n");
 
 	// Dynamic suffix: goal, step, skills, task packet, dependency context, memory — changes per task
