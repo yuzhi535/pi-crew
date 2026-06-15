@@ -46,6 +46,36 @@ const MAX_INLINE_RUNS = 3;
 const MAX_GOAL_LEN = 80;
 
 /**
+ * Cheap human-readable run age from manifest timestamps (no extra I/O).
+ * Returns "running 12m" / "updated 3m ago" style, or "" if timestamps are
+ * missing/invalid. Keeps the ambient note informative without reading
+ * tasks.json on every LLM call.
+ */
+function runAge(createdAt?: string, updatedAt?: string): string {
+	try {
+		const updated = updatedAt ? Date.parse(updatedAt) : NaN;
+		const created = createdAt ? Date.parse(createdAt) : NaN;
+		if (Number.isFinite(updated)) {
+			const sinceUpdate = Date.now() - updated;
+			if (sinceUpdate < 60_000) return `, updated just now`;
+			return `, updated ${humanizeMs(sinceUpdate)} ago`;
+		}
+		if (Number.isFinite(created)) {
+			return `, running ${humanizeMs(Date.now() - created)}`;
+		}
+	} catch { /* ignore malformed timestamps */ }
+	return "";
+}
+
+function humanizeMs(ms: number): string {
+	if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+	const m = Math.floor(ms / 60_000);
+	if (m < 60) return `${m}m`;
+	const h = Math.floor(m / 60);
+	return h < 24 ? `${h}h${m % 60}m` : `${Math.floor(h / 24)}d`;
+}
+
+/**
  * Build a compact, human+LLM-readable ambient status string for the given
  * in-flight runs. Returns "" for an empty list (caller treats as no-op).
  *
@@ -62,7 +92,8 @@ export function formatAmbientStatus(runs: TeamRunManifest[]): string {
 	const shown = runs.slice(0, MAX_INLINE_RUNS);
 	for (const run of shown) {
 		const wf = run.workflow ? `, ${run.workflow}` : "";
-		lines.push(`• ${run.runId} (${run.status}, ${run.team}${wf}): ${truncate(run.goal ?? "(no goal)", MAX_GOAL_LEN)}`);
+		const age = runAge(run.createdAt, run.updatedAt);
+		lines.push(`• ${run.runId} (${run.status}, ${run.team}${wf})${age}: ${truncate(run.goal ?? "(no goal)", MAX_GOAL_LEN)}`);
 	}
 	if (runs.length > MAX_INLINE_RUNS) {
 		lines.push(`• …and ${runs.length - MAX_INLINE_RUNS} more`);

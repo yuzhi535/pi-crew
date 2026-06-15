@@ -8,6 +8,8 @@ import { applyAttentionState, formatActivityAge, resolveCrewControlConfig } from
 import { readCrewAgents } from "../../runtime/crew-agent-records.ts";
 import { checkProcessLiveness, isActiveRunStatus } from "../../runtime/process-status.ts";
 import { formatTaskGraphLines, waitingReason } from "../../runtime/task-display.ts";
+import { computePhaseProgress } from "../../runtime/phase-progress.ts";
+import { formatDuration } from "../../ui/tool-render.ts";
 import { verifyTaskCompletion } from "../../runtime/completion-guard.ts";
 import { evaluateRunEffectiveness } from "../../runtime/effectiveness.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
@@ -40,6 +42,7 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	}
 	const counts = new Map<string, number>();
 	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
+	const phaseProgress = computePhaseProgress(tasks);
 	const allEvents = readEvents(manifest.eventsPath);
 	const events = allEvents.slice(-8);
 	const attentionByTask = new Map(allEvents.filter((event) => event.type === "task.attention" && event.taskId).map((event) => [event.taskId!, event]));
@@ -73,6 +76,7 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 		`Team: ${manifest.team}`,
 		`Workflow: ${manifest.workflow ?? "(none)"}`,
 		`Status: ${manifest.status}`,
+		`Progress: ${phaseProgress.overallPercentage}% (~${formatDuration(phaseProgress.estimatedRemainingMs)} remaining)`,
 		`Workspace mode: ${manifest.workspaceMode}`,
 		...(manifest.runtimeResolution ? [`Runtime: ${manifest.runtimeResolution.kind}`, `Runtime safety: ${manifest.runtimeResolution.safety}`, `Runtime requested: ${manifest.runtimeResolution.requestedMode}${manifest.runtimeResolution.reason ? ` (${manifest.runtimeResolution.reason})` : ""}`] : []),
 		`Goal: ${manifest.goal}`,
@@ -116,7 +120,7 @@ export function handleStatus(params: TeamToolParamsValue, ctx: TeamContext): PiT
 	];
 	if (!fullDetails) {
 		return result(
-			buildCompactStatus(manifest, tasks, counts, asyncLivenessLine).join("\n"),
+			buildCompactStatus(manifest, tasks, counts, asyncLivenessLine, phaseProgress).join("\n"),
 			{ action: "status", status: "ok", runId: manifest.runId, artifactsRoot: manifest.artifactsRoot, intent: `status ${manifest.runId}: ${manifest.status} (compact)` },
 		);
 	}
@@ -135,6 +139,7 @@ export function buildCompactStatus(
 	tasks: Array<{ id: string; status: string; role: string; agent: string; error?: string }>,
 	counts: Map<string, number>,
 	asyncLivenessLine?: string,
+	progress?: { overallPercentage: number; estimatedRemainingMs: number },
 ): string[] {
 	const failedOrAttention = tasks.filter(
 		(t) =>
@@ -146,6 +151,7 @@ export function buildCompactStatus(
 		`Run: ${manifest.runId}`,
 		`Team: ${manifest.team}${manifest.workflow ? ` (${manifest.workflow})` : ""}`,
 		`Status: ${manifest.status}`,
+		...(progress ? [`Progress: ${progress.overallPercentage}% (~${formatDuration(progress.estimatedRemainingMs)} remaining)`] : []),
 		`Goal: ${manifest.goal}`,
 		...(asyncLivenessLine ? [asyncLivenessLine] : []),
 		`Tasks: ${[...counts.entries()].map(([s, c]) => `${s}=${c}`).join(", ") || "none"}`,

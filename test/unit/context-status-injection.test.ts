@@ -53,6 +53,20 @@ test("formatAmbientStatus: single run includes sentinel, runId, team, status, go
 	assert.ok(text.includes("environmental context"), "signals it is not a user request");
 });
 
+test("formatAmbientStatus: includes run recency (updated/age) when timestamps set", () => {
+	const now = Date.now();
+	const fiveMinAgo = new Date(now - 5 * 60_000).toISOString();
+	const text = formatAmbientStatus([makeRun({ createdAt: fiveMinAgo, updatedAt: new Date(now - 30_000).toISOString() })]);
+	// updated ~30s ago → "just now" OR "updated" phrasing
+	assert.match(text, /updated/i, "should mention update recency");
+});
+
+test("formatAmbientStatus: shows running age when only createdAt is set", () => {
+	const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+	const text = formatAmbientStatus([makeRun({ createdAt: tenMinAgo, updatedAt: undefined })]);
+	assert.match(text, /running 10m/i);
+});
+
 test("formatAmbientStatus: multiple runs use plural and list each", () => {
 	const text = formatAmbientStatus([
 		makeRun({ runId: "run_a", goal: "A" }),

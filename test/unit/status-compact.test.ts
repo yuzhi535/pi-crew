@@ -26,6 +26,23 @@ test("compact status shows identity, status, goal, and counts only", () => {
 	assert.match(text, /Tasks: completed=1, running=1/);
 });
 
+test("compact status includes a progress line when progress is provided", () => {
+	const out = buildCompactStatus(
+		baseManifest,
+		[{ id: "01", status: "running", role: "explorer", agent: "explorer" }],
+		new Map([["running", 1]]),
+		undefined,
+		{ overallPercentage: 50, estimatedRemainingMs: 120000 },
+	);
+	assert.ok(out.some((l) => /Progress: 50%/.test(l)));
+	assert.ok(out.some((l) => /2m remaining/.test(l)));
+});
+
+test("compact status omits progress line when progress not provided", () => {
+	const out = buildCompactStatus(baseManifest, [], new Map());
+	assert.ok(!out.some((l) => l.startsWith("Progress:")));
+});
+
 test("compact status does NOT include task graph, agents, effectiveness, events", () => {
 	const out = buildCompactStatus(baseManifest, [], new Map());
 	const text = out.join("\n");
