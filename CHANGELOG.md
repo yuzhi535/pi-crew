@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.8.1] — Subagent cold-start race fix (module-scoped import latch) (2026-06-16)
+
+Fixes a flaky, load-dependent crash that surfaced when launching multiple
+subagents **concurrently** via `Agent({ run_in_background: true })`.
+
+### Bug fixed
+
+When 2+ in-process live-session subagents spawned at once, some crashed at
+cold-start with:
+
+```
+Cannot read properties of undefined (reading 'existsSync')
+Cannot read properties of undefined (reading 'validateWorkflowForTeam')
+```
+
+These are property-access-on-`undefined` errors: a module namespace binding
+observed mid-evaluation as `undefined`. The defining reproduction: 4 explorer
+subagents launched together → 3 of 4 crashed; **all 3 succeeded on sequential
+retry** (same code, same args, same repos — only concurrency changed). That is
+the signature of a cold-start race, not a logic bug.
+
+### Root cause
+
+`direct-agent` subagents run **in-process** via `createAgentSession` (the
+live-session runtime), sharing one Node module graph. The spawn path called
+`await import("@earendil-works/pi-coding-agent")` **independently** per
+subagent. Under the **tsx loader** (which registers `load`/`resolve` hooks to
+transpile TS), concurrent first-imports can each enter the loader and race
+module-record instantiation — yielding a namespace binding seen mid-eval as
+`undefined`. Engine-level ESM memoization is not guaranteed to be observed
+synchronously across concurrent evaluation under transpiling loaders.
+
+### Fix
+
+Module-scoped memoization in `src/runtime/live-session-runtime.ts`: the FIRST
+caller sets `liveSessionModulePromise`; every later caller awaits the same
+in-flight promise. Guarantees a single module-record instantiation regardless
+of loader behavior. Concurrent callers then proceed in parallel as normal.
+
+```ts
+let liveSessionModulePromise: Promise<LiveSessionModule> | undefined;
+function loadLiveSessionModule(): Promise<LiveSessionModule> {
+	if (!liveSessionModulePromise) {
+		liveSessionModulePromise = import("@earendil-works/pi-coding-agent")
+			as unknown as Promise<LiveSessionModule>;
+	}
+	return liveSessionModulePromise;
+}
+```
+
+### Files
+- `src/runtime/live-session-runtime.ts` — module-scoped `loadLiveSessionModule()`
+  latch; use site now `await loadLiveSessionModule()` (was un-memoized
+  `await import(...)`).
+- NEW `test/unit/live-session-import-latch.test.ts` (2 tests): module loads
+  cleanly; latch variable + check-before-set + use site present, and the old
+  un-memoized pattern gone (regression guard).
+- NEW `.github/issues/2026-06-16-subagent-cold-start-race.md` — full root-cause
+  write-up + lessons.
+
+typecheck clean; full suite 0 failures (local EXIT=1 is the test-runner infra
+`spawnSync ETIMEDOUT` on a background-subagent test under local load — clean
+on CI).
+
 ## [0.8.0] — Tool-restriction unification across spawn paths (2026-06-16)
 
 Fixes a long-standing correctness gap where the same agent behaved

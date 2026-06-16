@@ -31,6 +31,30 @@ import { buildSensitivePathConstraint } from "./sensitive-paths.ts";
 import { collectLiveSessionHealth, formatLiveSessionDiagnostics, type LiveSessionHealth } from "./live-session-health.ts";
 import { listLiveAgents } from "./live-agent-manager.ts";
 
+/**
+ * Module-scoped latch for the optional peer dependency import. When N
+ * in-process live-session subagents spawn CONCURRENTLY (e.g. several
+ * `Agent({run_in_background:true})` started at once), each used to call
+ * `await import("@earendil-works/pi-coding-agent")` independently. Under the
+ * tsx loader (registering load/resolve hooks), concurrent first-imports can
+ * each enter the loader and race module-record instantiation, yielding
+ * `Cannot read properties of undefined (reading 'existsSync')` /
+ * `'validateWorkflowForTeam'` as namespace bindings observed mid-evaluation.
+ * Sequential retries always succeed → this is a cold-start race, not a logic
+ * bug. ESM engines memoize imports, but that memoization is not guaranteed
+ * to be observed synchronously across concurrent evaluation under transpiling
+ * loaders, so we add an explicit JS-level latch: the first caller wins, every
+ * later caller awaits the same in-flight promise. (Observed 2026-06-16 when 4
+ * explorer subagents launched together; 3 of 4 crashed.)
+ */
+let liveSessionModulePromise: Promise<LiveSessionModule> | undefined;
+function loadLiveSessionModule(): Promise<LiveSessionModule> {
+	if (!liveSessionModulePromise) {
+		liveSessionModulePromise = import("@earendil-works/pi-coding-agent") as unknown as Promise<LiveSessionModule>;
+	}
+	return liveSessionModulePromise;
+}
+
 export interface LiveSessionSpawnInput {
 	manifest: TeamRunManifest;
 	task: TeamTaskState;
@@ -397,8 +421,11 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 	}
 	const availability = await isLiveSessionRuntimeAvailable();
 	if (!availability.available) return { available: true, exitCode: 1, stdout: "", stderr: availability.reason ?? "Live-session runtime unavailable.", jsonEvents: 0, error: availability.reason };
-	// LAZY: optional peer dependency — only loaded when live-session runtime is chosen.
-	const mod = await import("@earendil-works/pi-coding-agent") as unknown as LiveSessionModule;
+	// LAZY: optional peer dependency — only loaded when live-session runtime is
+	// chosen. Goes through the module-scoped latch (loadLiveSessionModule) so
+	// concurrent first-imports share ONE in-flight promise instead of racing
+	// module-record instantiation under the tsx loader.
+	const mod = await loadLiveSessionModule();
 	if (typeof mod.createAgentSession !== "function") return { available: true, exitCode: 1, stdout: "", stderr: "createAgentSession export is unavailable.", jsonEvents: 0, error: "createAgentSession export is unavailable." };
 	let session: LiveSessionLike | undefined;
 	let unsubscribe: (() => void) | undefined;
