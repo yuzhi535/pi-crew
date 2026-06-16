@@ -1,9 +1,17 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import type { FSWatcher, WatchListener } from "node:fs";
 
-/** @internal */
-const FS_WATCH_RETRY_DELAY_MS = 5000;
+/**
+ * Filesystem watcher helpers (slimmed down — pts/2 hang fix 2026-06-16).
+ *
+ * The recursive-watcher helpers (createRecursiveWatcher / watchCrewState /
+ * runIdFromStateRelativePath) were REMOVED: a recursive fs.watch on the run
+ * state tree exploded to O(total run history) inotify watches on Linux and
+ * caused a permanent interactive-session busy-loop. The bounded
+ * {@link RunWatcherRegistry} (one non-recursive watcher per ACTIVE run) now
+ * replaces them. Only the two primitives below survive — they are still used by
+ * manifest-cache, result-watcher, and run-watcher-registry.
+ */
 
 export function closeWatcher(watcher: FSWatcher | null | undefined): void {
 	if (!watcher) {
@@ -31,60 +39,3 @@ export function watchWithErrorHandler(
 		return null;
 	}
 }
-
-/**
- * 1.3 — Watch a directory recursively and invoke `onChange` when any file
- * inside changes. Falls back to `null` on systems where `fs.watch` rejects
- * recursive mode (e.g., Linux when running on older kernels via FUSE/network FS).
- *
- * Callers MUST handle null and fall back to polling. The watcher emits the
- * filename relative to `rootDir` (forward-slash normalised on Windows).
- */
-export function createRecursiveWatcher(
-	rootDir: string,
-	onChange: (relativePath: string) => void,
-	onError: (error: unknown) => void,
-): FSWatcher | null {
-	try {
-		if (!fs.existsSync(rootDir)) fs.mkdirSync(rootDir, { recursive: true });
-		const watcher = fs.watch(rootDir, { recursive: true }, (_eventType, filename) => {
-			if (typeof filename !== "string" || filename.length === 0) return;
-			onChange(filename.replace(/\\/g, "/"));
-		});
-		watcher.on("error", (error) => {
-			try { watcher.close(); } catch { /* ignore */ }
-			onError(error);
-		});
-		return watcher;
-	} catch (error) {
-		onError(error);
-		return null;
-	}
-}
-
-/**
- * Given a path relative to `<crewRoot>/state`, return the runId that owns
- * the change, or undefined if the path doesn't match any tracked run layout.
- */
-export function runIdFromStateRelativePath(relativePath: string): string | undefined {
-	const parts = relativePath.split("/");
-	// Layout is `runs/{runId}/...` — see docs/architecture.md state layer.
-	if (parts.length >= 2 && parts[0] === "runs" && parts[1]) return parts[1];
-	return undefined;
-}
-
-/** Convenience: combine the two helpers for `<crewRoot>/state` watching. */
-export function watchCrewState(
-	stateDir: string,
-	onRunChange: (runId: string) => void,
-	onError: (error: unknown) => void,
-): FSWatcher | null {
-	return createRecursiveWatcher(stateDir, (relativePath) => {
-		const runId = runIdFromStateRelativePath(relativePath);
-		if (runId) onRunChange(runId);
-	}, onError);
-}
-
-// Re-export path helper so callers don't pull node:path just for join.
-/** @internal */
-const joinPath = path.join;

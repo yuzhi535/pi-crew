@@ -82,7 +82,8 @@ import {
 import { RenderScheduler } from "../ui/render-scheduler.ts";
 import { runEventBus } from "../ui/run-event-bus.ts";
 import { createRunSnapshotCache } from "../ui/run-snapshot-cache.ts";
-import { closeWatcher, watchCrewState } from "../utils/fs-watch.ts";
+import { closeWatcher } from "../utils/fs-watch.ts";
+import { RunWatcherRegistry } from "../utils/run-watcher-registry.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import {
 	clearProjectRootCache,
@@ -725,8 +726,13 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	// Linux), file changes (manifest/tasks/events/agents) trigger an
 	// immediate cache invalidate via renderScheduler.schedule. Falls back to
 	// poll-only behavior on systems where fs.watch errors.
-	let crewWatcher: import("node:fs").FSWatcher | undefined;
-	let userCrewWatcher: import("node:fs").FSWatcher | undefined;
+	// pts/2 hang fix (2026-06-16): the previous RECURSIVE fs.watch(<state>, {recursive:true})
+	// exploded to O(total run history) inotify watches on Linux (109→339 observed) and
+	// caused a permanent busy-loop. Replaced with bounded per-active-run watchers via
+	// RunWatcherRegistry (root watcher on runs/ for new-run detection + one non-recursive
+	// watcher per active run, reconciled each preload tick in buildFrame).
+	let crewRunWatchers: RunWatcherRegistry | undefined;
+	let userCrewWatchers: RunWatcherRegistry | undefined;
 	// Separate map for foreground team-run AbortControllers (distinct from subagent controllers).
 	// P0 fix: stopSessionBoundSubagents must NOT abort foreground team runs on session switch.
 	// Foreground team runs run in the same process as the session; they naturally clean up
@@ -1116,10 +1122,10 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			clearTimeout(preloadTimer);
 			preloadTimer = undefined;
 		}
-		closeWatcher(crewWatcher);
-		crewWatcher = undefined;
-		closeWatcher(userCrewWatcher);
-		userCrewWatcher = undefined;
+		crewRunWatchers?.closeAll();
+		crewRunWatchers = undefined;
+		userCrewWatchers?.closeAll();
+		userCrewWatchers = undefined;
 		stopSessionBoundSubagents();
 		// P0 fix: also abort foreground team runs on session shutdown (not on session switch).
 		// This is the only place where foreground team run controllers should be aborted.
@@ -1590,6 +1596,25 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 			lastFrameSnapshotCache = getRunSnapshotCache(currentCtx.cwd);
 			const manifests = lastFrameManifestCache.list(20);
 			lastPreloadedManifests = manifests;
+			// pts/2 hang fix: reconcile per-run watchers against the ACTIVE set only.
+			// This bounds inotify cost to O(active runs) — completed runs stop being
+			// watched as soon as they leave running/queued/planning status, instead of
+			// the recursive watcher watching the entire run history forever.
+			{
+				const onRunChange = (runId: string): void => {
+					if (cleanedUp || sessionGeneration !== ownerGeneration) return;
+					getRunSnapshotCache(currentCtx?.cwd ?? process.cwd()).invalidate(runId);
+					renderScheduler?.schedule({ runId });
+				};
+				const onWatchErr = (error: unknown): void => {
+					logInternalError("register.runWatcher.change", error);
+				};
+				const active = manifests
+					.filter((r) => r.status === "running" || r.status === "queued" || r.status === "planning")
+					.map((r) => ({ runId: r.runId, runDir: r.stateRoot }));
+				crewRunWatchers?.reconcile(active, onRunChange, onWatchErr);
+				userCrewWatchers?.reconcile(active, onRunChange, onWatchErr);
+			}
 			const runIds = manifests.map((r) => r.runId);
 			await lastFrameSnapshotCache.preloadAllStale(runIds);
 			return true;
@@ -1815,72 +1840,53 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		renderSchedulerUnsubscribers.push(unsubscribeRunEvents);
 		// Start async preload loop — refreshes snapshot cache in background
 		startPreloadLoop(fallbackMs, effectiveRefreshMs);
-		// 1.3: native FS watcher on `<crewRoot>/state`. Triggers an immediate
-		// renderScheduler.schedule({runId}) when files inside any run change so
-		// the snapshot cache invalidates well before the 1s preload tick. Falls
-		// back silently to poll-only behavior on systems where recursive
-		// fs.watch is not supported.
+		// 1.3: BOUNDED run watcher (pts/2 hang fix 2026-06-16). Previously this was
+		// a RECURSIVE fs.watch(<state>, {recursive:true}) which on Linux expands to
+		// ONE inotify watch PER SUBDIR — with many historical runs under
+		// .crew/state/runs/ this ballooned to hundreds of watches (109→339 observed)
+		// and the event volume caused a permanent busy-loop (71% CPU, 400KB/s read).
+		// Now: a single non-recursive watcher on the runs/ ROOT (to detect new run
+		// dirs appearing — crew.run.created is never emitted) plus per-active-run
+		// watchers reconciled each preload tick in buildFrame. Total inotify cost is
+		// O(active runs), not O(total history). Falls back to poll-only (the preload
+		// loop already polls every effectiveRefreshMs) on systems where fs.watch
+		// errors or the runs dir is absent.
+		const crewRunWatcherOnChange = (runId: string): void => {
+			if (cleanedUp || sessionGeneration !== ownerGeneration) return;
+			getRunSnapshotCache(currentCtx?.cwd ?? process.cwd()).invalidate(runId);
+			renderScheduler?.schedule({ runId });
+		};
+		const crewRunWatcherOnError = (error: unknown): void => {
+			logInternalError("register.crewRunWatchers.error", error);
+		};
 		try {
-			closeWatcher(crewWatcher);
-			crewWatcher = undefined;
-			const stateDir = path.join(projectCrewRoot(ctx.cwd), "state");
-			const watcher = watchCrewState(
-				stateDir,
-				(runId) => {
-					if (cleanedUp || sessionGeneration !== ownerGeneration)
-						return;
-					// Invalidate snapshot cache so the next renderTick reads fresh state from disk.
-					// Without this, renderTick re-renders from stale lastPreloadedManifests and
-					// shows ghost "running" entries for runs that already completed on disk.
-					const sc = getRunSnapshotCache(
-						currentCtx?.cwd ?? process.cwd(),
-					);
-					sc.invalidate(runId);
-					renderScheduler?.schedule({ runId });
-				},
-				(error) => {
-					logInternalError("register.crewWatcher.error", error);
-					closeWatcher(crewWatcher);
-					crewWatcher = undefined;
-				},
-			);
-			if (watcher) crewWatcher = watcher;
-		} catch (error) {
-			logInternalError("register.crewWatcher.start", error);
-		}
-		// Also watch user-level state dir — fast-fix and other user-scoped runs
-		// write manifests there. Without this watcher, runs completing in user-level
-		// state never trigger cache invalidation, causing ghost "running" entries.
-		try {
-			closeWatcher(userCrewWatcher);
-			userCrewWatcher = undefined;
-			const userStateDir = path.join(userCrewRoot(), "state");
-			if (fs.existsSync(userStateDir)) {
-				const userWatcher = watchCrewState(
-					userStateDir,
-					(runId) => {
-						if (cleanedUp || sessionGeneration !== ownerGeneration)
-							return;
-						const sc = getRunSnapshotCache(
-							currentCtx?.cwd ?? process.cwd(),
-						);
-						sc.invalidate(runId);
-						renderScheduler?.schedule({ runId });
-					},
-					(error) => {
-						logInternalError(
-							"register.userCrewWatcher.error",
-							error,
-						);
-						closeWatcher(userCrewWatcher);
-						userCrewWatcher = undefined;
-					},
-				);
-				if (userWatcher) userCrewWatcher = userWatcher;
+			crewRunWatchers?.closeAll();
+			crewRunWatchers = undefined;
+			const crewRunsDir = path.join(projectCrewRoot(ctx.cwd), "state", "runs");
+			if (fs.existsSync(crewRunsDir)) {
+				crewRunWatchers = new RunWatcherRegistry();
+				crewRunWatchers.setRootWatcher(crewRunsDir, crewRunWatcherOnChange, crewRunWatcherOnError);
 			}
 		} catch (error) {
-			logInternalError("register.userCrewWatcher.start", error);
+			logInternalError("register.crewRunWatchers.start", error);
 		}
+		// Also watch user-level runs dir — fast-fix and other user-scoped runs
+		// write manifests there. Without this, runs completing in user-level
+		// state never trigger cache invalidation, causing ghost "running" entries.
+		try {
+			userCrewWatchers?.closeAll();
+			userCrewWatchers = undefined;
+			const userRunsDir = path.join(userCrewRoot(), "state", "runs");
+			if (fs.existsSync(userRunsDir)) {
+				userCrewWatchers = new RunWatcherRegistry();
+				userCrewWatchers.setRootWatcher(userRunsDir, crewRunWatcherOnChange, crewRunWatcherOnError);
+			}
+		} catch (error) {
+			logInternalError("register.userCrewWatchers.start", error);
+		}
+		// Kick an immediate preload so the first buildFrame reconciles per-run
+		// watchers for any runs that are already active on session start.
+		backgroundPreload();
 	});
 	pi.on("session_before_switch", () => {
 		sessionGeneration++;
