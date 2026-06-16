@@ -10,6 +10,7 @@
 import { Container, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
 import { replaceTabs } from "./render-diff.ts";
+import { truncateToWidth } from "../utils/visual.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
 export interface Theme {
@@ -68,17 +69,12 @@ function formatContextUsage(tokens: number, contextWindow: number | undefined): 
 
 export function truncLine(text: string, maxWidth: number): string {
 	if (text.includes("\n") || text.includes("\r")) text = text.replace(/\r?\n/g, "↵ ");
-	if (visibleWidth(text) <= maxWidth) return text;
-	let result = "", width = 0;
-	for (let i = 0; i < text.length; i++) {
-		if (text[i] === "\x1b") {
-			const m = text.slice(i).match(/^\x1b\[[0-9;]*m/);
-			if (m) { result += m[0]; i += m[0].length - 1; continue; }
-		}
-		if (width >= maxWidth - 1) return result + "…";
-		result += text[i]; width++;
-	}
-	return result;
+	// Round 23 (BUG 4): previously this loop counted 1 visual column per UTF-16
+	// code unit and indexed text[i], so for CJK it emitted up to 2x the visual
+	// width (frame overflow) and for emoji it split surrogate pairs (U+FFFD).
+	// Delegate to the grapheme/ANSI-aware truncateToWidth (keeps ANSI codes,
+	// respects double-wide CJK + surrogate pairs, adds the '…' ellipsis).
+	return truncateToWidth(text, maxWidth);
 }
 
 export function formatToolPreview(name: string, args: Record<string, unknown>): string {

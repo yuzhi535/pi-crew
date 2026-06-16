@@ -12,6 +12,7 @@ import type { CrewTheme } from "../theme-adapter.ts";
 import { truncLine, formatTokens, formatDuration } from "../tool-render.ts";
 import type { CrewAgentRecord } from "../../runtime/crew-agent-runtime.ts";
 import { isBrief, briefToolResult } from "./brief-mode.ts";
+import { truncateToWidth } from "../../utils/visual.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -42,9 +43,11 @@ function padVisual(str: string, targetWidth: number): string {
 /** Truncate a string (which may contain ANSI codes) to a target VISUAL width. */
 function truncVisual(str: string, maxWidth: number): string {
 	if (visibleWidth(str) <= maxWidth) return str;
-	// Strip ANSI to truncate safely, then caller re-colors
-	const stripped = str.replace(/\x1b\[[0-9;]*m/g, "");
-	return stripped.slice(0, maxWidth);
+	// Round 23 (BUG 3): previously used String.slice(0, maxWidth) which counts
+	// UTF-16 code units — for CJK that overflows the card by up to 2x, and for
+	// emoji it splits a surrogate pair (U+FFFD). Use the grapheme/ANSI-aware
+	// truncateToWidth with empty ellipsis (the caller appends its own '…').
+	return truncateToWidth(str, maxWidth, "");
 }
 
 // ── Visual primitives ──────────────────────────────────────────────────

@@ -14,6 +14,7 @@
  *   30-35% — word-level emphasis (prominent)
  */
 import type { CrewTheme } from "./theme-adapter.ts";
+import { visibleWidth as visualWidth } from "../utils/visual.ts";
 
 // ── ANSI parsing ────────────────────────────────────────────────────────
 
@@ -96,12 +97,15 @@ export function deriveCardBackground(
 
 // ── Helpers for padding lines with a background ─────────────────────────
 
-const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;
 const RESET = "\x1b[0m";
 
-/** Strip ANSI SGR codes to get visible character count. */
+/** Strip ANSI SGR codes then compute the VISUAL width (Unicode-aware).
+ * Round 23 (BUG 2): previously this used `.length` (UTF-16 code units), which
+ * under-counts CJK/emoji → wrong padding → broken frame borders in crew cards.
+ * Delegate to the canonical Unicode-aware visualWidth from utils/visual.ts
+ * used by every other renderer. */
 export function visibleWidth(text: string): number {
-	return text.replace(ANSI_SGR_RE, "").length;
+	return visualWidth(text);
 }
 
 /**

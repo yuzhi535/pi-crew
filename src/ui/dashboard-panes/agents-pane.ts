@@ -5,6 +5,7 @@ import { spinnerFrame } from "../spinner.ts";
 import type { CrewAgentRecord } from "../../runtime/crew-agent-runtime.ts";
 import { formatCost } from "../../state/usage.ts";
 import { listLiveAgents, listLiveAgentsByWorkspace, type LiveAgentHandle } from "../../runtime/live-agent-manager.ts";
+import { computeLiveDurationMs } from "../live-duration.ts";
 
 /**
  * Returns true if this agent did real work (LLM call, tool use, or non-trivial duration).
@@ -96,7 +97,13 @@ export function renderAgentsPane(snapshot: RunUiSnapshot | undefined, options: R
 			stats.push(formatCost(agent.usage.cost));
 		}
 		if (liveHandle) {
-			const ms = (liveHandle.activity.completedAtMs ?? Date.now()) - liveHandle.activity.startedAtMs;
+			// Round 23 (BUG 1): the duration math here was naive —
+			//   (completedAtMs ?? Date.now()) - startedAtMs
+			// which produced a giant NEGATIVE duration whenever startedAtMs was
+			// 0/undefined/bad, or a race set completedAtMs < startedAtMs. This
+			// fired for EVERY running live agent in the dashboard. Use the shared,
+			// validated computeLiveDurationMs (mirrors widget-formatters.ts).
+			const ms = computeLiveDurationMs(liveHandle.activity);
 			stats.push(`${(ms / 1000).toFixed(1)}s`);
 			if (options.showModel !== false && liveHandle.modelName && liveHandle.modelName !== "default") {
 				stats.push(liveHandle.modelName);

@@ -7,6 +7,7 @@
 import type { CrewAgentRecord } from "../../runtime/crew-agent-runtime.ts";
 import type { LiveAgentHandle } from "../../runtime/live-agent-manager.ts";
 import { getTaskUsage } from "../../runtime/usage-tracker.ts";
+import { computeLiveDurationMs } from "../live-duration.ts";
 
 // ── Token formatting ──────────────────────────────────────────────────
 
@@ -115,19 +116,7 @@ export function agentStats(agent: CrewAgentRecord, liveHandle?: LiveAgentHandle)
 			const ctxPct = stats?.contextUsage?.percent;
 			if (ctxPct != null) parts.push(`${Math.round(ctxPct)}% ctx`);
 		} catch { /* ignore */ }
-		const rawStarted = act.startedAtMs || 0;
-		const rawCompleted = act.completedAtMs || 0;
-		const nowMs = Date.now();
-		const toMs = (v: number): number => {
-			if (v <= 0) return 0;
-			if (v > 1000000000 && v < 10000000000) return v * 1000;
-			if (v > 100000000000 && v < 10000000000000) return v;
-			return v;
-		};
-		const startedMs = toMs(rawStarted);
-		const completedMs = rawCompleted > 0 ? toMs(rawCompleted) : 0;
-		const isValidStarted = startedMs > 0 && startedMs < nowMs + 60000 && startedMs > nowMs - 3155692600000;
-		const ms = (completedMs > 0 && completedMs < nowMs + 60000 ? completedMs : nowMs) - (isValidStarted ? startedMs : nowMs);
+		const ms = computeLiveDurationMs(act);
 		parts.push(`${(ms / 1000).toFixed(1)}s`);
 	} else {
 		if (agent.toolUses) parts.push(`${agent.toolUses} tools`);
