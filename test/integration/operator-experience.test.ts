@@ -82,12 +82,16 @@ test("operator notification sink rotates retained JSONL files", () => {
 test("operator diagnostic export writes redacted health report", async () => {
 	const fixture = createFixture();
 	try {
-		saveRunTasks(fixture.manifest, [{ id: "one", runId: fixture.runId, role: "worker", agent: "worker", title: "one", status: "running", dependsOn: [], cwd: fixture.cwd, error: "apiToken=abc", heartbeat: { workerId: "one", lastSeenAt: fixture.manifest.createdAt, alive: true } }]);
+		saveRunTasks(fixture.manifest, [{ id: "one", runId: fixture.runId, role: "worker", agent: "worker", title: "one", status: "running", dependsOn: [], cwd: fixture.cwd, error: "apiToken=ZZ_LEAK_CANARY", heartbeat: { workerId: "one", lastSeenAt: fixture.manifest.createdAt, alive: true } }]);
 		const exported = await dispatchDiagnosticExport(fixture.ctx, fixture.runId);
 		assert.equal(exported.ok, true);
 		const text = fs.readFileSync(String(exported.data), "utf-8");
 		assert.match(text, /"heartbeat"/);
-		assert.doesNotMatch(text, /abc/);
+		// Use a marker with uppercase letters so it can NEVER collide with the
+		// lowercase-hex runId hash (randomBytes(8).toString('hex'), chars [0-9a-f]).
+		// A bare 'abc' marker previously produced a false failure whenever the runId
+		// hash happened to spell '...abc...' (e.g. team_..._9791deabc2f52485).
+		assert.doesNotMatch(text, /ZZ_LEAK_CANARY/);
 	} finally {
 		fs.rmSync(fixture.cwd, { recursive: true, force: true });
 	}
