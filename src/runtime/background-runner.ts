@@ -525,7 +525,13 @@ async function main(): Promise<void> {
 		const agents = allAgents(discoverAgents(cwd));
 		debugLog(`[background-runner] discoverAgents done, ${agents.length} agents`,
 		);
-		try { fs.fsyncSync(fs.openSync(manifest.eventsPath, "a")); } catch { /* best-effort */ } // FORCE flush so we see this before death
+		// Round 27 (BUG 2): openSync returned an fd that was never closed → FD
+		// leak per background runner startup. Close it in a finally (matches the
+		// canonical pattern in checkpoint.ts:83 and event-log.ts:582).
+		try {
+			const fd = fs.openSync(manifest.eventsPath, "a");
+			try { fs.fsyncSync(fd); } finally { try { fs.closeSync(fd); } catch { /* best-effort */ } }
+		} catch { /* best-effort */ } // FORCE flush so we see this before death
 		debugLog(`[background-runner] calling directTeamAndWorkflowFromRun`,
 		);
 		const direct = directTeamAndWorkflowFromRun(manifest, tasks, agents);

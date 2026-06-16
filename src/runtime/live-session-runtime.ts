@@ -384,6 +384,12 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 
 	const agentId = `${input.manifest.runId}:${input.task.id}`;
 
+	// Round 27 (BUG 4): hoisted to function scope so the finally block can remove
+	// it. const inside try{} is block-scoped and invisible to finally{}. The
+	// handler resolves `session` lazily at call time (it may be assigned later
+	// inside the try), so declaring it here is safe.
+	let onSignalAbort: (() => void) | undefined;
+
 	try {
 		const agentDir = typeof mod.getAgentDir === "function" ? mod.getAgentDir() : undefined;
 		let resourceLoader: unknown;
@@ -545,9 +551,14 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 				}
 			});
 		}
+		// Round 27 (BUG 4): named abort handler (removed in finally below).
+		onSignalAbort = (): void => { void session?.abort?.(); };
 		if (input.signal) {
 			if (input.signal.aborted) await session.abort?.();
-			else input.signal.addEventListener("abort", () => { void session?.abort?.(); }, { once: true });
+			// Round 27 (BUG 4): named handler so the finally block can remove it.
+			// The previous anonymous listener leaked on normal completion (only
+			// auto-removed by { once: true } AFTER the signal fires).
+			else input.signal.addEventListener("abort", onSignalAbort, { once: true });
 		}
 		const effectivePrompt = input.runtimeConfig?.inheritContext === true && input.parentContext ? `${input.parentContext}\n\n---\n# Live Subagent Task\n${input.prompt}` : input.prompt;
 
@@ -687,6 +698,9 @@ export async function runLiveSessionTask(input: LiveSessionSpawnInput): Promise<
 		// H6: Unsubscribe listeners FIRST before clearing timer to prevent race
 		unsubscribe?.();
 		unsubscribeControlRealtime?.();
+		// Round 27 (BUG 4): remove the named abort listener to avoid leaking it
+		// on the shared AbortSignal across many live-session tasks.
+		if (onSignalAbort) input.signal?.removeEventListener("abort", onSignalAbort);
 		if (controlTimer) clearInterval(controlTimer);
 		streamOut?.close();
 		if (input.signal?.aborted) {

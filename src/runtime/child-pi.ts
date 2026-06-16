@@ -628,7 +628,14 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			let graceTurns = input.graceTurns;
 			if (graceTurns !== undefined && graceTurns > 1000) graceTurns = 1000;
 			let abortDueToParentSignal = false;
-			input.signal?.addEventListener("abort", () => { abortDueToParentSignal = true; }, { once: true });
+			// Round 27 (BUG 4): extract to a named handler so settle() can remove it.
+			// The previous anonymous listener was never removed → on runs with >10
+			// tasks sharing one AbortSignal (background-runner), Node emitted
+			// MaxListenersExceededWarning and each leaked listener pinned the task's
+			// stack frame (abortDueToParentSignal closure) in memory. { once: true }
+			// only auto-removes AFTER the signal fires; on normal completion it leaks.
+			const onParentAbort = (): void => { abortDueToParentSignal = true; };
+			input.signal?.addEventListener("abort", onParentAbort, { once: true });
 			const restartNoResponseTimer = (): void => {
 				if (responseTimeoutMs <= 0) return;
 				if (noResponseTimer) clearTimeout(noResponseTimer);
@@ -747,6 +754,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				clearChildPiTimeouts();
 				lineObserver.flush();
 				input.signal?.removeEventListener("abort", abort);
+				input.signal?.removeEventListener("abort", onParentAbort);
 				try {
 					cleanupTempDir(built.tempDir);
 				} catch (error) {

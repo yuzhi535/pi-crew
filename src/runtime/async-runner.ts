@@ -231,6 +231,13 @@ export async function spawnBackgroundTeamRun(manifest: TeamRunManifest): Promise
 		windowsHide: true,
 	} as unknown as Parameters<typeof spawn>[2];
 	const child = spawn(process.execPath, command.args, spawnOpts);
+	// Round 27 (BUG 3): the piped stdout/stderr are NEVER read or destroyed →
+	// 2 FDs leak per background spawn, and if the child writes >64KB (pipe
+	// buffer) it blocks forever (nobody drains the pipe) → background runner
+	// hangs. The background runner redirects its own console to a file, so we
+	// don't need this output — destroy the read ends immediately.
+	child.stdout?.destroy();
+	child.stderr?.destroy();
 	child.on("error", (error: Error) => {
 		logInternalError("async-runner.spawn", error, `pid=${child.pid ?? "unknown"}`);
 	});

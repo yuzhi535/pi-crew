@@ -455,6 +455,15 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 
 		return result;
 	} catch (error) {
+		// Round 27 (BUG 1): the success path calls stopTeamHeartbeat() but this
+			// catch path did NOT. The team heartbeat is a non-unref'd setInterval
+			// (30s) that deliberately keeps the event loop alive — without this
+			// call, a failed team run leaves the interval firing forever and the
+			// foreground pi process hangs (never returns to the prompt); in
+			// background-runner mode the worker never exits. clearInterval is
+			// idempotent so a double-call (if this runs after the success path)
+			// is harmless.
+		stopTeamHeartbeat();
 		// P1: Catch unhandled errors — ensure manifest/tasks/agents are terminal so they don't stay "running" forever.
 		const message = error instanceof Error ? error.message : String(error);
 		// Reload manifest with lock to avoid stale data overwriting concurrent writes.
