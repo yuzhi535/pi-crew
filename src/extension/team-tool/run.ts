@@ -29,6 +29,31 @@ import { appendEventAsync, readEvents } from "../../state/event-log.ts";
 import { resolveCrewRuntime, runtimeResolutionState } from "../../runtime/runtime-resolver.ts";
 import { normalizeSkillOverride } from "../../runtime/skill-instructions.ts";
 import { expandParallelResearchWorkflow } from "../../runtime/parallel-research.ts";
+
+/**
+ * Module-scoped latch for the crew-init dynamic import.
+ *
+ * `crew-init.ts` is dynamically `await import()`'d from `handleRun` below, which
+ * N concurrent subagents hit simultaneously (every `team` tool call runs it).
+ * Under the tsx/jiti loader, concurrent first-imports race module-record
+ * instantiation → top-level `const` initializers (e.g. CREW_README) hit TDZ
+ * (`Cannot access 'CREW_README' before initialization`) and namespace bindings
+ * arrive as `undefined` (`reading 'existsSync'`). crew-init.ts's own header
+ * documents this for the `path` binding; the race persists for other top-level
+ * consts because module-body evaluation itself races.
+ *
+ * The latch makes concurrent callers share ONE in-flight import promise, so the
+ * module body evaluates exactly once regardless of fanout. Same pattern as
+ * runtime-warmup.ts / the v0.8.1 peer-dep latch, applied to this specific
+ * dynamic-import race site.
+ */
+let crewInitPromise: Promise<typeof import("../../state/crew-init.ts")> | undefined;
+function loadCrewInit(): Promise<typeof import("../../state/crew-init.ts")> {
+	if (!crewInitPromise) {
+		crewInitPromise = import("../../state/crew-init.ts");
+	}
+	return crewInitPromise;
+}
 import { checkProcessLiveness, isActiveRunStatus } from "../../runtime/process-status.ts";
 import { waitForRun } from "../../runtime/run-tracker.ts";
 import { hasAsyncStartMarker } from "../../runtime/async-marker.ts";
@@ -81,9 +106,11 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	const intentPrefix = goal.length > 60 ? `${goal.slice(0, 57)}...` : goal;
 
 	// P0: Ensure .crew directory structure exists before creating any manifests.
-	// Dynamic import to avoid module binding issues in child-process contexts.
+	// Latched dynamic import (loadCrewInit) — concurrent `team` tool calls from
+	// N subagents share ONE in-flight promise so crew-init.ts's module body
+	// evaluates exactly once (avoids the cold-start race on CREW_README / path / fs).
 	const workingDir = ctx.cwd ?? process.cwd();
-	const { ensureCrewDirectory } = await import("../../state/crew-init.ts");
+	const { ensureCrewDirectory } = await loadCrewInit();
 	await ensureCrewDirectory(workingDir);
 
 	// WORKTREE FIX: If worktree mode is needed but cwd is not a git repo,

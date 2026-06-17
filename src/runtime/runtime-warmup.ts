@@ -54,6 +54,7 @@ const HOT_MODULE_SPECIFIERS = [
 	"./task-runner.ts",
 	"../extension/team-tool.ts",
 	"../extension/validate-resources.ts",
+	"../state/crew-init.ts", // TDZ-prone top-level consts (CREW_README); dynamically imported by team-tool/run.ts
 ] as const;
 
 /** Additional bare-specifier peer deps to warm. */
