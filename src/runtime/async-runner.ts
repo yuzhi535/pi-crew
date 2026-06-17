@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { logInternalError } from "../utils/internal-error.ts";
 import { appendEvent } from "../state/event-log.ts";
 import { sanitizeEnvSecrets } from "../utils/env-filter.ts";
+import { resolvePeerDepDir, PEER_DEP_DIR_ENV } from "./peer-dep.ts";
 import {
 	registerWorker,
 	unregisterWorker,
@@ -202,6 +203,15 @@ export async function spawnBackgroundTeamRun(manifest: TeamRunManifest): Promise
 	// FIX: removed delete workarounds — with explicit allowlist, these vars
 	// are no longer auto-leaked. Matches child-pi.ts.
 
+	// FIX (split-scope install): pass the resolved peer-dep dir to the child so
+	// it can resolve @earendil-works/pi-coding-agent WITHOUT the ~200ms
+	// `npm root -g` probe. No-op when pi-crew and pi are co-located. See
+	// src/runtime/peer-dep.ts.
+	const peerDepDir = resolvePeerDepDir();
+	const childEnv = peerDepDir
+		? { ...filteredEnv, [PEER_DEP_DIR_ENV]: peerDepDir }
+		: filteredEnv;
+
 	const loader = resolveTypeScriptLoader();
 	if (!loader) {
 		const message = buildLoaderUnavailableMessage(packageRootFromRuntime());
@@ -227,7 +237,7 @@ export async function spawnBackgroundTeamRun(manifest: TeamRunManifest): Promise
 		detached: true,
 		setsid: true,
 		stdio: ["ignore", "pipe", "pipe"],
-		env: filteredEnv,
+		env: childEnv,
 		windowsHide: true,
 	} as unknown as Parameters<typeof spawn>[2];
 	const child = spawn(process.execPath, command.args, spawnOpts);

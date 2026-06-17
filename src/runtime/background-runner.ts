@@ -19,6 +19,7 @@ import {
 } from "../workflows/discover-workflows.ts";
 // Heavy runtime — lazy-loaded to avoid pulling team-runner into background-runner
 // at module load time. Only needed when a background run actually starts.
+import { primePeerDep } from "./peer-dep.ts";
 import type { executeTeamRun as ExecuteTeamRunFn } from "./team-runner.ts";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
 
@@ -27,6 +28,10 @@ async function executeTeamRun(
 	...args: Parameters<typeof ExecuteTeamRunFn>
 ): Promise<Awaited<ReturnType<typeof ExecuteTeamRunFn>>> {
 	if (!_cachedExecuteTeamRun) {
+		// FIX (split-scope install): prime the ESM peer dep BEFORE team-runner is
+		// imported, so its transitive skill-instructions.ts can read getAgentDir()
+		// from the primed cache instead of crashing on `Cannot find module`.
+		await primePeerDep().catch(() => {});
 		// LAZY: avoid pulling team-runner into background-runner at module load time.
 		const mod = await import("./team-runner.ts");
 		_cachedExecuteTeamRun = mod.executeTeamRun;

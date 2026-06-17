@@ -22,7 +22,11 @@ const PACKAGE_SKILLS_DIR = path.resolve(
 	"skills",
 );
 import * as os from "node:os";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+// peer-dep.ts resolves @earendil-works/pi-coding-agent robustly across install
+// layouts (extension-under-~/.pi + pi-under-global). A static `import { getAgentDir }`
+// here crashes detached child processes when pi-crew and pi live in separate
+// node_modules trees. See src/runtime/peer-dep.ts.
+import { getAgentDir } from "../runtime/peer-dep.ts";
 const MAX_SKILL_CHARS = 1500;
 const MAX_TOTAL_CHARS = 6000;
 const MAX_SKILL_NAME_CHARS = 80;

@@ -2,7 +2,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+// peer-dep.ts resolves @earendil-works/pi-coding-agent robustly across install
+// layouts. See src/runtime/peer-dep.ts (split-scope install fix).
+import { getAgentDir } from "../runtime/peer-dep.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import { isSafePathId, resolveContainedPath, resolveRealContainedPath } from "../utils/safe-paths.ts";
 

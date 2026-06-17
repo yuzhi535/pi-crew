@@ -84,6 +84,7 @@ import { runEventBus } from "../ui/run-event-bus.ts";
 import { createTerminalStatusController, type TerminalStatusController } from "../ui/terminal-status.ts";
 import { extractPathFromInput, validateWrittenFile, buildValidationBlocker } from "../runtime/per-write-validator.ts";
 import { startRuntimeWarmup } from "../runtime/runtime-warmup.ts";
+import { primePeerDep } from "../runtime/peer-dep.ts";
 import { createRunSnapshotCache } from "../ui/run-snapshot-cache.ts";
 import { closeWatcher } from "../utils/fs-watch.ts";
 import { RunWatcherRegistry } from "../utils/run-watcher-registry.ts";
@@ -207,6 +208,11 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 	// Warming the graph here + awaiting it at spawn boundaries eliminates the
 	// race window. See src/runtime/runtime-warmup.ts.
 	startRuntimeWarmup();
+	// FIX (split-scope install): preload the ESM peer dep so discover-skills /
+	// skill-instructions can read the REAL getAgentDir (fork-aware) from cache.
+	// Fire-and-forget: getAgentDir() falls back to a safe computed default until
+	// this resolves. See src/runtime/peer-dep.ts.
+	primePeerDep().catch(() => {});
 	// Deploy bundled themes (crew-dark, crew-dracula, etc.) to ~/.pi/agent/themes/
 	// so Pi's theme loader discovers them. Best-effort, idempotent.
 	deployBundledThemes();
