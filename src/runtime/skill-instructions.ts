@@ -333,6 +333,13 @@ export function renderSkillInstructions(
 				? `Description: ${description}${confidenceNote}`
 				: undefined,
 			`Source: ${source}`,
+			// Path: pointer to the skill directory so the agent can deterministically
+			// `ls <Path>/references/` and `read` a co-located reference corpus.
+			// Without this, skills that defer to a local corpus (the Agent Skills
+			// spec "small instruction + large local reference" pattern, e.g.
+			// effective-html's `references/html-effectiveness/`) leave the agent
+			// guessing the skill dir. No behavior change for corpus-less skills.
+			`Path: ${path.dirname(loaded.path)}`,
 		]
 			.filter(Boolean)
 			.join("\n");

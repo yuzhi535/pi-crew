@@ -91,7 +91,12 @@ test("renderSkillInstructions loads selected SKILL.md content for worker prompts
 	assert.match(rendered.block, /evidence before claims/);
 	assert.match(rendered.block, /Source: (project|package):skills\/verification-before-done/);
 	assert.ok(rendered.paths.some((entry) => entry.endsWith(path.join("skills", "verification-before-done"))));
-	assert.doesNotMatch(rendered.block, new RegExp(process.cwd().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	// Path: pointer (effective-html F6 audit): the skill DIRECTORY must be
+	// exposed so the agent can deterministically `ls <Path>/references/` and
+	// `read` a co-located reference corpus (the Agent Skills spec "small
+	// instruction + large local reference" pattern). The directory is a
+	// bounded, intentional pointer — not a free-form cwd leak.
+	assert.match(rendered.block, /Path: .+skills[\\/]verification-before-done/);
 });
 
 
@@ -209,5 +214,22 @@ test("distilled awesome-agent-skills are available to default roles", () => {
 	const rendered = renderSkillInstructions({ cwd: process.cwd(), role: "security-reviewer" });
 	assert.match(rendered.block, /secure-agent-orchestration-review/);
 	assert.match(rendered.block, /prompt injection/);
-	assert.doesNotMatch(rendered.block, new RegExp(process.cwd().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	// Path: pointer is intentional (effective-html F6 audit) — skill dir exposed
+	// for corpus access. See the "loads selected SKILL.md content" test.
+	assert.match(rendered.block, /Path: .+skills[\\/]secure-agent-orchestration-review/);
+});
+
+test("renderSkillInstructions exposes skill directory via Path: pointer (effective-html F6 audit)", () => {
+	// Issue: skills following the Agent Skills spec "small instruction + large
+	// local reference corpus" pattern (e.g. effective-html's references/) tell
+	// the agent to "review the files throughout references/..." but previously
+	// gave no absolute path — the agent had to GUESS the skill dir. The Path:
+	// line makes corpus access deterministic. See
+	// research-findings/effective-html-f6-compat-audit.md §4b.
+	const rendered = renderSkillInstructions({ cwd: process.cwd(), role: "verifier", override: ["verification-before-done"] });
+	const line = rendered.block.split("\n").find((l) => l.startsWith("Path: "));
+	assert.ok(line, "expected a 'Path: ' header line for the skill");
+	assert.match(line!, /skills[\\/]verification-before-done$/);
+	// Path: must be the skill DIRECTORY (dirname of SKILL.md), not the file.
+	assert.ok(!line!.endsWith("SKILL.md"));
 });

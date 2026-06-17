@@ -83,6 +83,7 @@ import {
 	progressEventSummary,
 	shouldFlushProgressEvent,
 } from "./task-runner/progress.ts";
+import { extractCommandTrace } from "./command-trace.ts";
 import {
 	checkpointTask,
 	persistSingleTaskUpdate,
@@ -1206,12 +1207,16 @@ export async function runTeamTask(
 
 		// Emit task completion hooks (100% reliable, fire-and-forget)
 		const hookType = task.status === "completed" ? "task_completed" : task.status === "failed" ? "task_failed" : "task_started";
+		// T10: attach the VERBATIM command trace (mechanically derived from
+		// recorded tool-call history, never from the worker's self-report) so
+		// event viewers + the orchestrator see exactly which commands ran.
+		const commandTrace = extractCommandTrace(task.agentProgress?.recentTools);
 		crewHooks.emit({
 			type: hookType,
 			timestamp: task.finishedAt ?? new Date().toISOString(),
 			runId: manifest.runId,
 			taskId: task.id,
-			data: { status: task.status, role: task.role, error: task.error, exitCode: task.exitCode, usage: task.usage },
+			data: { status: task.status, role: task.role, error: task.error, exitCode: task.exitCode, usage: task.usage, commandTrace },
 		});
 
 		const packetArtifact = writeArtifact(manifest.artifactsRoot, {
