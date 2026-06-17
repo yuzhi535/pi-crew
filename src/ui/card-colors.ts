@@ -15,6 +15,7 @@
  */
 import type { CrewTheme } from "./theme-adapter.ts";
 import { visibleWidth as visualWidth } from "../utils/visual.ts";
+import { preserveBoxBackground } from "./ansi-box.ts";
 
 // ── ANSI parsing ────────────────────────────────────────────────────────
 
@@ -123,8 +124,13 @@ export function padWithBackground(line: string, targetWidth: number, bgAnsi: str
 		const width = visibleWidth(line);
 		return width >= targetWidth ? line : line + " ".repeat(targetWidth - width);
 	}
-	const width = visibleWidth(line);
+	// pi-pretty preserveBoxBackground (render.ts:104-130): neutralize embedded
+	// full-resets into RESET_WITHOUT_BG (so the card bg survives the reset) and
+	// strip any competing bg codes. Without this, syntax-highlighted content
+	// (many embedded \x1b[0m resets) punches holes through the card bg fill.
+	const safe = preserveBoxBackground(line);
+	const width = visibleWidth(safe);
 	const pad = width >= targetWidth ? "" : " ".repeat(targetWidth - width);
 	// Re-apply bg after a leading reset if present, otherwise prepend.
-	return `${bgAnsi}${line}${pad}${RESET}`;
+	return `${bgAnsi}${safe}${pad}${RESET}`;
 }
