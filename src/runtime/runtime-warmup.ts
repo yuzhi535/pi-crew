@@ -53,7 +53,10 @@ const HOT_MODULE_SPECIFIERS = [
 	"./live-session-runtime.ts",
 	"./task-runner.ts",
 	"../extension/team-tool.ts",
+	"../extension/team-tool/run.ts", // handleRun path — latched in team-tool.ts but its static graph (config-patch, validate-workflow) still cold-start-races under concurrent fanout
+	"../extension/team-tool/config-patch.ts", // effectiveRunConfig (crash variant observed in repro)
 	"../extension/validate-resources.ts",
+	"../workflows/validate-workflow.ts", // validateWorkflowForTeam (crash variant observed across sessions)
 	"../state/crew-init.ts", // TDZ-prone top-level consts (CREW_README); dynamically imported by team-tool/run.ts
 ] as const;
 
