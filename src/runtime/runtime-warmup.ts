@@ -61,6 +61,9 @@ const HOT_PEER_DEPS = ["@earendil-works/pi-coding-agent"] as const;
 
 let warmupPromise: Promise<void> | undefined;
 let warmupStarted = false;
+let warmupCompleted = false;
+let warmupDurationMs: number | undefined;
+let warmupError: string | undefined;
 
 /**
  * Start the runtime warmup (idempotent). Fires eager `import()` of the hot
@@ -74,6 +77,7 @@ let warmupStarted = false;
 export function startRuntimeWarmup(): void {
 	if (warmupStarted) return;
 	warmupStarted = true;
+	const startedAt = Date.now();
 	warmupPromise = (async (): Promise<void> => {
 		const imports: Array<Promise<unknown>> = [];
 		for (const spec of HOT_MODULE_SPECIFIERS) {
@@ -91,9 +95,15 @@ export function startRuntimeWarmup(): void {
 			);
 		}
 		await Promise.all(imports);
-	})().catch(() => {
-		// final safety net — warmup must never reject
-	});
+	})()
+		.then(() => {
+			warmupCompleted = true;
+			warmupDurationMs = Date.now() - startedAt;
+		})
+		.catch((err: unknown) => {
+			// final safety net — warmup must never reject. Record for diagnostics.
+			warmupError = err instanceof Error ? err.message : String(err ?? "unknown");
+		});
 }
 
 /**
@@ -113,9 +123,34 @@ export async function awaitRuntimeWarmup(): Promise<void> {
 export function resetRuntimeWarmupForTest(): void {
 	warmupPromise = undefined;
 	warmupStarted = false;
+	warmupCompleted = false;
+	warmupDurationMs = undefined;
+	warmupError = undefined;
 }
 
 /** Test seam: has startRuntimeWarmup() been called? */
 export function isRuntimeWarmupStarted(): boolean {
 	return warmupStarted;
+}
+
+/**
+ * Diagnostic snapshot of warmup state for `team doctor`. Surfaces whether the
+ * v0.8.6 cold-start fix is active and how long the graph warmup took, so a
+ * session can confirm the fix loaded (post-restart) and isn't pathologically
+ * slow.
+ */
+export interface RuntimeWarmupStatus {
+	started: boolean;
+	completed: boolean;
+	durationMs: number | undefined;
+	error: string | undefined;
+}
+
+export function getRuntimeWarmupStatus(): RuntimeWarmupStatus {
+	return {
+		started: warmupStarted,
+		completed: warmupCompleted,
+		durationMs: warmupDurationMs,
+		error: warmupError,
+	};
 }

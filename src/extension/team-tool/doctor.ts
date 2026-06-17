@@ -9,6 +9,7 @@ import { projectCrewRoot, userCrewRoot } from "../../utils/paths.ts";
 import { DEFAULT_PATHS } from "../../config/defaults.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 import { getPiSpawnCommand } from "../../runtime/pi-spawn.ts";
+import { getRuntimeWarmupStatus } from "../../runtime/runtime-warmup.ts";
 import { validateResources } from "../validate-resources.ts";
 import { detectDrift, formatDriftReport, type DriftReport } from "../../config/drift-detector.ts";
 import { TeamToolParams } from "../../schema/team-tool-schema.ts";
@@ -188,6 +189,37 @@ export function buildTeamDoctorReport(input: TeamDoctorReportInput): TeamDoctorR
 			{ label: "leader repository", ok: true, detail: input.cwd },
 			{ label: "cleanup policy", ok: true, detail: "dirty worktrees preserved unless force is set" },
 		]),
+		section("Runtime warmup (cold-start fix v0.8.6)", () => {
+			// Surface whether the general cold-start-race fix is active + how long
+			// the graph warmup took, so a session can confirm the fix loaded
+			// (post-restart) and isn't pathologically slow. An UNWARMED graph is
+			// the documented cause of `Cannot read properties of undefined
+			// (reading '<binding>')` under concurrent subagent spawn.
+			//
+			// "Not started" is NOT a doctor error: it is the normal state in unit
+			// tests and in any caller that invokes buildTeamDoctorReport directly
+			// without going through registerPiTeams. Only a STARTED-but-FAILED
+			// warmup is an error (something genuinely went wrong during pre-warm).
+			const status = getRuntimeWarmupStatus();
+			const checks: DoctorCheck[] = [
+				{
+					label: "warmup started",
+					ok: true, // informational — "not started" is not a failure
+					detail: status.started ? "module graph pre-warmed at registration" : "not started in this process (normal for direct unit-test calls; in a live Pi session, started at extension load)",
+				},
+			];
+			if (status.started) {
+				checks.push({
+					label: "warmup completed",
+					ok: status.completed,
+					detail: status.completed ? (status.durationMs !== undefined ? `graph warm in ${status.durationMs}ms` : "completed") : "in progress",
+				});
+				if (status.error) {
+					checks.push({ label: "warmup error", ok: false, detail: status.error });
+				}
+			}
+			return checks;
+		}),
 	];
 	if (input.smokeChildPi) {
 		sections.push([`Child check`, `- ${input.smokeChildPi.ok ? "OK" : "FAIL"} child Pi smoke: ${input.smokeChildPi.detail}`]);

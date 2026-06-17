@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
 import {
 	awaitRuntimeWarmup,
+	getRuntimeWarmupStatus,
 	isRuntimeWarmupStarted,
 	resetRuntimeWarmupForTest,
 	startRuntimeWarmup,
@@ -93,6 +94,39 @@ describe("runtime-warmup: actually warms the graph (integration)", () => {
 		const mod1 = await import(url);
 		const mod2 = await import(url);
 		assert.strictEqual(mod1, mod2, "module should be cached (same namespace object)");
+		resetRuntimeWarmupForTest();
+	});
+});
+
+describe("runtime-warmup: diagnostic status (team doctor)", () => {
+	test("status is empty/clean before warmup starts", () => {
+		resetRuntimeWarmupForTest();
+		const status = getRuntimeWarmupStatus();
+		assert.equal(status.started, false);
+		assert.equal(status.completed, false);
+		assert.equal(status.durationMs, undefined);
+		assert.equal(status.error, undefined);
+	});
+
+	test("after startRuntimeWarmup + await, status reports started + completed + duration", async () => {
+		resetRuntimeWarmupForTest();
+		startRuntimeWarmup();
+		await awaitRuntimeWarmup();
+		const status = getRuntimeWarmupStatus();
+		assert.equal(status.started, true);
+		assert.equal(status.completed, true);
+		assert.equal(status.error, undefined);
+		assert.ok(typeof status.durationMs === "number", `duration should be a number, got ${status.durationMs}`);
+		assert.ok(status.durationMs! >= 0, "duration should be non-negative");
+		resetRuntimeWarmupForTest();
+	});
+
+	test("status.started is true immediately after start (before await)", () => {
+		resetRuntimeWarmupForTest();
+		startRuntimeWarmup();
+		const status = getRuntimeWarmupStatus();
+		assert.equal(status.started, true);
+		// completed may be false here (promise still resolving) — that's fine.
 		resetRuntimeWarmupForTest();
 	});
 });
