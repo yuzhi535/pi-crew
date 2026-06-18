@@ -123,6 +123,7 @@ import { registerContextStatusInjection } from "./context-status-injection.ts";
 import { registerTeamTool } from "./registration/team-tool.ts";
 import { handleTeamTool } from "./team-tool.ts";
 import { persistScheduledJobUpdate } from "./team-tool/handle-schedule.ts";
+import { shouldBlockDestructiveTeamAction } from "./team-tool/destructive-gate.ts";
 
 let _cachedOTLPExporter: typeof OTLPExporterType | undefined;
 async function importOTLPExporter(): Promise<typeof OTLPExporterType> {
@@ -1992,13 +1993,11 @@ export function registerPiTeams(pi: ExtensionAPI): void {
 		const input = asRecord(rawInput);
 		if (!input) return;
 		const action = typeof input.action === "string" ? input.action : undefined;
-		const destructiveActions = new Set(["delete", "forget", "prune", "cleanup"]);
-		if (!action || !destructiveActions.has(action)) return;
-		const forceBypassesReferenceChecks = action === "delete" && input.force === true;
-		if (input.confirm === true || forceBypassesReferenceChecks) return;
+		const reason = shouldBlockDestructiveTeamAction(action, input);
+		if (!reason) return;
 		return {
-			block: true,
-			reason: `Destructive action '${action}' requires confirm=true${action === "delete" ? " (or force=true to bypass reference checks)" : ""}.`,
+			block: true as const,
+			reason,
 		};
 	});
 

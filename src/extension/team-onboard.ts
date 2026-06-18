@@ -75,11 +75,13 @@ function loadRunSummaries(cwd: string, options: OnboardingOptions = {}): RunSumm
 }
 
 /**
- * Format duration in minutes.
+ * Format duration in minutes. Defensive against missing/invalid timestamps
+ * (e.g. legacy test runs) — returns "?" instead of "NaNm".
  */
-function formatDuration(createdAt: string, completedAt?: string): string {
+export function formatDuration(createdAt: string, completedAt?: string): string {
   const start = new Date(createdAt).getTime();
   const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "?";
   const minutes = Math.round((end - start) / 1000 / 60);
   if (minutes < 1) return "<1m";
   if (minutes >= 60) return `${Math.round(minutes / 60)}h`;
@@ -136,8 +138,10 @@ export function buildTeamOnboarding(team: string, cwd: string, options: Onboardi
     for (const run of runs) {
       const duration = formatDuration(run.createdAt, run.completedAt);
       const goalPreview = run.goal ? run.goal.slice(0, 40) : "N/A";
-      const statusIcon = run.status === "completed" ? "✅" : run.status === "failed" ? "❌" : "⚠️";
-      lines.push(`| \`${run.runId.slice(-8)}\` | ${goalPreview}${run.goal.length > 40 ? "..." : ""} | ${duration} | ${statusIcon} ${run.status} |`);
+      const goalSuffix = run.goal && run.goal.length > 40 ? "..." : "";
+      const status = run.status ?? "unknown";
+      const statusIcon = status === "completed" ? "✅" : status === "failed" ? "❌" : status === "cancelled" ? "⏹️" : "⚠️";
+      lines.push(`| \`${run.runId.slice(-8)}\` | ${goalPreview}${goalSuffix} | ${duration} | ${statusIcon} ${status} |`);
     }
     lines.push("");
   }
