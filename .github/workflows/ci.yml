@@ -41,3 +41,45 @@ jobs:
         run: npm test
       - name: Pack dry run
         run: npm pack --dry-run
+
+  # Informational, non-blocking codebase intelligence (deterministic, Rust-native).
+  # Surfaced dead code, circular deps, duplication, complexity hotspots, and
+  # dependency hygiene for the changed files in a PR. NEVER fails the build
+  # (continue-on-error: true) — findings are for human/agent review, not a gate.
+  # Rationale: high out-of-the-box noise + false positives on tsx/jiti path-loading
+  # patterns make a blocking gate unsuitable for a solo-maintained extension.
+  fallow-audit:
+    name: fallow audit (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # full history so fallow can diff against the base ref
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Run fallow audit (changed-code, JSON)
+        run: |
+          # `audit` diffs changed files against the base ref and returns a
+          # pass/warn/fail verdict. On a push to main (no diff) it reports 0
+          # changed files. We capture JSON + a human-readable summary.
+          npx --yes fallow@latest audit --format json --quiet > fallow-audit.json 2> fallow-audit.err || true
+          echo "===== fallow audit (human summary) ====="
+          npx --yes fallow@latest audit --quiet || true
+          echo "===== stderr (if any) ====="
+          cat fallow-audit.err || true
+      - name: Upload fallow report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fallow-audit-report
+          path: |
+            fallow-audit.json
+            fallow-audit.err
+          if-no-files-found: ignore
+          retention-days: 14

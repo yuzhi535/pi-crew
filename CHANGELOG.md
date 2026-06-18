@@ -2653,3 +2653,33 @@ user's project-instructions file was out-of-scope and unnecessary.
 
 +4 regression tests (init does NOT create/modify AGENTS.md; API fields removed).
 typecheck clean; full suite 2972/0.
+
+## [Unreleased] — dead-dep cleanup + non-blocking fallow CI (2026-06-18)
+
+Spotted by running `fallow` (deterministic Rust codebase intelligence) against
+the repo. Two genuine wins, plus an informational CI job that never blocks.
+
+### Removed (dead dependencies, verified unused)
+- **`typebox`** (`package.json:89`) — dead duplicate of `@sinclair/typebox`
+  (which 10 source files actually import). `typebox` (plain) had **zero**
+  imports anywhere in `src/`.
+- **`acorn`** (`package.json:84`) — **zero** runtime references in `src/`,
+  `scripts/`, or `*.mjs`. Verified the only other package referencing it
+  (`jiti`) lists it under its own `devDependencies` (for jiti's own tests), so
+  it is not a runtime transitive need. `npm ls acorn` confirmed `pi-crew` was
+  its sole parent.
+
+  Both removals verified: typecheck clean, full suite 2965/0.
+
+### CI: added `fallow-audit` job (non-blocking)
+- New job in `.github/workflows/ci.yml`: ubuntu-only, `continue-on-error: true`
+  so it **never fails the build**.
+- Runs `fallow audit` (changed-code diff vs base ref) in JSON + human summary,
+  uploads `fallow-audit-report` artifact (14-day retention).
+- Surfaced findings (dead code, circular deps, duplication, complexity
+  hotspots, dependency hygiene) are for human/agent review, NOT a merge gate.
+- Rationale for non-blocking: fallow has high out-of-the-box noise (254 clone
+  families, 379 hotspots) + a false positive on the tsx/jiti path-loading
+  pattern (`jiti` flagged unused but is used via runtime path-loading). A
+  blocking gate would create an unpaid maintenance backlog unsuitable for a
+  solo-maintained extension.
