@@ -2628,3 +2628,28 @@ The reply on the issue asks again for a concrete repro.
 
 typecheck clean; +6 user-scope cleanup tests + 1 routing test update; full
 suite 2963/0.
+
+## [0.8.14] — stop injecting AGENTS.md on init (Issue #35, redundant) (2026-06-18)
+
+`team action=init` no longer writes a guidance block into the project's
+`AGENTS.md`. AGENTS.md is the USER's project-instructions file (Pi loads it as
+project guidance), and the injected block was **redundant**: the `team` tool
+already self-describes via its tool registration (`description` + `promptSnippet`
+in `src/extension/registration/team-tool.ts:63-64`), which Pi injects into the
+agent's system prompt every session. So agents still learn pi-crew's commands —
+from the tool, not AGENTS.md.
+
+- Removed `injectGuidance(AGENTS.md, ...)` call from `initializeProject()`
+  (`src/extension/project-init.ts`).
+- Removed `guidancePath` / `guidanceModified` from `ProjectInitResult`.
+- Removed now-unused `getPackageVersion()` + the markers import.
+- `team action=cleanup` STILL removes any block injected by older versions
+  (<0.8.14) — backward-compat preserved via `removeGuidance`.
+- README Uninstall section + install.mjs warning note the v0.8.14 behavior
+  change.
+
+Scope rationale: pi-crew is a sub-agent orchestration extension. Modifying a
+user's project-instructions file was out-of-scope and unnecessary.
+
++4 regression tests (init does NOT create/modify AGENTS.md; API fields removed).
+typecheck clean; full suite 2972/0.

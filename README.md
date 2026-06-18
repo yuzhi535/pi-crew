@@ -113,6 +113,12 @@ node ./pi-crew/install.mjs   # from local clone
 extension uninstall hook, so several things pi-crew created are left behind.
 Reverse them explicitly with `team action=cleanup`. There are **two scopes**:
 
+> **v0.8.14+**: `team action=init` **no longer injects a guidance block into
+> AGENTS.md** (it was redundant — the `team` tool self-describes via its tool
+> registration, so the agent learns pi-crew's commands from there, not AGENTS.md).
+> The cleanup steps below still work for removing blocks injected by **older
+> versions** (<0.8.14).
+
 #### Project scope (reverse `team action=init`)
 
 ```bash

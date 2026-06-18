@@ -70,11 +70,12 @@ console.log("To force-disable or force-enable workers in a shell, use PI_TEAMS_E
 console.log("\n--- What pi-crew writes (and how to undo it) ---");
 console.log("pi-crew itself writes nothing on install. The following only happens when you");
 console.log("explicitly run `team action=init` in a project:");
-console.log("  - A marker-delimited block is injected into the project's AGENTS.md.");
-console.log("    (Wrapped in <!-- PI-CREW:GUIDANCE:START/END --> — your content is never touched.)");
 console.log("  - A `.crew/` runtime state dir is created in the project (run history + artifacts).");
 console.log("  - With --copy-builtins: bundled agents/teams/workflows are copied into the project.");
 console.log("This install also created the global config above (`~/.pi/agent/pi-crew.json`).");
+console.log("Note: pi-crew v0.8.14+ no longer injects a guidance block into AGENTS.md on init");
+console.log("      (it was redundant — the `team` tool self-describes via tool registration).");
+console.log("      Versions <0.8.14 did inject one; `team action=cleanup` removes it.");
 console.log("\nFull uninstall (in order):");
 console.log("  team action=cleanup dryRun=true       # preview what would be removed (project)");
 console.log("  team action=cleanup                    # remove the AGENTS.md guidance block");

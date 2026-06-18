@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { configPath as globalConfigPath } from "../config/config.ts";
 import { DEFAULT_UI } from "../config/defaults.ts";
-import { injectGuidance, standardGuidanceBlocks } from "../config/markers.ts";
 import { packageRoot, projectCrewRoot, projectPiRoot } from "../utils/paths.ts";
 
 export interface ProjectInitOptions {
@@ -22,8 +21,6 @@ export interface ProjectInitResult {
 	configScope: "global" | "project" | "none";
 	configCreated: boolean;
 	configSkipped: boolean;
-	guidancePath: string;
-	guidanceModified: boolean;
 }
 
 function ensureDir(dir: string, createdDirs: string[]): void {
@@ -147,22 +144,12 @@ export function initializeProject(cwd: string, options: ProjectInitOptions = {})
 		gitignoreUpdated = true;
 	}
 
-	// Inject guidance into project AGENTS.md (or similar) using marker-based injection.
-	const guidancePath = path.join(cwd, "AGENTS.md");
-	const version = getPackageVersion();
-	const guidanceResult = injectGuidance(guidancePath, standardGuidanceBlocks(version));
+	// v0.8.14: pi-crew no longer injects a guidance block into AGENTS.md on init.
+	// AGENTS.md is the USER's project-instructions file (Pi loads it as project
+	// guidance) — extensions modifying it was out-of-scope and redundant: the
+	// `team` tool already self-describes via its schema description, so the agent
+	// learns pi-crew's commands from tool registration, not AGENTS.md.
+	// `team action=cleanup` still removes any block injected by older versions.
 
-	return { createdDirs, copiedFiles, skippedFiles, gitignorePath, gitignoreUpdated, configPath, configScope, configCreated, configSkipped, guidancePath, guidanceModified: guidanceResult.modified };
-}
-
-/** Read the current package version from the nearest package.json. */
-function getPackageVersion(): string {
-	try {
-		const pkgPath = path.join(packageRoot(), "package.json");
-		const raw = fs.readFileSync(pkgPath, "utf-8");
-		const parsed: { version?: string } = JSON.parse(raw) as { version?: string };
-		return parsed.version ?? "0.0.0";
-	} catch {
-		return "0.0.0";
-	}
+	return { createdDirs, copiedFiles, skippedFiles, gitignorePath, gitignoreUpdated, configPath, configScope, configCreated, configSkipped };
 }
