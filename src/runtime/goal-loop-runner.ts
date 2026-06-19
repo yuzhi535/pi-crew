@@ -238,14 +238,14 @@ export async function runGoalLoop(input: RunGoalLoopInput): Promise<RunGoalLoopR
 	try {
 		while (goal.state === "running" && goal.turnsUsed < goal.maxTurns) {
 			if (signal.aborted) {
-				goal = store.setStatus(goal.goalId, "cancelled", eventsPath) ?? { ...goal, state: "cancelled" };
+				goal = safeSetStatus(store, goal.goalId, "cancelled", goal, eventsPath);
 				break;
 			}
 
 			// Budget check (§0c C2): abort threshold BEFORE spawning the next turn.
 			if (goal.budgetTotal !== undefined && goal.budgetAbort !== undefined) {
 				if (goal.budgetUsed / goal.budgetTotal >= goal.budgetAbort) {
-					goal = store.setStatus(goal.goalId, "budget_exceeded", eventsPath) ?? { ...goal, state: "budget_exceeded" };
+					goal = safeSetStatus(store, goal.goalId, "budget_exceeded", goal, eventsPath);
 					appendEvent(eventsPath, { type: "goal.budget_warning", runId: manifest.runId, data: { goalId: goal.goalId, budgetUsed: goal.budgetUsed, budgetTotal: goal.budgetTotal, threshold: "abort" } });
 					break;
 				}
