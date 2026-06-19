@@ -75,6 +75,8 @@ trust and cliff-resilience, stay lean, delete before adding.*
 - **Scheduled runs** — `schedule`/`scheduled` actions with cron, interval, and one-shot support; spawned runs tracked and auto-cancelled on job removal
 - **Plugin system** — framework-aware context injection (Next.js, Vite, Vitest) via plugin registry
 - **Health scoring** — penalty-based run health with time-series snapshots
+- **Autonomous goal loops** (P0/P1) — `team action='goal'` runs an autonomous multi-turn loop: a worker does a turn, a separate LLM judge evaluates the transcript+evidence against the goal, and on "not-achieved" the reason is fed into the next turn's prompt. Stops on achieved / maxTurns / budget / blocked. Claude-Code-style `/goal`. See `docs/goals.md`.
+- **Dynamic workflows** (P2/P3) — author orchestration as a `.dwf.ts` script (JS loops/branch/cross-review) instead of a static step list. The script runs in the background, calls subagents via `ctx.agent()`/`ctx.fanOut()`, holds intermediate results in JS variables, and only `ctx.setResult()` reaches the main context. `workflow-create`/`-delete` are ACE-gated (`confirm:true`, user-initiated). See `docs/dynamic-workflows.md`.
 
 ---
 

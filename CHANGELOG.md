@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased — v0.9.0] — goal loops + dynamic workflows (2026-06-18)
+
+Two new features, both built on a shared `runKind` background-dispatch discriminator.
+
+### `goal` — autonomous goal loop (P0a + P0 + P1)
+
+- `team action='goal' config.subAction='start|status|pause|resume|stop|step|clear'`.
+- A worker does a turn (`executeTeamRun`), then a separate LLM judge (synthesized
+  `goal-judge` AgentConfig with `disableTools:true` → Pi `--no-tools`) evaluates the
+  transcript + evidence and returns `{achieved, reason, evidenceRefs}`. On
+  not-achieved, the `reason` is composed into the next turn's `manifest.goal`.
+- One manifest PER turn (status-transition invariants block reuse). Budget via
+  `collectRunMetrics`. `GoalLoopState` persisted at `<crewRoot>/state/goals/<goalId>.json`.
+- Slash command `/team-goal`. Hooks: `before_goal_step`, `before_goal_abort`.
+- Spec-driven: `research-findings/goal-workflow/00-SPEC.md` + `07-PLAN.md` v3.
+
+### `workflow` — dynamic workflow scripts (P2 + P3)
+
+- `.dwf.ts` scripts orchestrate subagents via `ctx.agent()` / `ctx.fanOut()` with
+  JS loops/branch/cross-review; only `ctx.setResult()` reaches the main context.
+- Full `WorkflowCtx`: `agent`, `fanOut`, `review`, `retry`, `mail`, `gatherReplies`,
+  `renderTemplate`, `vars`, `setResult`.
+- `team action='workflow-{create,get,list,save,delete}'`. `workflow-create`/`-delete`
+  ACE-gated via `destructive-gate.ts` (`confirm:true`, user-initiated only, path-
+  allowlisted via `resolveRealContainedPath`, content-validated).
+- Capability-locked `WorkflowCtx` (Object.freeze + vm.runInNewContext);
+  `isolated-vm` deferred to v1.5.
+- Slash command `/workflows`. Example: `workflows/examples/hello.dwf.ts`.
+
+### Shared infra (P0a)
+
+- `manifest.runKind?: 'team-run' | 'goal-loop' | 'dynamic-workflow'` discriminator;
+  background-runner.ts dispatches to `executeTeamRun` / `runGoalLoop` /
+  `runDynamicWorkflow`. Default `'team-run'` (backward-compatible).
+
+### Other
+
+- `AgentConfig.disableTools?: boolean` — pushes Pi `--no-tools` (capability-locked agents).
+- `TEAM_EVENT_TYPES` += `goal.*` + `dwf.*` namespaces.
+- New agent-config field, new event types, new hooks — all additive, no breaking changes.
+
 ## [0.8.12] — `team action=cleanup` now reverses `init` (Issue #35) (2026-06-17)
 
 `team action=cleanup` gained a **project-level mode** that reverses what
