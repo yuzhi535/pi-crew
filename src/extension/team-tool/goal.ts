@@ -15,12 +15,12 @@
  */
 
 import { result, type TeamContext } from "./context.ts";
-import { createRunManifest, saveRunManifest } from "../../state/state-store.ts";
+import { createRunPaths, saveRunManifest } from "../../state/state-store.ts";
 import { appendEvent } from "../../state/event-log.ts";
 import { spawnBackgroundTeamRun } from "../../subagents/async-entry.ts";
 import { GoalStore } from "../../runtime/goal-state-store.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
-import type { GoalLoopState, GoalLoopStatus } from "../../state/types.ts";
+import type { GoalLoopState, GoalLoopStatus, TeamRunManifest } from "../../state/types.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 
 const MAX_GOAL_OBJECTIVE_CHARS = 4000;
@@ -105,37 +105,38 @@ async function handleStart(input: GoalSubActionInput): Promise<ReturnType<typeof
 		};
 		store.save(goalState);
 
-		// ── Spawn the background goal-loop process (Fix P0-1) ──────────────────
+		// ── Spawn the background goal-loop process (Fix P0-1 v2) ────────────────
 		// Convention: the goal-loop manifest's runId IS the goalId, so background-runner's
 		// `case "goal-loop"` can load GoalLoopState via `store.load(manifest.runId)`.
-		// We create a minimal manifest with runKind:"goal-loop" and spawn it detached.
-		const created = createRunManifest({
-			cwd,
-			team: {
-				name: `goal-${goalId}`,
-				description: `Goal loop ${goalId}`,
-				source: "dynamic",
-				filePath: "<goal-loop>",
-				roles: [{ name: "worker", agent: goalState.workerAgent ?? "executor" }],
-				workspaceMode: "single",
-			},
-			workflow: {
-				name: "goal-loop",
-				description: "Goal loop outer coordinator",
-				source: "dynamic",
-				filePath: "<goal-loop>",
-				steps: [],
-			},
+		// Fix P0-1: build paths via createRunPaths(cwd, goalId) so ALL paths
+		// (stateRoot/artifactsRoot/eventsPath/tasksPath) are consistent with runId=goalId.
+		// The previous fix overrode runId AFTER createRunManifest (which used a random id),
+		// so the manifest was written to runs/<randomId>/ but background-runner looked for
+		// runs/<goalId>/ → "Run not found" → silent death. (Review #2 F1.)
+		const paths = createRunPaths(cwd, goalId);
+		const now2 = new Date().toISOString();
+		const goalLoopManifest: TeamRunManifest = {
+			schemaVersion: 1,
+			runId: goalId, // paths.runId === goalId by construction
+			sessionId: ownerSessionId,
+			team: `goal-${goalId}`,
+			workflow: "goal-loop",
 			goal: objective,
+			status: "queued",
 			workspaceMode: "single",
-			ownerSessionId: ownerSessionId,
+			createdAt: now2,
+			updatedAt: now2,
+			cwd,
+			stateRoot: paths.stateRoot,
+			artifactsRoot: paths.artifactsRoot,
+			tasksPath: paths.tasksPath,
+			eventsPath: paths.eventsPath,
+			artifacts: [],
+			ownerSessionId,
 			runKind: "goal-loop",
-		});
-		// Force the manifest runId to equal the goalId so background-runner can locate the state.
-		const goalLoopManifest = { ...created.manifest, runId: goalId, runKind: "goal-loop" as const, goal: objective };
+		};
 		saveRunManifest(goalLoopManifest);
-		const eventsPath = goalLoopManifest.eventsPath;
-		appendEvent(eventsPath, { type: "goal.loop_start", runId: goalId, data: { goalId, objective, maxTurns, statePath: `${cwd}/.crew/state/goals/${goalId}.json` } });
+		appendEvent(paths.eventsPath, { type: "goal.loop_start", runId: goalId, data: { goalId, objective, maxTurns, statePath: `${cwd}/.crew/state/goals/${goalId}.json` } });
 
 		try {
 			const spawned = await spawnBackgroundTeamRun(goalLoopManifest);
@@ -149,7 +150,7 @@ async function handleStart(input: GoalSubActionInput): Promise<ReturnType<typeof
 			);
 		} catch (spawnError) {
 			const message = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			store.setStatus(goalId, "blocked", eventsPath);
+			store.setStatus(goalId, "blocked", paths.eventsPath);
 			return result(`goal start: state saved but background spawn failed: ${message}`, { action: "goal", status: "error", data: { goalId } }, true);
 		}
 	} catch (error) {
@@ -201,7 +202,7 @@ async function handleStop(input: GoalSubActionInput): Promise<ReturnType<typeof 
 	if (updated.currentRunId) {
 		try {
 			const { handleCancel } = await import("./cancel.ts");
-			const cancelResult = await handleCancel({ action: "cancel", runId: updated.currentRunId, force: true }, ctx);
+			const cancelResult = await handleCancel({ action: "cancel", runId: updated.currentRunId, force: true, config: { intent: "user requested goal stop" } }, ctx);
 			cancelMsg = ` In-flight turn ${updated.currentRunId} cancel: ${(cancelResult.content[0] as { text?: string } | undefined)?.text ?? "ok"}.`;
 		} catch (error) {
 			cancelMsg = ` (in-flight turn ${updated.currentRunId} cancel failed: ${error instanceof Error ? error.message : String(error)}; the loop will still exit at the next turn boundary.)`;

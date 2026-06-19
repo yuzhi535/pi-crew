@@ -2,21 +2,19 @@
  * dynamic-workflow-runner.ts — Script-driven workflow runtime (P2).
  *
  * Spec: research-findings/goal-workflow/00-SPEC.md §3.3
- * Plan: 07-PLAN.md v3 P2 + §0c C4 (vm.runInNewContext), C5 (resolveRealContainedPath).
+ * Plan: 07-PLAN.md v3 P2 + §0c C5 (resolveRealContainedPath).
  *
  * Loads a `.dwf.ts` script's default export, transpiles it via jiti (the existing
- * TS loader used by async-runner.ts), and executes it inside vm.runInNewContext with
- * a FROZEN WorkflowCtx + minimal globals (§0c C4). The script orchestrates subagents
- * via ctx.agent()/ctx.fanOut(); only ctx.setResult() reaches the main context.
+ * TS loader used by async-runner.ts), and executes it with a FROZEN WorkflowCtx.
  *
- * Returns {manifest, tasks} (background contract, §0a A2). The manifest is updated
- * with the final result artifact; tasks is empty (dynamic workflows don't use the
- * step-list model).
- *
- * v1 TRUST BOUNDARY (not security boundary): vm.runInNewContext raises the bar
- * against accidental access but a determined script can escape via constructor
- * walking. `.dwf.ts` files must be commit-reviewed (postinstall-equivalent trust).
- * isolated-vm (real V8 isolate) deferred to v1.5.
+ * HONEST v1 TRUST MODEL (review H-2): vm.runInNewContext is NOT used in v1 — the
+ * script runs in plain module scope with full access to require/import/process.
+ * The 'capability-locked WorkflowCtx' is the documented contract surface, NOT a
+ * sandbox. A script can reach process/require via constructor walking or direct
+ * import. `.dwf.ts` files MUST be commit-reviewed (postinstall-equivalent trust).
+ * The path-allowlist (resolveRealContainedPath) limits WHERE scripts load from,
+ * not WHAT they can do. isolated-vm (real V8 isolate) is planned for v1.5.
+ * See docs/dynamic-workflows.md for the full threat model.
  */
 
 import { readFileSync } from "node:fs";
