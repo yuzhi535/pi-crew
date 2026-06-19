@@ -847,7 +847,12 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 					unregisterChildProcess(child.pid);
 				}
 				// Build comprehensive exit error for unexpected exits
-				const isUnexpectedExit = !childExited && !settled && !responseTimeoutHit && !abortRequested;
+				// Round-10 test fix: also require non-zero exit code OR a known abnormal condition.
+				// Previously fired "exited unexpectedly" on every clean exit (code=0) because the
+				// OS-level 'exit' event fires BEFORE pi's 'agent_end' JSON event reaches the line
+				// observer (race). Worker actually succeeded but onLifecycleEvent reported an error.
+				const abnormalExit = code !== 0 && code !== null;
+				const isUnexpectedExit = !childExited && !settled && !responseTimeoutHit && !abortRequested && abnormalExit;
 				const exitError = isUnexpectedExit
 					? new Error(
 						`Child Pi process exited unexpectedly (code=${code ?? "null"} signal=${signal ?? "null"}). `
