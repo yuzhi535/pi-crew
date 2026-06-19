@@ -279,6 +279,10 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 				signal: ctx.signal ?? AbortSignal.timeout(3_600_000),
 				modelOverride: params.model,
 			});
+			// Round-10 runtime-test fix: persist the updated manifest with status=completed
+			// so status queries / cancel / cleanup see the real state. Previously run.ts
+			// returned the result without atomicWriteJson, leaving manifest at 'queued' forever.
+			atomicWriteJson(paths.manifestPath, dwfResult.manifest);
 			return result(
 				`Dynamic workflow '${workflow.name}' completed.\n${dwfResult.manifest.summary ?? ""}`,
 				{ action: "run", status: dwfResult.manifest.status === "failed" ? "error" : "ok", runId: dwfResult.manifest.runId, artifactsRoot: dwfResult.manifest.artifactsRoot },
