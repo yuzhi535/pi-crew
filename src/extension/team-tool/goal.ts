@@ -198,7 +198,7 @@ function handleStateFlip(input: GoalSubActionInput, nextState: GoalLoopStatus, l
 		const denied = assertGoalOwnership(existing, ctx, "goal");
 		if (denied) return denied;
 	}
-	const eventsPath = `${ctx.cwd}/.crew/state/goals/${goalId}.events.jsonl`;
+	const eventsPath = createRunPaths(ctx.cwd, goalId).eventsPath;
 	const updated = store.setStatus(goalId, nextState, eventsPath);
 	if (!updated) return result(`Goal '${goalId}' not found.`, { action: "goal", status: "error" }, true);
 	return result(`Goal ${goalId} ${label} (state='${updated.state}').`, { action: "goal", status: "ok", data: { goalId, state: updated.state } }, false);
@@ -213,7 +213,7 @@ async function handleStop(input: GoalSubActionInput): Promise<ReturnType<typeof 
 	const { params, ctx, store } = input;
 	const goalId = params.config?.goalId as string | undefined;
 	if (!goalId) return result("stop requires config.goalId.", { action: "goal", status: "error" }, true);
-	const eventsPath = `${ctx.cwd}/.crew/state/goals/${goalId}.events.jsonl`;
+	const eventsPath = createRunPaths(ctx.cwd, goalId).eventsPath;
 	const before = store.load(goalId);
 	if (!before) return result(`Goal '${goalId}' not found.`, { action: "goal", status: "error" }, true);
 	if (params.force !== true) {

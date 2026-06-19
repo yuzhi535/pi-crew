@@ -342,7 +342,7 @@ export async function runGoalLoop(input: RunGoalLoopInput): Promise<RunGoalLoopR
 		}
 	} catch (error) {
 		logInternalError("goal-loop.run", error, `goalId=${goal.goalId}`);
-		goal = store.setStatus(goal.goalId, "blocked", eventsPath) ?? { ...goal, state: "blocked" };
+		goal = safeSetStatus(store, goal.goalId, "blocked", goal, eventsPath);
 	} finally {
 		appendEvent(eventsPath, { type: "goal.loop_end", runId: manifest.runId, data: { goalId: goal.goalId, state: goal.state, turnsUsed: goal.turnsUsed, budgetUsed: goal.budgetUsed } });
 	}
