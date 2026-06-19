@@ -242,7 +242,12 @@ export async function runGoalLoop(input: RunGoalLoopInput): Promise<RunGoalLoopR
 				runKind: "team-run", // §0a v2 note: turns are normal team-runs; the OUTER loop is goal-loop
 			});
 			goal = store.patch(goal.goalId, { currentRunId: created.manifest.runId, turnsUsed: turnIndex }, eventsPath) ?? goal;
-
+			// Fix round-6: re-check state AFTER patching (user may have paused/stopped in the inter-turn gap).
+			// Without this, a pause that lands between store.patch and executeTeamRun lets one extra turn run.
+			if (goal.state !== "running") {
+				appendEvent(eventsPath, { type: "goal.loop_end", runId: manifest.runId, data: { goalId: goal.goalId, state: goal.state, reason: "state changed before turn spawn" } });
+				break;
+			}
 			registerActiveRun(created.manifest);
 			let turnResult: { manifest: TeamRunManifest; tasks: TeamTaskState[] };
 			try {

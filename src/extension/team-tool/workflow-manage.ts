@@ -18,17 +18,19 @@ import { readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { result, type TeamContext } from "./context.ts";
 import { assertSafePathId, resolveRealContainedPath } from "../../utils/safe-paths.ts";
-import { projectCrewRoot, userCrewRoot } from "../../utils/paths.ts";
+import { projectCrewRoot, userPiRoot, packageRoot } from "../../utils/paths.ts";
 import { allWorkflows, discoverWorkflows } from "../../workflows/discover-workflows.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 
 /** The 3 allowed bases for dynamic-workflow scripts (§0c C5). */
 function allowedWorkflowDirs(cwd: string): string[] {
+	// Fix round-6: align with discoverWorkflows (which reads userPiRoot/workflows, NOT
+	// userCrewRoot/workflows). The old userCrewRoot path silently orphaned user-scope workflows.
 	return [
 		join(projectCrewRoot(cwd), "workflows"),
-		join(userCrewRoot(), "workflows"),
-		join(projectCrewRoot(cwd), "..", "workflows"), // <proj>/.pi/teams/workflows variant
+		join(userPiRoot(), "workflows"),
+		join(packageRoot(), "workflows"),
 	];
 }
 
@@ -58,7 +60,8 @@ function validateScriptContent(content: string): string | undefined {
 /** Resolve a workflow name + scope to a safe write path inside an allowed dir. */
 function resolveWorkflowWritePath(cwd: string, name: string, scope: "user" | "project" = "project"): string {
 	assertSafePathId("workflowName", name);
-	const base = scope === "user" ? join(userCrewRoot(), "workflows") : join(projectCrewRoot(cwd), "workflows");
+	// Fix round-6: user scope must use userPiRoot/workflows (matches discovery), not userCrewRoot.
+	const base = scope === "user" ? join(userPiRoot(), "workflows") : join(projectCrewRoot(cwd), "workflows");
 	return resolveRealContainedPath(base, `${name}.dwf.ts`);
 }
 

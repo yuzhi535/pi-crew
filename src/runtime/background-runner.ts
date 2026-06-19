@@ -555,8 +555,14 @@ async function main(): Promise<void> {
 				const goalState = store.load(manifest.runId);
 				if (!goalState) throw new Error(`runKind="goal-loop" but GoalLoopState '${manifest.runId}' not found (cwd=${manifest.cwd})`);
 				const goalResult = await runGoalLoop({ goalState, manifest, signal: abortController.signal, deps: { discoverAgents: (c: string) => allAgents(discoverAgents(c)) } });
-				// Fix P1-1: persist terminal status on the goal-loop manifest.
-				const finalGoalManifest: TeamRunManifest = { ...goalResult.manifest, status: "completed", updatedAt: new Date().toISOString() };
+				// Fix P1-1 + round-6 #5: persist terminal status reflecting the goal's actual outcome,
+				// not a blanket 'completed'. Map goal state → manifest status.
+				const goalStatusToRunStatus: Record<string, TeamRunManifest["status"]> = {
+					achieved: "completed", max_turns: "completed", budget_exceeded: "completed",
+					blocked: "blocked", cancelled: "cancelled", paused: "blocked", running: "running",
+				};
+				const runStatus = goalStatusToRunStatus[goalResult.goalState.state] ?? "completed";
+				const finalGoalManifest: TeamRunManifest = { ...goalResult.manifest, status: runStatus, updatedAt: new Date().toISOString() };
 				saveRunManifest(finalGoalManifest);
 				earlyResult = { manifest: finalGoalManifest, tasks: goalResult.tasks };
 			} else {

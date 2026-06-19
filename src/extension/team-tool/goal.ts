@@ -174,10 +174,27 @@ function handleStatus(input: GoalSubActionInput): ReturnType<typeof result> {
 }
 
 /** Cooperative pause/resume/stop/clear — flip GoalLoopState.state. */
+function assertGoalOwnership(goal: GoalLoopState, ctx: TeamContext, action: string): ReturnType<typeof result> | undefined {
+	// Fix round-6 A01: goal sub-actions must check session ownership (like handleCancel's abortOwned).
+	// status (read-only) is allowed for any session; mutating actions require ownership or force.
+	const owner = goal.ownerSessionId;
+	const current = ctx.sessionId;
+	if (owner && current && owner !== current && goal.state === "running") {
+		return result(`Goal '${goal.goalId}' belongs to session '${owner}' (you are '${current}') and is still running. Use force:true to override.`, { action, status: "error", data: { goalId: goal.goalId, ownerSessionId: owner } }, true);
+	}
+	return undefined;
+}
+
 function handleStateFlip(input: GoalSubActionInput, nextState: GoalLoopStatus, label: string): ReturnType<typeof result> {
 	const { params, ctx, store } = input;
 	const goalId = params.config?.goalId as string | undefined;
 	if (!goalId) return result(`${label} requires config.goalId.`, { action: "goal", status: "error" }, true);
+	const existing = store.load(goalId);
+	if (!existing) return result(`Goal '${goalId}' not found.`, { action: "goal", status: "error" }, true);
+	if (params.force !== true) {
+		const denied = assertGoalOwnership(existing, ctx, "goal");
+		if (denied) return denied;
+	}
 	const eventsPath = `${ctx.cwd}/.crew/state/goals/${goalId}.events.jsonl`;
 	const updated = store.setStatus(goalId, nextState, eventsPath);
 	if (!updated) return result(`Goal '${goalId}' not found.`, { action: "goal", status: "error" }, true);
@@ -196,6 +213,10 @@ async function handleStop(input: GoalSubActionInput): Promise<ReturnType<typeof 
 	const eventsPath = `${ctx.cwd}/.crew/state/goals/${goalId}.events.jsonl`;
 	const before = store.load(goalId);
 	if (!before) return result(`Goal '${goalId}' not found.`, { action: "goal", status: "error" }, true);
+	if (params.force !== true) {
+		const denied = assertGoalOwnership(before, ctx, "goal");
+		if (denied) return denied;
+	}
 	const updated = store.setStatus(goalId, "cancelled", eventsPath)!;
 	// If a turn is mid-flight, cancel it now (not just at the next turn boundary).
 	let cancelMsg = "";
@@ -237,6 +258,10 @@ export async function handleGoal(params: TeamToolParamsValue, ctx: TeamContext):
 			if (!clearGoalId) return result("clear requires config.goalId.", { action: "goal", status: "error" }, true);
 			const existing = store.load(clearGoalId);
 			if (!existing) return result(`Goal '${clearGoalId}' not found (already cleared?).`, { action: "goal", status: "error" }, true);
+			if (params.force !== true) {
+				const denied = assertGoalOwnership(existing, ctx, "goal");
+				if (denied) return denied;
+			}
 			if (existing.state === "running" || existing.state === "paused") {
 				return result(`Goal '${clearGoalId}' is still ${existing.state}. Stop it first (team action='goal' subAction='stop' goalId='${clearGoalId}'), then clear.`, { action: "goal", status: "error", data: { goalId: clearGoalId, state: existing.state } }, true);
 			}
