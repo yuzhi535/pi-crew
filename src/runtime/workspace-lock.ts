@@ -37,6 +37,10 @@ import {
 	readFileSync,
 	readdirSync,
 	unlinkSync,
+	openSync,
+	closeSync,
+	statSync,
+	writeFileSync,
 } from "node:fs";
 import * as path from "node:path";
 import { atomicWriteJson } from "../state/atomic-write.ts";
@@ -142,10 +146,75 @@ function readLock(lockPath: string): WorkspaceLockContents | undefined {
 	}
 }
 
-/** Write the lockfile atomically (temp+rename+fsync via atomicWriteJson). */
+/**
+ * Write the lockfile atomically (temp+rename+fsync via atomicWriteJson).
+ * Used for HEARTBEAT refresh only (a claim that already owns the lock is refreshing its
+ * timestamp — overwrite is correct because the owner verified ownership first).
+ */
 function writeLock(lockPath: string, contents: WorkspaceLockContents): void {
 	mkdirSync(path.dirname(lockPath), { recursive: true });
 	atomicWriteJson(lockPath, contents);
+}
+
+/**
+ * CLAIM the lockfile atomically via O_EXCL (cold-review #3 NIT #N1 fix).
+ * The previous claim used temp+rename (writeLock), which is NOT cross-process atomic —
+ * two goals that both observed a free lock in the same tick could both writeLock and
+ * both believe they own it (the same class of TOCTOU cold-review #2 caught for CAS).
+ * O_EXCL (openSync "wx") IS atomic at the OS level: only one process can create the
+ * file. Returns true on success, false if the file already exists (EEXIST). Stale
+ * lockfiles older than the threshold are force-deleted + retried once.
+ */
+/**
+ * CLAIM the lockfile atomically via O_EXCL (cold-review #3 NIT #N1 fix).
+ * The previous claim used temp+rename (writeLock), which is NOT cross-process atomic —
+ * two goals that both observed a free/stale lock in the same tick could both writeLock
+ * and both believe they own it (the same class of TOCTOU cold-review #2 caught for CAS).
+ * O_EXCL (openSync "wx") IS atomic at the OS level: only one process can create the file.
+ *
+ * `forceOverwrite`: when the caller has ALREADY verified (via isLockStale) that the existing
+ * lock is logically stale (e.g. PID recycled — a stronger signal than mtime age), the caller
+ * passes forceOverwrite:true and claimLock unlinks then claims, bypassing the mtime age check.
+ * (Without this, a stale-by-PID-recycling lock whose mtime is recent would never be claimed,
+ *  because tryCreate sees EEXIST and the mtime age check fails — infinite re-queue = hang.)
+ *
+ * Returns true on success, false if the file already exists and is not stale.
+ */
+function claimLock(lockPath: string, contents: WorkspaceLockContents, staleReclaimMs: number, forceOverwrite = false): boolean {
+	mkdirSync(path.dirname(lockPath), { recursive: true });
+	const json = JSON.stringify(contents);
+	const tryCreate = (): boolean => {
+		try {
+			const fd = openSync(lockPath, "wx"); // O_EXCL — throws EEXIST if it exists.
+			try {
+				writeFileSync(fd, json);
+			} finally {
+				closeSync(fd);
+			}
+			return true;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code !== "EEXIST") throw error;
+			return false;
+		}
+	};
+	if (forceOverwrite) {
+		// Caller verified the existing lock is logically stale; remove it and claim. A concurrent
+		// reclaimer might re-create between our unlink and our open — that's fine, we lose the race
+		// and return false, falling through to the queue path.
+		try { unlinkSync(lockPath); } catch { /* best-effort */ }
+		return tryCreate();
+	}
+	if (tryCreate()) return true;
+	// Stale recovery by mtime age: if the lockfile is older than staleReclaimMs, force-delete + retry.
+	try {
+		const stat = statSync(lockPath);
+		if (Date.now() - stat.mtimeMs > staleReclaimMs) {
+			try { unlinkSync(lockPath); } catch { /* fall through */ }
+			return tryCreate();
+		}
+	} catch { /* fall through to false */ }
+	return false;
 }
 
 /**
@@ -217,11 +286,20 @@ export async function acquireWorkspaceLock(
 			);
 		}
 		const existing = readLock(lockPath);
-		if (
-			!existing ||
-			isLockStale(existing, resolveStartTime, heartbeatStaleMs, now()).stale
-		) {
+		// Classify the existing lock: "absent" / "stale" (PID recycled or heartbeat dead) / "live".
+		// Cold-review #3 NIT #N1 fix: when stale, pass forceOverwrite:true to claimLock so it
+		// unlinks the stale file before claiming. Without this, a stale-by-PID lock whose mtime
+		// is recent would never pass claimLock's mtime age check (it would return false) and the
+		// acquireWorkspaceLock poll loop would re-queue forever = hang.
+		const existingKind: "absent" | "stale" | "live" = !existing
+			? "absent"
+			: (isLockStale(existing, resolveStartTime, heartbeatStaleMs, now()).stale ? "stale" : "live");
+		if (existingKind !== "live") {
 			// Claim the lock (covers both no-lock and stale-lock cases).
+			// Cold-review #3 NIT #N1 fix: claim via O_EXCL (claimLock), NOT temp+rename — two
+			// processes racing past the isLockStale check could both writeLock and both believe
+			// they own the lock. claimLock atomically creates the file; if it returns false we
+			// lost the race, so fall through to the queue/re-throw path below.
 			const contents: WorkspaceLockContents = {
 				pid,
 				startTime: writtenStartTime,
@@ -229,16 +307,20 @@ export async function acquireWorkspaceLock(
 				goalId,
 				acquiredAt: new Date(now()).toISOString(),
 			};
-			writeLock(lockPath, contents);
-			return {
-				cwd,
-				goalId,
-				lockPath,
-				startTime: writtenStartTime,
-				release(): void {
-					safeRelease(lockPath, goalId, pid, writtenStartTime);
-				},
-			};
+			const claimed = claimLock(lockPath, contents, heartbeatStaleMs, existingKind === "stale");
+			if (claimed) {
+				return {
+					cwd,
+					goalId,
+					lockPath,
+					startTime: writtenStartTime,
+					release(): void {
+						safeRelease(lockPath, goalId, pid, writtenStartTime);
+					},
+				};
+			}
+			// claimLock lost the race (another process claimed between our stale-check and
+			// our claim). Fall through to the busy path (throw or queue) — re-check next tick.
 		}
 		// Lock is held and live.
 		if (opts.failOnWorkspaceBusy) {
