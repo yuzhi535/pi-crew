@@ -203,10 +203,18 @@ export interface UsageState {
 // Spec: research-findings/goal-workflow/00-SPEC.md §2.3; plan 07-PLAN.md v3 §0b G2 + §0c.
 // ───────────────────────────────────────────────────────────────────────────
 
-/** Outer-state lifecycle of a goal loop. Inner per-turn state lives on each turn's TeamRunManifest. */
+/**
+ * Outer-state lifecycle of a goal loop. Inner per-turn state lives on each turn's TeamRunManifest.
+ *
+ * P1b (RFC v0.5 §P1b): `"stuck"` is NON-TERMINAL and RE-HINTABLE. Legal transitions:
+ *   running → stuck     (only by the background loop, after the oscillation detector fires)
+ *   stuck   → running   (only by `goal resume`, atomically via GoalStore.compareAndSetStatus)
+ *   stuck   → cancelled (by the idle-timeout sweeper OR `goal stop`)
+ */
 export type GoalLoopStatus =
 	| "running"
 	| "paused"
+	| "stuck"
 	| "achieved"
 	| "max_turns"
 	| "budget_exceeded"
@@ -236,9 +244,22 @@ export interface GoalLoopState {
 	maxTurns: number;
 	turnsUsed: number;
 	budgetTotal?: number;
+	/** P1d (RFC v0.5 §P1d): when true, budget enforcement is skipped (explicit opt-out; audit-logged at start). */
+	budgetUnlimited?: boolean;
 	budgetWarning?: number;
 	budgetAbort?: number;
 	budgetUsed: number;
+	/**
+	 * P1a (RFC v0.5 §P1a): bookend integrity snapshot of project-manifest files
+	 * taken at goal start (only when verification.commands is declared). The
+	 * goal-loop-runner re-hashes before (T_snap) and after (T_verify_done) each
+	 * verification command to detect persistent manifest tampering. The literal
+	 * `"none-text-only"` marks goals started in text-only verification mode
+	 * (no objective oracle → no snapshot taken).
+	 */
+	verificationIntegrity?:
+		| { snapshot: Record<string, string>; takenAt: string }
+		| "none-text-only";
 	evaluatorModel: string;
 	workerModel?: string;
 	/** subagent_type / agent name for worker turns (default "executor"). */

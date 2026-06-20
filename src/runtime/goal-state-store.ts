@@ -103,6 +103,32 @@ export class GoalStore {
 		return this.patch(goalId, { state }, eventsPath);
 	}
 
+	/**
+	 * Compare-And-Set status for atomic stuck↔resume transitions (P1b, RFC v0.5 §P1b).
+	 *
+	 * Loads current state; if `current.state === expected`, sets it to `next`,
+	 * persists, and emits a `goal.state_changed` event (reusing the save()
+	 * emission pattern). Otherwise returns undefined (CAS failed — no mutation,
+	 * no event). This prevents lost updates when the background loop and a
+	 * `goal resume`/idle-sweeper session race to flip `state`.
+	 *
+	 * Legal P1b transitions enforced by callers (not by this method):
+	 *   running → stuck,  stuck → running,  stuck → cancelled.
+	 */
+	compareAndSetStatus(
+		goalId: string,
+		expected: GoalLoopStatus,
+		next: GoalLoopStatus,
+		eventsPath?: string,
+	): GoalLoopState | undefined {
+		const current = this.load(goalId);
+		if (!current) return undefined;
+		if (current.state !== expected) return undefined; // CAS failed — state moved underneath us.
+		const updated: GoalLoopState = { ...current, state: next };
+		this.save(updated, eventsPath);
+		return updated;
+	}
+
 	/** Remove a goal file (used by `goal clear`). Returns true if deleted. */
 	remove(goalId: string): boolean {
 		try {

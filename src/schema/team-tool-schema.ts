@@ -250,8 +250,14 @@ export const TeamToolParams = Type.Object({
 	budgetTotal: Type.Optional(
 		Type.Number({
 			description:
-				"Total token budget for the run. When set, enables budget tracking with default 80% warning and 95% abort thresholds.",
-			minimum: 1,
+				"Total token budget for the run. When set, enables budget tracking with default 80% warning and 95% abort thresholds. Minimum 1000 — this is a MISCONFIGURATION GUARD (catches typos / silent-abort configs like budgetTotal:1, which would abort on turn 1), NOT a usefulness guarantee; a productive multi-turn goal needs far more than 1000 tokens.",
+			minimum: 1000,
+		}),
+	),
+	budgetUnlimited: Type.Optional(
+		Type.Boolean({
+			description:
+				"When true, skip budget enforcement entirely (explicit opt-out). Goal-start validation requires budgetTotal>=1000 OR budgetUnlimited:true; audit-logged when set. The validation itself is enforced in a later integration task.",
 		}),
 	),
 	budgetWarning: Type.Optional(
@@ -377,8 +383,10 @@ export interface TeamToolParamsValue {
 	once?: string | number;
 	/** Mark certain bash commands as excludeFromContext to reduce context tokens (default: false). */
 	excludeContextBash?: boolean;
-	/** Total token budget for the run. When set, enables budget tracking. */
+	/** Total token budget for the run. When set, enables budget tracking (minimum 1000). */
 	budgetTotal?: number;
+	/** When true, skip budget enforcement entirely (explicit opt-out). */
+	budgetUnlimited?: boolean;
 	/** Budget warning threshold as a fraction (0-1). Default: 0.8. */
 	budgetWarning?: number;
 	/** Budget abort threshold as a fraction (0-1). Default: 0.95. */
