@@ -179,6 +179,26 @@ function buildTurnWorkflow(): WorkflowConfig {
 }
 
 /**
+ * Resolve the per-turn worker workflow. If the goal state carries `goalWrapWorkflow`
+ * (RFC v0.5 goal-wrap), resolve that builtin workflow and use it as the worker turn;
+ * otherwise fall back to the default 1-step goal-turn. Re-resolved each turn so the
+ * latest builtin definition is used (and adaptive planners re-plan with feedback).
+ */
+function resolveGoalTurnWorkflow(goal: GoalLoopState): WorkflowConfig {
+	const wrapName = (goal as GoalLoopState & { goalWrapWorkflow?: string }).goalWrapWorkflow;
+	if (!wrapName) return buildTurnWorkflow();
+	try {
+		const { discoverWorkflows, allWorkflows } = require("../workflows/discover-workflows.ts") as typeof import("../workflows/discover-workflows.ts");
+		const found = allWorkflows(discoverWorkflows(goal.cwd)).find((w) => w.name === wrapName && w.source === "builtin");
+		if (found) return found;
+		logInternalError("goal-loop.goalWrapWorkflow", new Error(`builtin workflow '${wrapName}' not found; falling back to goal-turn`), `goalId=${goal.goalId}`);
+	} catch (error) {
+		logInternalError("goal-loop.goalWrapWorkflow", error, `goalId=${goal.goalId} wrapName=${wrapName}`);
+	}
+	return buildTurnWorkflow();
+}
+
+/**
  * Synthesize a single-role team (§0c C9) — createRunManifest requires a team.
  * Mirrors direct-run.ts but uses source:"dynamic" (not "builtin") per C7/C9.
  */
@@ -374,7 +394,11 @@ export async function runGoalLoop(input: RunGoalLoopInput): Promise<RunGoalLoopR
 	const evaluator: GoalEvaluatorFn = realGoalEvaluator; // P1: real LLM judge (P0 used stubGoalEvaluator).
 	const eventsPath = manifest.eventsPath;
 	const team = buildGoalTeam(goal);
-	const workflow = buildTurnWorkflow();
+	// RFC v0.5 vision: goal-wrap. If the goal state carries `goalWrapWorkflow`, resolve that
+	// builtin workflow and use it as the worker turn (instead of the default 1-step goal-turn).
+	// This makes the builtin workflow (e.g. implementation, fast-fix) run as the worker inside
+	// the goal loop, so Phase 1's completion-guarantee applies to the whole workflow.
+	const workflow = resolveGoalTurnWorkflow(goal);
 	const agents = input.deps.discoverAgents(goal.cwd);
 
 	appendEvent(eventsPath, { type: "goal.loop_start", runId: manifest.runId, data: { goalId: goal.goalId, objective: goal.objective, maxTurns: goal.maxTurns } });

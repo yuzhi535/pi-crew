@@ -62,6 +62,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PiTeamsToolResult } from "../tool-result.ts";
 import { buildParentContext, result, type TeamContext } from "./context.ts";
+import { isGoalWrapEnabled, startGoalWrappedRun } from "./goal-wrap.ts";
 import { effectiveRunConfig } from "./config-patch.ts";
 
 function tailFile(filePath: string, maxBytes = 4096): string | undefined {
@@ -187,6 +188,14 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	} : workflows.find((item) => item.name === workflowName);
 	if (!baseWorkflow) return result(`Workflow '${workflowName}' not found.`, { action: "run", status: "error" }, true);
 	const workflow = directAgent ? baseWorkflow : expandParallelResearchWorkflow(baseWorkflow, resolvedCtx.cwd);
+
+	// RFC v0.5 vision: goal-wrap. If .crew/config.json has goalWrap[workflow.name].enabled=true,
+	// route to a goal loop where this workflow runs as the worker turn (judge → feedback → redo
+	// until achieved). Only for eligible builtins (implementation, fast-fix, default). Per-workflow
+	// toggle; OFF by default. See goal-wrap.ts.
+	if (!directAgent && workflow.source === "builtin" && isGoalWrapEnabled(resolvedCtx.cwd, workflow.name)) {
+		return await startGoalWrappedRun(params, ctx, workflow, goal);
+	}
 
 	// Check if this is a pipeline workflow - special handling for multi-stage execution
 	const isPipelineWorkflow = workflowName === "pipeline" && !directAgent;

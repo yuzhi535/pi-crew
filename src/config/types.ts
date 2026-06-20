@@ -84,6 +84,16 @@ export interface CrewWorktreeConfig {
 	seedPaths?: string[];
 }
 
+/** Goal-wrap config (RFC v0.5 vision: apply `goal` completion-guarantee to builtin workflows). */
+export interface GoalWrapWorkflowConfig {
+	enabled?: boolean;
+	maxTurns?: number;
+	evaluatorModel?: string;
+	verification?: { commands: string[]; mode?: "text-only" };
+	budgetTotal?: number;
+	budgetUnlimited?: boolean;
+}
+
 export interface CrewUiConfig {
 	widgetPlacement?: "aboveEditor" | "belowEditor";
 	widgetMaxLines?: number;
@@ -217,6 +227,7 @@ export interface PiTeamsConfig {
 	runtime?: CrewRuntimeConfig;
 	control?: CrewControlConfig;
 	worktree?: CrewWorktreeConfig;
+	goalWrap?: Record<string, GoalWrapWorkflowConfig>;
 	agents?: CrewAgentsConfig;
 	tools?: CrewToolsConfig;
 	telemetry?: CrewTelemetryConfig;

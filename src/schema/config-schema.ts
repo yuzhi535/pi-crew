@@ -59,6 +59,31 @@ export const PiTeamsWorktreeConfigSchema = Type.Object({
 	seedPaths: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 }, { additionalProperties: false });
 
+/**
+ * Goal-wrap config (RFC v0.5 vision: apply `goal` completion-guarantee to builtin workflows).
+ * Per-workflow toggle. When enabled, a builtin workflow runs as the WORKER TURN inside a
+ * goal loop (worker → judge → feedback → redo until achieved / maxTurns / budget / stuck).
+ * Default OFF — opt-in per workflow. Only applies to builtin workflows that have a clear
+ * 'done' condition (implementation, fast-fix). Read-only workflows (review, research) are
+ * not goal-wrappable.
+ */
+export const GoalWrapWorkflowConfigSchema = Type.Object({
+	enabled: Type.Optional(Type.Boolean()),
+	maxTurns: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+	evaluatorModel: Type.Optional(Type.String({ minLength: 1 })),
+	verification: Type.Optional(Type.Object({
+		commands: Type.Array(Type.String({ minLength: 1 })),
+		mode: Type.Optional(Type.Literal("text-only")),
+	}, { additionalProperties: false })),
+	budgetTotal: Type.Optional(Type.Integer({ minimum: 1000 })),
+	budgetUnlimited: Type.Optional(Type.Boolean()),
+}, { additionalProperties: false });
+
+export const PiTeamsGoalWrapConfigSchema = Type.Record(
+	Type.String({ minLength: 1 }),
+	GoalWrapWorkflowConfigSchema,
+);
+
 export const AgentOverrideSchema = Type.Object({
 	disabled: Type.Optional(Type.Boolean()),
 	model: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Literal(false)])),
@@ -152,6 +177,7 @@ export const PiTeamsConfigSchema = Type.Object({
 	runtime: Type.Optional(PiTeamsRuntimeConfigSchema),
 	control: Type.Optional(PiTeamsControlConfigSchema),
 	worktree: Type.Optional(PiTeamsWorktreeConfigSchema),
+	goalWrap: Type.Optional(PiTeamsGoalWrapConfigSchema),
 	agents: Type.Optional(PiTeamsAgentsConfigSchema),
 	tools: Type.Optional(PiTeamsToolsConfigSchema),
 	telemetry: Type.Optional(PiTeamsTelemetryConfigSchema),
