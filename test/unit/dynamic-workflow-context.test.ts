@@ -152,6 +152,20 @@ test("classifyReviewOutcome: reject wins over accept (verdict signal dominates)"
 	assert.equal(classifyReviewOutcome("It correctly returns a value, but there is a critical bug in the logic."), "reject");
 });
 
+test("classifyReviewOutcome: REGRESSION — real MiniMax-M3 buggy-code review → reject", () => {
+	// Exact prose captured from the runtime test-review-final run (scenario 1, buggy code).
+	const { classifyReviewOutcome } = require("../../src/runtime/dynamic-workflow-context.ts") as typeof import("../../src/runtime/dynamic-workflow-context.ts");
+	const realProse = "The add function uses subtraction (-) instead of addition (+), which produces incorrect results and contradicts the function's purpose. Although the bug is flagged in a comment, shipping broken code is unacceptable; replace 'a - b' with 'a + b' and remove the placeholder bug note.";
+	assert.equal(classifyReviewOutcome(realProse), "reject", "buggy-code review must NOT be classified accept/changes");
+});
+
+test("classifyReviewOutcome: REGRESSION — real MiniMax-M3 correct-code review → accept", () => {
+	// Exact prose captured from the runtime test-review-final run (scenario 2, correct code).
+	const { classifyReviewOutcome } = require("../../src/runtime/dynamic-workflow-context.ts") as typeof import("../../src/runtime/dynamic-workflow-context.ts");
+	const realProse = "The add function correctly returns the sum of two numbers and includes input validation that throws a TypeError for non-number arguments, matching the expected behavior implied by the task name.";
+	assert.equal(classifyReviewOutcome(realProse), "accept", "correct-code review must be classified accept");
+});
+
 test("review(): returns verdict directly when reviewer emits JSON (1-step)", async () => {
 	const cwd = tmpCwd();
 	try {

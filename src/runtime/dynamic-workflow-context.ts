@@ -289,16 +289,15 @@ export function makeWorkflowCtx(manifest: TeamRunManifest, opts: MakeWorkflowCtx
 						: "changes_requested";
 					return { outcome, feedback: judged.feedback };
 				}
-				// Tier-3 fallback (round-11): when the judge ALSO ignores JSON (common with
-				// MiniMax-M3, GLM), classify the outcome from the reviewer's prose sentiment.
-				// This keeps outcome ACCURATE (accept vs reject vs changes_requested) even when
-				// no JSON is ever produced. Without this, outcome was always the hardcoded
-				// 'changes_requested' default — e.g. correct code got 'changes_requested'.
-				if (judge.text.trim()) {
-					return { outcome: classifyReviewOutcome(judge.text), feedback: judge.text };
-				}
 			}
-			// Tier-4 fallback: classify directly from the reviewer's prose when no judge ran.
+			// Tier-3 sentiment fallback (round-11): when neither the reviewer nor the judge
+			// produced JSON (common with MiniMax-M3, GLM, which ignore JSON-output
+			// instructions), classify the outcome from the REVIEWER's prose sentiment. We use
+			// the reviewer's text (not the judge's terse output) because the original review is
+			// the richest sentiment signal. This keeps outcome ACCURATE (accept vs reject vs
+			// changes_requested) even when no JSON is ever produced — without it, outcome was
+			// always the hardcoded 'changes_requested' default (e.g. correct code was
+			// misclassified as needing changes).
 			if (res.text.trim()) {
 				return { outcome: classifyReviewOutcome(res.text), feedback: res.text };
 			}
@@ -394,6 +393,8 @@ export function classifyReviewOutcome(prose: string): "accept" | "reject" | "cha
 		"lgtm", "ship it", "correctly implements", "correctly returns",
 		"works as expected", "works correctly", "no bugs", "no defects",
 		"meets all requirements", "all requirements met", "passes all",
+		"is correct", "are correct", "no changes needed", "no changes required",
+		"no further changes", "nothing more to", "complete and correct", "sound implementation",
 	];
 	const hasReject = rejectSignals.some((sig) => new RegExp(sig).test(text));
 	const hasAccept = acceptSignals.some((sig) => new RegExp(sig).test(text));
