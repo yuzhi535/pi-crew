@@ -51,7 +51,7 @@ export function isSecretKey(keyName: string): boolean {
 	// Linear scan for prefix characters followed by keywords
 	const prefixes = "_.-";
 	const keywords = ["token", "api", "key", "password", "passwd", "secret", "credential", "authorization", "private"];
-	
+
 	for (let i = 0; i < keyName.length; i++) {
 		if (prefixes.includes(keyName[i])) {
 			const remaining = keyName.substring(i + 1).toLowerCase();
@@ -63,6 +63,33 @@ export function isSecretKey(keyName: string): boolean {
 					}
 				}
 			}
+		}
+	}
+	// FIX (P1f, surfaced by notification-sink test): also match camelCase
+	// boundaries (e.g. `apiToken`, `clientSecret`, `authKey`) — the separator
+	// scan above requires `_-.` between prefix and keyword and MISSES the very
+	// common camelCase pattern. Scan: a keyword matches if it appears with a
+	// word boundary (start of string, end of string, camelCase lowercase->upper
+	// transition, or one of `_-.` separators). Linear: one forward pass.
+	for (const kw of keywords) {
+		let from = 0;
+		while (true) {
+			const idx = lower.indexOf(kw, from);
+			if (idx === -1) break;
+			const before = idx === 0 ? "" : lower.charAt(idx - 1);
+			const afterIdx = idx + kw.length;
+			const afterCh = afterIdx >= lower.length ? "" : lower.charAt(afterIdx);
+			const atStart = idx === 0;
+			const atEnd = afterIdx === lower.length;
+			const camelBoundary = /[A-Z]/.test(keyName.charAt(afterIdx)); // lowercase->uppercase in original
+			const sepBoundary = prefixes.includes(before) || prefixes.includes(afterCh);
+			if (atStart || atEnd || camelBoundary || sepBoundary) {
+				// Require non-empty chars before/after to avoid matching `api` inside `capitalize`
+				const hasBefore = idx > 0;
+				const hasAfter = afterIdx < lower.length;
+				if (hasBefore || hasAfter) return true;
+			}
+			from = idx + 1;
 		}
 	}
 	return false;

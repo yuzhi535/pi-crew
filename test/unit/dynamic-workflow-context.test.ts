@@ -15,6 +15,7 @@ import {
 	synthesizeAgentConfig,
 	makeWorkflowCtx,
 	getWorkflowFinalResult,
+	classifyReviewOutcome,
 } from "../../src/runtime/dynamic-workflow-context.ts";
 import type { TeamRunManifest } from "../../src/state/types.ts";
 
@@ -127,41 +128,35 @@ test("ctx.agent() returns ok:false on spawn failure (mock without PI_CREW_ALLOW_
 // These mock ctx.agent to verify review()'s verdict logic without spawning real pi.
 
 test("classifyReviewOutcome: reject on critical-bug signals", () => {
-	const { classifyReviewOutcome } = require("../../src/runtime/dynamic-workflow-context.ts") as typeof import("../../src/runtime/dynamic-workflow-context.ts");
 	assert.equal(classifyReviewOutcome("The function has a critical bug: it subtracts instead of adds."), "reject");
 	assert.equal(classifyReviewOutcome("This is fundamentally wrong and will not work."), "reject");
 	assert.equal(classifyReviewOutcome("Security vulnerability found. Do not merge."), "reject");
 });
 
 test("classifyReviewOutcome: accept on explicit approval signals", () => {
-	const { classifyReviewOutcome } = require("../../src/runtime/dynamic-workflow-context.ts") as typeof import("../../src/runtime/dynamic-workflow-context.ts");
 	assert.equal(classifyReviewOutcome("The function correctly returns the sum and looks good."), "accept");
 	assert.equal(classifyReviewOutcome("No issues found. Ready to merge."), "accept");
 	assert.equal(classifyReviewOutcome("Works as expected, meets all requirements."), "accept");
 });
 
 test("classifyReviewOutcome: changes_requested as neutral default", () => {
-	const { classifyReviewOutcome } = require("../../src/runtime/dynamic-workflow-context.ts") as typeof import("../../src/runtime/dynamic-workflow-context.ts");
 	assert.equal(classifyReviewOutcome("The code could use some refactoring and additional comments."), "changes_requested");
 	assert.equal(classifyReviewOutcome("Consider adding more test coverage."), "changes_requested");
 });
 
 test("classifyReviewOutcome: reject wins over accept (verdict signal dominates)", () => {
-	const { classifyReviewOutcome } = require("../../src/runtime/dynamic-workflow-context.ts") as typeof import("../../src/runtime/dynamic-workflow-context.ts");
 	// Reviewer describes existing code as "correctly returns" but verdict is critical bug.
 	assert.equal(classifyReviewOutcome("It correctly returns a value, but there is a critical bug in the logic."), "reject");
 });
 
 test("classifyReviewOutcome: REGRESSION — real MiniMax-M3 buggy-code review → reject", () => {
 	// Exact prose captured from the runtime test-review-final run (scenario 1, buggy code).
-	const { classifyReviewOutcome } = require("../../src/runtime/dynamic-workflow-context.ts") as typeof import("../../src/runtime/dynamic-workflow-context.ts");
 	const realProse = "The add function uses subtraction (-) instead of addition (+), which produces incorrect results and contradicts the function's purpose. Although the bug is flagged in a comment, shipping broken code is unacceptable; replace 'a - b' with 'a + b' and remove the placeholder bug note.";
 	assert.equal(classifyReviewOutcome(realProse), "reject", "buggy-code review must NOT be classified accept/changes");
 });
 
 test("classifyReviewOutcome: REGRESSION — real MiniMax-M3 correct-code review → accept", () => {
 	// Exact prose captured from the runtime test-review-final run (scenario 2, correct code).
-	const { classifyReviewOutcome } = require("../../src/runtime/dynamic-workflow-context.ts") as typeof import("../../src/runtime/dynamic-workflow-context.ts");
 	const realProse = "The add function correctly returns the sum of two numbers and includes input validation that throws a TypeError for non-number arguments, matching the expected behavior implied by the task name.";
 	assert.equal(classifyReviewOutcome(realProse), "accept", "correct-code review must be classified accept");
 });
