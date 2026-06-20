@@ -21,7 +21,7 @@ import { spawnBackgroundTeamRun } from "../../subagents/async-entry.ts";
 import { GoalStore } from "../../runtime/goal-state-store.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
 import { snapshotManifests } from "../../runtime/verification-integrity.ts";
-import { acquireWorkspaceLock, type WorkspaceLockHandle } from "../../runtime/workspace-lock.ts";
+import { acquireWorkspaceLock, isWorkspaceBusy, type WorkspaceLockHandle } from "../../runtime/workspace-lock.ts";
 import type { GoalLoopState, GoalLoopStatus, TeamRunManifest } from "../../state/types.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 
@@ -89,6 +89,19 @@ async function handleStart(input: GoalSubActionInput): Promise<ReturnType<typeof
 		const hasBudgetTotal = typeof params.budgetTotal === "number" && params.budgetTotal >= 1000;
 		if (!budgetUnlimited && !hasBudgetTotal) {
 			throw new Error("`goal start` requires either config.budgetTotal (>=1000, schema-enforced) OR config.budgetUnlimited:true (audit-logged opt-out). No silent unbounded-spend default.");
+		}
+		// Cold-review #2 nit: reject the mutually-exclusive combination. If both are set the
+		// runner silently lets budgetUnlimited win, surprising the user.
+		if (budgetUnlimited && hasBudgetTotal) {
+			throw new Error("`goal start`: config.budgetTotal and config.budgetUnlimited are mutually exclusive. Set exactly one.");
+		}
+		// P1g (cold-review #2 BLOCKING fix): pre-check the workspace lock BEFORE spawning. If another
+		// goal already owns this cwd's lock, fail-fast with a clear error (the runner would otherwise
+		// queue silently inside the background process). isWorkspaceBusy peeks the lockfile without
+		// acquiring. The authoritative acquisition happens in runGoalLoop.
+		const busyOwner = isWorkspaceBusy(cwd);
+		if (busyOwner) {
+			throw new Error(`Workspace '${cwd}' is already locked by goal '${busyOwner}'. Concurrent goals on the same single-workspace cwd are serialized to prevent edit clobbering. Stop the other goal first, or use a separate workspace.`);
 		}
 		const verification = params.config?.verification as { commands: string[]; allowManualEvidence?: boolean; mode?: string } | undefined;
 		const isTextOnly = verification?.mode === "text-only";
@@ -335,9 +348,12 @@ async function handleResume(input: GoalSubActionInput): Promise<ReturnType<typeo
 		return result(`Goal ${goalId} resumed from '${existing.state}' (background pid=${spawned.pid ?? 0}).${hint ? ` Hint injected for next turn.` : ""}`, { action: "goal", status: "ok", data: { goalId, state: "running", fromState: existing.state, pid: spawned.pid } }, false);
 	} catch (spawnError) {
 		const msg = spawnError instanceof Error ? spawnError.message : String(spawnError);
-		// Roll back: keep the goal marked running but note the spawn failure.
-		appendEvent(eventsPath, { type: "goal.resume_spawn_failed", runId: goalId, data: { goalId, error: msg } });
-		return result(`Goal ${goalId} state set to 'running' but background re-spawn failed: ${msg}. The goal file is correct; retry 'goal resume' to re-attempt the spawn.`, { action: "goal", status: "error", data: { goalId, spawnFailed: true } }, true);
+		// Cold-review #2 nit: roll back to the PRIOR state (paused/stuck) so the user can retry
+		// 'goal resume' (which requires paused/stuck). Leaving it at 'running' with no process made
+		// the goal un-resumable — the user had to pause-then-resume as a workaround.
+		store.compareAndSetStatus(goalId, "running", existing.state, eventsPath);
+		appendEvent(eventsPath, { type: "goal.resume_spawn_failed", runId: goalId, data: { goalId, error: msg, rolledBackTo: existing.state } });
+		return result(`Goal ${goalId} background re-spawn failed: ${msg}. State rolled back to '${existing.state}'. Retry 'goal resume' to re-attempt.`, { action: "goal", status: "error", data: { goalId, spawnFailed: true, state: existing.state } }, true);
 	}
 }
 

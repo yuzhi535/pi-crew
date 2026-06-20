@@ -22,6 +22,7 @@ import { executeTeamRun } from "./team-runner.ts";
 import { GoalStore } from "./goal-state-store.ts";
 import { evaluateGoal, bundleEvidence } from "./goal-evaluator.ts";
 import { withWorkerSlot } from "./global-worker-cap.ts";
+import { acquireWorkspaceLock, type WorkspaceLockHandle } from "./workspace-lock.ts";
 import { existsSync, readdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { logInternalError } from "../utils/internal-error.ts";
@@ -226,17 +227,19 @@ function composeGoalPrompt(goal: GoalLoopState): string {
 	const rawFeedback = goal.nextTurnFeedback?.trim();
 	if (!rawFeedback) return goal.objective;
 	const feedback = sanitizeFeedback(rawFeedback);
-	// P1c: detect if this same reason has been raised before. Count consecutive-or-recent matches
-	// in the verdict history (case-insensitive normalized comparison of the reason prefix).
+	// P1c: detect if this same reason has been raised before. Count consecutive PRIOR matches
+	// in the verdict history (the LAST verdict IS the current one that generated this feedback,
+	// so start at length-2 to skip it). Cold-review #2 nit: the original started at length-1,
+	// double-counting the current verdict and firing "raised 2 times" on the first occurrence.
 	const reasons = goal.verdicts.map((v) => v.reason.slice(0, 200).toLowerCase());
 	const currentReason = rawFeedback.slice(0, 200).toLowerCase();
-	let recurrence = 0;
-	for (let i = reasons.length - 1; i >= 0; i--) {
-		if (reasons[i] === currentReason) recurrence++;
+	let priorMatches = 0;
+	for (let i = reasons.length - 2; i >= 0; i--) {
+		if (reasons[i] === currentReason) priorMatches++;
 		else break; // count consecutive tail matches only (oscillation = exact repeat)
 	}
-	const recurrenceNote = recurrence >= 1
-		? `\n_Note: this same issue has now been raised ${recurrence + 1} time(s). If you genuinely cannot resolve it, stop attempting the same fix and explain the blocker instead._`
+	const recurrenceNote = priorMatches >= 1
+		? `\n_Note: this same issue has now been raised ${priorMatches + 1} time(s). If you genuinely cannot resolve it, stop attempting the same fix and explain the blocker instead._`
 		: "";
 	// P1e: per-turn unpredictable nonce. randomBytes(6) -> 12 hex chars (48 bits of entropy),
 	// comfortably unguessable. The worker is told the contents are DATA only.
@@ -376,6 +379,22 @@ export async function runGoalLoop(input: RunGoalLoopInput): Promise<RunGoalLoopR
 
 	appendEvent(eventsPath, { type: "goal.loop_start", runId: manifest.runId, data: { goalId: goal.goalId, objective: goal.objective, maxTurns: goal.maxTurns } });
 
+	// P1g (RFC v0.5 §P1g, cold-review #2 BLOCKING fix): acquire the workspace lock for the
+	// goal's lifetime. This serializes concurrent goals targeting the same cwd (workspaceMode:
+	// "single"), closing the multi-goal-clobber vector (#8). Released in the finally below.
+	// The lock is file-based (startTime-safe via stale-reconciler pattern) so it survives across
+	// the background-process boundary. `goal start` / `goal resume` pre-check via isWorkspaceBusy
+	// for a good error message; this acquisition is the authoritative claim.
+	let workspaceLock: WorkspaceLockHandle | undefined;
+	try {
+		workspaceLock = await acquireWorkspaceLock(goal.cwd, goal.goalId, { signal });
+	} catch (error) {
+		logInternalError("goal-loop.workspaceLock", error, `goalId=${goal.goalId} cwd=${goal.cwd}`);
+		goal = safeSetStatus(store, goal.goalId, "blocked", goal, eventsPath);
+		appendEvent(eventsPath, { type: "goal.workspace_lock_failed", runId: manifest.runId, data: { goalId: goal.goalId, error: error instanceof Error ? error.message : String(error) } });
+		return { manifest, tasks: [], goalState: goal };
+	}
+
 	try {
 		while (goal.state === "running" && goal.turnsUsed < goal.maxTurns) {
 			if (signal.aborted) {
@@ -506,6 +525,8 @@ export async function runGoalLoop(input: RunGoalLoopInput): Promise<RunGoalLoopR
 		logInternalError("goal-loop.run", error, `goalId=${goal.goalId}`);
 		goal = safeSetStatus(store, goal.goalId, "blocked", goal, eventsPath);
 	} finally {
+		// P1g: release the workspace lock (held since loop start).
+		try { workspaceLock?.release(); } catch { /* best-effort */ }
 		appendEvent(eventsPath, { type: "goal.loop_end", runId: manifest.runId, data: { goalId: goal.goalId, state: goal.state, turnsUsed: goal.turnsUsed, budgetUsed: goal.budgetUsed } });
 	}
 

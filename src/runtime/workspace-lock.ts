@@ -301,6 +301,25 @@ function sleepOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
  * Useful as a startup or periodic sweep to clear locks left by crashed
  * processes before any goal tries to acquire them.
  */
+/**
+ * Peek whether the workspace is currently locked by a live owner (without acquiring).
+ * Used by `goal start` / `goal resume` to fail-fast with a clear error BEFORE spawning.
+ * Returns the goalId of the current owner if busy, undefined if free (or lock missing).
+ */
+export function isWorkspaceBusy(
+	cwd: string,
+	opts: { startTimeResolver?: StartTimeResolver; heartbeatStaleMs?: number; now?: () => number } = {},
+): string | undefined {
+	const lockPath = workspaceLockPath(cwd);
+	const resolveStartTime = opts.startTimeResolver ?? defaultStartTimeResolver;
+	const heartbeatStaleMs = opts.heartbeatStaleMs ?? DEFAULT_HEARTBEAT_STALE_MS;
+	const now = opts.now ?? Date.now;
+	const existing = readLock(lockPath);
+	if (!existing) return undefined;
+	const { stale } = isLockStale(existing, resolveStartTime, heartbeatStaleMs, now());
+	return stale ? undefined : existing.goalId;
+}
+
 export function reclaimStaleLocks(
 	dir: string,
 	opts: {

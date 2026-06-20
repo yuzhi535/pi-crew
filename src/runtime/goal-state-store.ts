@@ -13,7 +13,7 @@
  * per-turn usage stays on each turn's TeamRunManifest/tasks.json.
  */
 
-import { mkdirSync, existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, openSync, closeSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { atomicWriteJson } from "../state/atomic-write.ts";
 import { appendEvent } from "../state/event-log.ts";
@@ -115,18 +115,60 @@ export class GoalStore {
 	 * Legal P1b transitions enforced by callers (not by this method):
 	 *   running → stuck,  stuck → running,  stuck → cancelled.
 	 */
+	/**
+	 * Cross-process-safe compare-and-set (cold-review #2 HIGH #2 fix).
+	 *
+	 * The synchronous read-check-write is only atomic within one event loop. `goal resume` runs
+	 * in a DIFFERENT process than the (exited) loop, so two concurrent resumes both see
+	 * `stuck`, both pass the CAS, both spawn → double background loops, double budget burn.
+	 *
+	 * Fix: wrap the read-modify-write in an O_EXCL lockfile per goalId. O_EXCL is atomic at the
+	 * OS level — only one process can create the lockfile. The operation is fast (ms), so stale
+	 * lockfiles are rare; a 5s age guard force-clears them (crash recovery).
+	 */
 	compareAndSetStatus(
 		goalId: string,
 		expected: GoalLoopStatus,
 		next: GoalLoopStatus,
 		eventsPath?: string,
 	): GoalLoopState | undefined {
-		const current = this.load(goalId);
-		if (!current) return undefined;
-		if (current.state !== expected) return undefined; // CAS failed — state moved underneath us.
-		const updated: GoalLoopState = { ...current, state: next };
-		this.save(updated, eventsPath);
-		return updated;
+		const lockPath = `${goalFilePath(this.cwd, goalId)}.cas.lock`;
+		if (!this.acquireCasLock(lockPath)) {
+			return undefined; // Another process holds the CAS lock — caller treats as CAS-failed.
+		}
+		try {
+			const current = this.load(goalId);
+			if (!current) return undefined;
+			if (current.state !== expected) return undefined; // CAS failed — state moved underneath us.
+			const updated: GoalLoopState = { ...current, state: next };
+			this.save(updated, eventsPath);
+			return updated;
+		} finally {
+			try { unlinkSync(lockPath); } catch { /* best-effort; may already be gone */ }
+		}
+	}
+
+	/** Acquire an O_EXCL lockfile for CAS, with stale-lock recovery (5s age guard). */
+	private acquireCasLock(lockPath: string): boolean {
+		try {
+			const fd = openSync(lockPath, "wx"); // O_EXCL — throws EEXIST if already exists.
+			closeSync(fd);
+			return true;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code !== "EEXIST") return false;
+			// Stale recovery: if the lockfile is older than 5s, force-delete and retry once.
+			try {
+				const stat = statSync(lockPath);
+				if (Date.now() - stat.mtimeMs > 5000) {
+					unlinkSync(lockPath);
+				const fd = openSync(lockPath, "wx");
+				closeSync(fd);
+				return true;
+			}
+			} catch { /* fall through */ }
+			return false;
+		}
 	}
 
 	/** Remove a goal file (used by `goal clear`). Returns true if deleted. */
