@@ -130,7 +130,12 @@ test("INTEGRATION: with sanitize ON + PRESERVE_ENV, explicitly-preserved secret 
 	);
 });
 
-test("INTEGRATION: sanitize ON keeps essential non-secret vars (PATH, HOME)", async () => {
+test("INTEGRATION: sanitize ON keeps essential non-secret vars (PATH, HOME)", async (t) => {
+	// This test spawns `printenv`, which is a Unix-only utility. Skip on Windows.
+	if (process.platform === "win32") {
+		t.skip("printenv is Unix-only; sanitize-env allowlist is unit-tested separately");
+		return;
+	}
 	return withEnv(
 		{
 			PI_CREW_VERIFICATION_SANITIZE_ENV: "1",

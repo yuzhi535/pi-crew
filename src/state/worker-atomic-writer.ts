@@ -46,10 +46,12 @@ function isSymlinkSafePath(filePath) {
       try {
         const stat = fs.lstatSync(dir);
         if (stat.isSymbolicLink()) {
-          // Accept symlinks under /tmp (macOS /var/folders) and project dirs;
-          // reject others. Mirrors atomic-write.ts policy for goal-loop paths.
+          // Accept symlinks under the system temp dir (Linux /tmp, macOS
+          // /var → /private/var) and project dirs; reject others. Mirrors
+          // atomic-write.ts policy for goal-loop paths.
           const real = fs.realpathSync(dir);
-          if (!real.startsWith("/tmp/") && !real.startsWith(process.cwd())) {
+          const tmpReal = fs.realpathSync(require("node:os").tmpdir());
+          if (!real.startsWith(tmpReal + path.sep) && !real.startsWith(process.cwd() + path.sep) && real !== tmpReal && real !== process.cwd()) {
             return false;
           }
         }

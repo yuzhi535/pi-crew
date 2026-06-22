@@ -36,6 +36,10 @@ function makeTempGitRepo(): string {
 	execFileSync("git", ["init", "-q"], { cwd: dir });
 	execFileSync("git", ["config", "user.email", "test@test.test"], { cwd: dir });
 	execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+	// Prevent CRLF conversion on Windows (core.autocrlf=true is the default on
+	// GitHub Actions windows-latest runners) so the worktree content matches
+	// the LF-only bytes the test writes/expects.
+	execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: dir });
 	fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "wt-test", version: "1.0.0" }));
 	fs.writeFileSync(path.join(dir, "test.js"), "console.log('PASS');\n");
 	execFileSync("git", ["add", "."], { cwd: dir });

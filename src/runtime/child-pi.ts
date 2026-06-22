@@ -245,6 +245,20 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 			"XDG_DATA_HOME",
 			"XDG_CACHE_HOME",
 			"XDG_RUNTIME_DIR",
+			// Windows essentials: without APPDATA, USERPROFILE, LOCALAPPDATA,
+			// SystemRoot, ComSpec, TEMP, TMP, child processes on Windows can't
+			// locate npm-global (`%APPDATA%\npm`), the user profile, system DLLs,
+			// cmd.exe, or a writable temp dir. npm-global resolution falls back
+			// to creating a literal `${APPDATA}/npm` directory in the cwd
+			// (observed bug report: project `.gitignore` got a `${APPDATA}` line
+			// and a phantom `${APPDATA}/npm/` dir appeared in the project root).
+			"APPDATA",
+			"LOCALAPPDATA",
+			"USERPROFILE",
+			"SystemRoot",
+			"ComSpec",
+			"TEMP",
+			"TMP",
 			"NVM_BIN",
 			"NVM_DIR",
 			"NVM_INC",
