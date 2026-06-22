@@ -1,5 +1,100 @@
 # Changelog
 
+## [v0.9.1] — Windows essentials fix + cross-platform CI green (2026-06-22)
+
+Patch release. No new features. Fixes a real Windows bug reported by a user,
+plus the cross-platform CI failures that followed.
+
+### fix(windows): `${APPDATA}` npm-global resolution failure (root cause)
+
+Reported symptom (Windows): running pi-crew created a phantom literal
+`${APPDATA}/npm/` directory in the project root (containing `node_modules`,
+`pi-crew`, `pi-crew.cmd`, `pi-crew.ps1`) and leaked a literal `${APPDATA}`
+line into `.gitignore`.
+
+Root cause: pi-crew's subprocess env sanitization used explicit allowlists
+that stripped **all Windows-essential env vars** (`APPDATA`, `LOCALAPPDATA`,
+`USERPROFILE`, `SystemRoot`, `ComSpec`, `TEMP`, `TMP`). When a child pi
+process (or npm inside it) tried to resolve the npm-global prefix on Windows,
+it used `%APPDATA%` (cmd expansion) / `${APPDATA}` (bash expansion), but
+`APPDATA` was missing from the env — so the shell left the literal
+`${APPDATA}` in place and operations created/ignored paths under that
+literal name.
+
+Fix: added the 7 Windows essentials to all 7 subprocess env allowlists
+(child-pi, async-runner, verification-gates, post-checks, iteration-hooks,
+worktree/cleanup, worktree/worktree-manager). (commit `a7ddc50`)
+
+### refactor(env): centralize Windows essentials + regression guard
+
+The same 7 vars were duplicated inline across 9 call sites — easy to forget
+on a new allowlist, with nothing preventing a future site from omitting them.
+
+- New single source of truth: `WINDOWS_ESSENTIAL_ENV_VARS` in
+  `src/utils/env-allowlist.ts` (with full root-cause documentation).
+- All 9 call sites now spread the constant instead of inlining (net −42/+19
+  lines, behavior unchanged).
+- New regression test `test/unit/env-allowlist.test.ts`: scans ALL
+  `src/**/*.ts` files and fails if any hardcodes the 7 vars inline (the only
+  allowed location is the constant file). This catches any new allowlist that
+  forgets the constant — the exact regression that caused the bug.
+(commit `6a0284c`)
+
+### fix(ci): cross-platform CI green (ubuntu + macOS + Windows)
+
+Three distinct containment/path bugs that only surfaced on non-ubuntu CI:
+
+1. **Windows 8.3 short-name paths** — `resolveWindowsCanonical()` used
+   non-native `realpathSync`, preserving the `RUNNER~1` vs `runneradmin`
+   form mismatch. A legitimately-contained dynamic workflow file was
+   rejected as "outside the allowed directories". Fixed by using
+   `realpathSync.native` (canonical long-name form) as the primary resolver.
+   (commit `e9e7137`)
+
+2. **ESM `file://` URLs** — two integration tests passed raw Windows paths
+   (`D:\…`) to native `import()`, which Node rejects on Windows
+   (`ERR_UNSUPPORTED_ESM_URL_SCHEME: protocol 'd:'`). Wrapped with
+   `pathToFileURL(…).href`. (commit `e9e7137`)
+
+3. **macOS symlink-ancestor** — `isSymlinkSafePath()` walked up the temp
+   path and hit `/var` (a symlink → `/private/var`). The old check compared
+   the resolved `/private/var` against the tmpdir
+   `/private/var/folders/…/T` — `/private/var` is an **ancestor**, not a
+   descendant, so it was wrongly rejected (5 macOS worker-atomic-writer
+   failures). Fixed by accepting a symlink whose target is a safe root, is
+   UNDER a safe root, OR is an ANCESTOR of a safe root. Added two behavioral
+   regression tests (symlink-ancestor accept + symlink-attack reject).
+   (commit `e9e7137`)
+
+4. **macOS `/var` containment** — `resolveContainedPath()` only
+   canonicalized paths on win32; on POSIX it compared raw paths, so base
+   (`/private/var`) vs target (`/var`) diverged → false "outside" rejection
+   (macOS dwf-setresult failure). Added platform-agnostic
+   `resolveCanonicalPath()`. Added a darwin-only regression test for the
+   real `/var` divergence. (commit `4821bb1`)
+
+5. **Windows wakeup timing** — `subagent-manager` polls the child run
+   manifest every 1000ms. On the slower Windows CI runner, child-process
+   spawn + first poll exceeded the test's 10s deadline (failed at 11.6s).
+   Bumped the mock-test deadline to 30s. (commit `4821bb1`)
+
+### Verification
+
+- tsc: 0
+- Full test suite: 5207 tests, 0 fail on **all three** platforms (ubuntu,
+  macOS, Windows)
+- CI run `27955398241`: success across ubuntu-latest, macos-latest,
+  windows-latest
+- Regression tests added: env-allowlist scan, worker-atomic-writer symlink
+  ancestor/attack, safe-paths darwin `/var` divergence
+
+### Breaking changes
+
+None. All fixes are additive or behavior-preserving. Windows users who hit
+the `${APPDATA}` bug should upgrade.
+
+---
+
 ## [v0.9.0] — goal loops + dynamic workflows (2026-06-18)
 
 Two new features, both built on a shared `runKind` background-dispatch discriminator.
