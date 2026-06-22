@@ -314,6 +314,11 @@ export async function executeVerificationCommands(
 	taskId: string,
 	artifactsRoot: string,
 	signal?: AbortSignal,
+	/** Phase 1.5 #2 (RFC 16): when provided, run verification commands in this
+	 *  pristine git-worktree path instead of `cwd`. The caller is responsible
+	 *  for preparing + cleaning up the worktree (see verification-worktree.ts).
+	 *  When undefined, behavior is unchanged (run in `cwd`). */
+	worktreeCwd?: string,
 ): Promise<VerificationCommandResult[]> {
 	if (!contract.commands || contract.commands.length === 0) {
 		return [];
@@ -334,8 +339,11 @@ export async function executeVerificationCommands(
 		fs.mkdirSync(gatesDir, { recursive: true });
 	}
 
+	// Phase 1.5 #2: run phase gates inside the worktree when provided.
+	const execCwd = worktreeCwd ?? cwd;
+
 	// Run phase gates
-	const bundle = await runPhaseGates(gates, cwd, signal, (phaseResult) => {
+	const bundle = await runPhaseGates(gates, execCwd, signal, (phaseResult) => {
 		// P1f: redact secrets from verification output BEFORE persisting to the
 		// world-readable artifact file. redactSecretString is best-effort vs
 		// adversarial workers (RFC §6 — Med-High residual). writeArtifact ALSO

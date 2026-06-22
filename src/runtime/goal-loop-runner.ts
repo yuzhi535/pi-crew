@@ -123,14 +123,37 @@ export const realGoalEvaluator = async (
 			try {
 				const { executeVerificationCommands } = await import("./verification-gates.ts");
 				const contract = { requiredGreenLevel: "none" as const, commands: goal.verification.commands, allowManualEvidence: goal.verification.allowManualEvidence ?? false };
-				const cmdResults = await executeVerificationCommands(contract, goal.cwd, turnRunId, "goal-verify", turnManifest.artifactsRoot, signal);
-				verificationResults = cmdResults.map((r) => ({ command: r.cmd, exitCode: r.exitCode ?? null, passed: r.status === "passed" }));
+				// Phase 1.5 #2 (RFC 16): run verification in a pristine git worktree at
+				// T_snap commit SHA when opt-in + clean git repo. Closes the round-trip
+				// manifest tamper residual (MAJ#2) and invoked-script tampering residual
+				// that P1a hashing cannot detect. Falls back to non-sandboxed execution
+				// (in `goal.cwd`) when unavailable.
+				let worktreeCwd: string | undefined;
+				let worktreeCleanup: (() => void) | undefined;
+				try {
+					const { checkWorktreeSandboxAvailable, prepareVerificationWorktree } = await import("./verification-worktree.ts");
+					const availability = checkWorktreeSandboxAvailable(goal.cwd);
+					if (availability.available) {
+						const wt = prepareVerificationWorktree(goal.cwd, availability.commitSha);
+						worktreeCwd = wt.worktreePath;
+						worktreeCleanup = wt.cleanup;
+					} else {
+						// Graceful fallback — log reason so the bypass is traceable.
+						logInternalError("goal-loop.worktreeSandboxBypassed", new Error(availability.reason), `goalId=${goal.goalId} cwd=${goal.cwd}`);
+					}
+				} catch (error) {
+					logInternalError("goal-loop.worktreeSandboxPrep", error, `goalId=${goal.goalId}`);
+				}
+				try {
+					const cmdResults = await executeVerificationCommands(contract, goal.cwd, turnRunId, "goal-verify", turnManifest.artifactsRoot, signal, worktreeCwd);
+					verificationResults = cmdResults.map((r) => ({ command: r.cmd, exitCode: r.exitCode ?? null, passed: r.status === "passed" }));
 				// T_verify_done: re-hash AFTER the commands ran. If the manifest changed between
 				// command-launch and command-exit (worker edited it mid-run, then the test "passed"
 				// against the modified graph), treat the result as compromised even if exit was 0.
 				// NOTE (RFC v0.5 §P1a residual): this catches PERSISTENT edits only — a round-trip
 				// (edit -> run -> revert) leaves the hash unchanged and is NOT caught here.
-				// That residual is closed by Phase 1.5 git-worktree verification (deferred).
+				// Phase 1.5 #2 (RFC 16) closes this residual when worktree sandbox is active:
+				// verification ran in a pristine checkout, so worker edits are invisible.
 				if (snapshot && snapshot !== "none-text-only") {
 					try {
 						const post = snapshotManifests(goal.cwd);
@@ -142,6 +165,13 @@ export const realGoalEvaluator = async (
 					} catch (error) {
 						logInternalError("goal-loop.integritySnap", error, `goalId=${goal.goalId} phase=T_verify_done`);
 					}
+				}
+				} catch (error) {
+					logInternalError("goal-loop.verification", error, `goalId=${goal.goalId}`);
+					verificationResults = [];
+				} finally {
+					// Phase 1.5 #2: ALWAYS clean up the worktree, even on exception.
+					if (worktreeCleanup) worktreeCleanup();
 				}
 			} catch (error) {
 				logInternalError("goal-loop.verification", error, `goalId=${goal.goalId}`);

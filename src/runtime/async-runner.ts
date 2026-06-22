@@ -206,6 +206,9 @@ export async function spawnBackgroundTeamRun(manifest: TeamRunManifest): Promise
 			"PI_TEAMS_VERIFICATION_SANITIZE_ENV",
 			"PI_CREW_VERIFICATION_PRESERVE_ENV",
 			"PI_TEAMS_VERIFICATION_PRESERVE_ENV",
+			// Phase 1.5 #2: verification git-worktree sandbox opt-in (RFC 16).
+			"PI_CREW_VERIFICATION_WORKTREE",
+			"PI_TEAMS_VERIFICATION_WORKTREE",
 		],
 	});
 	// FIX: removed delete workarounds — with explicit allowlist, these vars

@@ -4,6 +4,44 @@
 
 Two new features, both built on a shared `runKind` background-dispatch discriminator.
 
+### Phase 1.5 #2: git-worktree verification sandbox (closes round-trip + invoked-script tamper)
+
+`PI_CREW_VERIFICATION_WORKTREE=1` runs verification commands in a pristine
+`git worktree` at the T_snap commit SHA. Closes the two remaining Med-High
+tampering residuals from RFC 13 §6 that P1a manifest hashing cannot detect:
+
+- **Round-trip manifest tamper (MAJ#2)**: worker edits `package.json`, runs
+  `npm test` (passes), reverts before T_verify_done → hash matches →
+  tamper undetected. With worktree: verification runs at original SHA →
+  worker edits invisible → tamper BLOCKED.
+- **Invoked-script tampering**: worker rewrites a script the verification
+  command invokes; only MANIFEST_FILES are hashed → invisible. With
+  worktree: script is at original SHA → tamper BLOCKED.
+
+Graceful fallback when ANY precondition fails (logged via
+logInternalError "goal-loop.worktreeSandboxBypassed"): opt-out env,
+not-a-git-repo, dirty index, git unavailable. NEVER blocks the goal loop.
+
+Implementation:
+- `src/runtime/verification-worktree.ts` (NEW, pure leaf module):
+  `isWorktreeSandboxEnabled`, `checkWorktreeSandboxAvailable`,
+  `prepareVerificationWorktree` (git worktree add --detach),
+  `withVerificationWorktree` (RAII cleanup, idempotent, finally-safe).
+- `src/runtime/verification-gates.ts`: `executeVerificationCommands`
+  accepts optional `worktreeCwd` — spawns commands with that cwd.
+- `src/runtime/goal-loop-runner.ts`: verification call site prepares
+  worktree at T_snap SHA when available; finally block always cleans up.
+- `src/runtime/async-runner.ts`: PI_CREW_VERIFICATION_WORKTREE env
+  inherited by bg-runner.
+
+Tests: 12 new unit tests in `test/unit/verification-worktree.test.ts`
+(flag opt-in, not-a-repo fallback, dirty-index fallback, clean-repo success,
+pristine-checkout property = the security guarantee, RAII cleanup on success
++ on exception, idempotent cleanup). All pass.
+5200 unit + 115 integration tests; no regression; tsc clean.
+
+RFC: `research-findings/goal-workflow/16-PHASE1.5-WORKTREE-SANDBOX-RFC.md`
+
 ### Phase 1.5 #1: sanitized-env verification (opt-in info-disclosure mitigation)
 
 `PI_CREW_VERIFICATION_SANITIZE_ENV=1` strips model-provider secrets (and
