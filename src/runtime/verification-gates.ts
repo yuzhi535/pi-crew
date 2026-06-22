@@ -12,6 +12,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { WINDOWS_ESSENTIAL_ENV_VARS } from "../utils/env-allowlist.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { redactSecretString } from "../utils/redaction.ts";
 import { sanitizeEnvSecrets } from "../utils/env-filter.ts";
@@ -48,14 +49,8 @@ const VERIFICATION_ENV_ALLOWLIST: readonly string[] = [
 	"XDG_DATA_HOME",
 	"XDG_CACHE_HOME",
 	"XDG_RUNTIME_DIR",
-	// Windows essentials (see child-pi.ts/async-runner.ts for rationale).
-	"APPDATA",
-	"LOCALAPPDATA",
-	"USERPROFILE",
-	"SystemRoot",
-	"ComSpec",
-	"TEMP",
-	"TMP",
+	// Windows essentials — see WINDOWS_ESSENTIAL_ENV_VARS (src/utils/env-allowlist.ts).
+	...WINDOWS_ESSENTIAL_ENV_VARS,
 	"NVM_BIN",
 	"NVM_DIR",
 	"NVM_INC",

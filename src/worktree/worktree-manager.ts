@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { WINDOWS_ESSENTIAL_ENV_VARS } from "../utils/env-allowlist.ts";
 import { loadConfig } from "../config/config.ts";
 import { projectCrewRoot } from "../utils/paths.ts";
 import { DEFAULT_PATHS } from "../config/defaults.ts";
@@ -27,7 +28,7 @@ export interface WorktreeDiffStat {
 function git(cwd: string, args: string[]): string {
 	// SECURITY: PI_* and PI_CREW_* wildcards removed — they could match secret vars like PI_PASSWORD.
 // Git operations do not need PI_CREW_* execution-control vars.
-return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...sanitizeEnvSecrets(process.env, { allowList: ["PATH", "HOME", "USER", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot", "ComSpec", "TEMP", "TMP", "SHELL", "TERM", "LANG", "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "NVM_BIN", "NVM_DIR", "NODE_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"] }), LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" }, windowsHide: true }).trim();
+return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...sanitizeEnvSecrets(process.env, { allowList: ["PATH", "HOME", "USER", ...WINDOWS_ESSENTIAL_ENV_VARS, "SHELL", "TERM", "LANG", "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "NVM_BIN", "NVM_DIR", "NODE_PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"] }), LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" }, windowsHide: true }).trim();
 }
 
 // Dots are removed from branch names since they are used in path construction,
@@ -182,7 +183,7 @@ function runSetupHook(manifest: TeamRunManifest, task: TeamTaskState, repoRoot: 
 			timeout: cfg.setupHookTimeoutMs ?? 30_000,
 			shell: false,  // cmd.exe /c handles batch files safely
 			env: sanitizeEnvSecrets(process.env, {
-				allowList: ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot", "ComSpec", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL"],
+				allowList: ["PATH", "HOME", ...WINDOWS_ESSENTIAL_ENV_VARS, "TMPDIR", "LANG", "LC_ALL"],
 			}),
 			windowsHide: true,
 		})
@@ -193,7 +194,7 @@ function runSetupHook(manifest: TeamRunManifest, task: TeamTaskState, repoRoot: 
 			timeout: cfg.setupHookTimeoutMs ?? 30_000,
 			shell: false,
 			env: sanitizeEnvSecrets(process.env, {
-				allowList: ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot", "ComSpec", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL"],
+				allowList: ["PATH", "HOME", ...WINDOWS_ESSENTIAL_ENV_VARS, "TMPDIR", "LANG", "LC_ALL"],
 			}),
 			windowsHide: true,
 		});

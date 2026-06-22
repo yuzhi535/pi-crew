@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { WINDOWS_ESSENTIAL_ENV_VARS } from "../utils/env-allowlist.ts";
 import type { AgentConfig } from "../agents/agent-config.ts";
 import type { WorkerExitStatus } from "../state/types.ts";
 import { buildPiWorkerArgs, checkCrewDepth, cleanupTempDir } from "./pi-args.ts";
@@ -245,20 +246,8 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 			"XDG_DATA_HOME",
 			"XDG_CACHE_HOME",
 			"XDG_RUNTIME_DIR",
-			// Windows essentials: without APPDATA, USERPROFILE, LOCALAPPDATA,
-			// SystemRoot, ComSpec, TEMP, TMP, child processes on Windows can't
-			// locate npm-global (`%APPDATA%\npm`), the user profile, system DLLs,
-			// cmd.exe, or a writable temp dir. npm-global resolution falls back
-			// to creating a literal `${APPDATA}/npm` directory in the cwd
-			// (observed bug report: project `.gitignore` got a `${APPDATA}` line
-			// and a phantom `${APPDATA}/npm/` dir appeared in the project root).
-			"APPDATA",
-			"LOCALAPPDATA",
-			"USERPROFILE",
-			"SystemRoot",
-			"ComSpec",
-			"TEMP",
-			"TMP",
+			// Windows essentials — see WINDOWS_ESSENTIAL_ENV_VARS (src/utils/env-allowlist.ts).
+			...WINDOWS_ESSENTIAL_ENV_VARS,
 			"NVM_BIN",
 			"NVM_DIR",
 			"NVM_INC",

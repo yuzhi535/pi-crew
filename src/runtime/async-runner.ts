@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { WINDOWS_ESSENTIAL_ENV_VARS } from "../utils/env-allowlist.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import { appendEvent } from "../state/event-log.ts";
 import { sanitizeEnvSecrets } from "../utils/env-filter.ts";
@@ -183,20 +184,8 @@ export async function spawnBackgroundTeamRun(manifest: TeamRunManifest): Promise
 			"XDG_DATA_HOME",
 			"XDG_CACHE_HOME",
 			"XDG_RUNTIME_DIR",
-			// Windows essentials: without APPDATA, USERPROFILE, LOCALAPPDATA,
-			// SystemRoot, ComSpec, TEMP, TMP, background runners on Windows can't
-			// locate npm-global (`%APPDATA%\npm`), the user profile, system DLLs,
-			// cmd.exe, or a writable temp dir. npm-global resolution falls back
-			// to creating a literal `${APPDATA}/npm` directory in the cwd
-			// (observed bug report: phantom `${APPDATA}/npm/` dir + `.gitignore`
-			// `${APPDATA}` line in the project root).
-			"APPDATA",
-			"LOCALAPPDATA",
-			"USERPROFILE",
-			"SystemRoot",
-			"ComSpec",
-			"TEMP",
-			"TMP",
+			// Windows essentials — see WINDOWS_ESSENTIAL_ENV_VARS (src/utils/env-allowlist.ts).
+			...WINDOWS_ESSENTIAL_ENV_VARS,
 			"NVM_BIN",
 			"NVM_DIR",
 			"NVM_INC",

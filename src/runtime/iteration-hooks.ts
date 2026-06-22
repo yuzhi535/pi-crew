@@ -7,6 +7,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { WINDOWS_ESSENTIAL_ENV_VARS } from "../utils/env-allowlist.ts";
 import { resolveShellForScript } from "../utils/resolve-shell.ts";
 import { sanitizeEnvSecrets } from "../utils/env-filter.ts";
 import { DENIED_METRIC_NAMES } from "./metric-parser.ts";
@@ -171,7 +172,7 @@ export async function runIterationHook(
 		const { command, args } = resolveShellForScript(resolvedScript);
 		const child = spawn(command, args, {
 			cwd: payload.cwd,
-			env: { ...sanitizeEnvSecrets(process.env, { allowList: ["PATH", "HOME", "USER", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot", "ComSpec", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "PI_CREW_*"] }), PI_CREW_HOOK: "1" },
+			env: { ...sanitizeEnvSecrets(process.env, { allowList: ["PATH", "HOME", "USER", ...WINDOWS_ESSENTIAL_ENV_VARS, "TMPDIR", "LANG", "LC_ALL", "PI_CREW_*"] }), PI_CREW_HOOK: "1" },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 
