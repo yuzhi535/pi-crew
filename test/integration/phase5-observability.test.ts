@@ -43,8 +43,19 @@ test("observability API supports event cursors, agent output tail, and dashboard
 		assert.equal(run.isError, false);
 		const runId = run.details.runId!;
 
-		const events = await handleTeamTool({ action: "api", runId, config: { operation: "read-events", sinceSeq: 1, limit: 2 } }, { cwd });
-		const eventPayload = JSON.parse(firstText(events));
+		// On slow CI (Windows), the completed run's event log may take a moment to
+		// become fully visible to a concurrent read. Poll until the cursor reflects
+		// the expected stream (run-started at seq 1, then ≥2 more events → nextSeq ≥ 3)
+		// before asserting. Preserves the assertion's intent while tolerating CI latency.
+		let eventPayload: { events: unknown[]; nextSeq: number };
+		const pollDeadline = Date.now() + 10_000;
+		for (;;) {
+			const events = await handleTeamTool({ action: "api", runId, config: { operation: "read-events", sinceSeq: 1, limit: 2 } }, { cwd });
+			eventPayload = JSON.parse(firstText(events));
+			if (eventPayload.events.length === 2 && eventPayload.nextSeq >= 3) break;
+			if (Date.now() > pollDeadline) break;
+			await new Promise((r) => setTimeout(r, 100));
+		}
 		assert.equal(eventPayload.events.length, 2);
 		assert.ok(eventPayload.nextSeq >= 3);
 
