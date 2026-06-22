@@ -22,8 +22,19 @@ import { updateGitignore } from "./gitignore-manager.ts";
 // Re-export updateGitignore for backwards compatibility with tests.
 export { updateGitignore };
 
-/** README content for the .crew directory. */
-const CREW_README = `# .crew — pi-crew Runtime Directory
+/**
+ * README content for the .crew directory.
+ *
+ * Defined as a function (not a `const`) to avoid the Temporal Dead Zone race
+ * documented in issue #28 + RFC 17. When this module is loaded via
+ * `jiti.import()` (pi's extension loader) wrapped in an async function, a
+ * `const` initializer can be hit in TDZ by functions hoisted above it (the
+ * same pattern that bit `crewInitPromise` in team-tool/run.ts — see commit
+ * fixing it). A function declaration is hoisted with its body available
+ * immediately, so callers always get the fully-built string.
+ */
+function buildCrewReadme(): string {
+	return `# .crew — pi-crew Runtime Directory
 
 This directory contains pi-crew runtime state and artifacts.
 
@@ -50,7 +61,7 @@ To clear cache:
 team action='cache' action='clear'
 \`\`\`
 `;
-
+}
 /**
  * Find the project root by walking up from start directory.
  * Inline implementation to avoid module dependency on paths.ts.
@@ -249,13 +260,18 @@ export async function ensureCrewDirectory(cwd: string): Promise<void> {
 	}
 
 	// 3. Write README.md (always overwrite to keep it current)
-	fs.writeFileSync(safeJoin(crewRoot, "README.md"), CREW_README, "utf-8");
+	fs.writeFileSync(safeJoin(crewRoot, "README.md"), buildCrewReadme(), "utf-8");
 
 	// 4. Update .gitignore at project root
 	const repoRoot = findProjectRoot(cwd);
 	if (repoRoot) {
 		const gitignorePath = safeJoin(repoRoot, ".gitignore");
-		await updateGitignore(gitignorePath);
+		// Lazy-load updateGitignore via dynamic import to dodge the jiti
+		// ESM/CJS interop TDZ race on the static `import { updateGitignore }`
+		// above (issue #28, RFC 17). At this point the module body has fully
+		// evaluated, so the dynamic import resolves to a live binding.
+		const { updateGitignore: updateGitignoreFn } = await import("./gitignore-manager.ts");
+		await updateGitignoreFn(gitignorePath);
 	}
 }
 

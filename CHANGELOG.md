@@ -4,6 +4,49 @@
 
 Two new features, both built on a shared `runKind` background-dispatch discriminator.
 
+### Phase 1.5 #4: TDZ fix — dynamic-workflow runs end-to-end via full pi pipeline (RFC 17 fix)
+
+Live `team action='run' workflow='<dynamic>'` was failing with
+`Dynamic workflow 'X' must export a default async function(ctx).` even
+though the .dwf.ts loaded correctly via direct jiti. Root cause was NOT
+in `dynamic-workflow-runner.ts` — it was a Temporal Dead Zone race in
+`team-tool/run.ts` when loaded via the full pi extension pipeline
+(`index.ts → register.ts → registration/team-tool.ts → team-tool.ts →
+run.ts`).
+
+**Race details**: jiti loads each .ts file inside an `async function
+_module(...)` wrapper. Static `import { X } from "..."` statements
+become `var _x = require(...)` calls. When a destructured `import` is
+referenced inside a hoisted function before its `let` declaration line
+runs, the reference hits TDZ.
+
+**Fixes**:
+- `src/extension/team-tool/run.ts`:
+  - `crewInitPromise`: `let` → `var` (avoids TDZ)
+  - `expandParallelResearchWorkflow`, `validateWorkflowForTeam`,
+    `normalizeSkillOverride`: convert to lazy dynamic imports at call site
+- `src/state/crew-init.ts`:
+  - `CREW_README`: `const` → `function buildCrewReadme(): string` (function
+    declarations are fully hoisted)
+  - `updateGitignore`: convert usage to lazy dynamic import at call site
+
+**New test**: `test/integration/run-via-full-pipeline.test.ts` loads
+`index.ts` via `jiti.import()` the way pi does, invokes `handleRun` with a
+dynamic workflow params, and asserts no TDZ / ReferenceError is thrown.
+Fails without the fix, passes with it.
+
+**Verification**:
+- 108 unit tests pass (goal, dwf, redaction, verification, worker-writer)
+- New integration test passes
+- Direct simulation of pi pipeline → `Dynamic workflow 'demo-hello'
+  completed` (was: `failed: must export a default async function`)
+
+Closes RFC 17 §4 round-trip / investigated residual. See
+`research-findings/goal-workflow/17-PHASE1.5-CRASH-INVESTIGATION-RFC.md`
+for the full 8-attempt investigation log (gdb, strace, V8 report, sync
+workarounds, worker-thread atomic writer, auto-downgrade — none
+identified the real bug because they all skipped the full pi load path).
+
 ### Phase 1.5 #3: V8 diagnostic report infrastructure + crash investigation closed
 
 `PI_CREW_BG_REPORT_ON_FATAL=1` makes the background goal-loop runner spawn

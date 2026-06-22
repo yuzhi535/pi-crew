@@ -46,8 +46,17 @@ import { expandParallelResearchWorkflow } from "../../runtime/parallel-research.
  * module body evaluates exactly once regardless of fanout. Same pattern as
  * runtime-warmup.ts / the v0.8.1 peer-dep latch, applied to this specific
  * dynamic-import race site.
+ *
+ * IMPORTANT: must be `var` (not `let`) — when this module is loaded via
+ * `jiti.import()` (the pi extension loader) wrapped in an async function,
+ * `let` causes a Temporal Dead Zone error because the function declaration
+ * below is hoisted and can be called before this `let` line executes under
+ * certain microtask schedules. `var` is hoisted with `undefined`, avoiding
+ * the TDZ. Round-11 cold review reproduction:
+ *   `team action='run' workflow='<dynamic>'` → "Cannot access 'crewInitPromise'
+ *    before initialization" at run.ts load. See RFC 17 + commit fixing this.
  */
-let crewInitPromise: Promise<typeof import("../../state/crew-init.ts")> | undefined;
+var crewInitPromise: Promise<typeof import("../../state/crew-init.ts")> | undefined;
 function loadCrewInit(): Promise<typeof import("../../state/crew-init.ts")> {
 	if (!crewInitPromise) {
 		crewInitPromise = import("../../state/crew-init.ts");
@@ -187,7 +196,12 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		steps: [{ id: "01_agent", role: params.role ?? "agent", task: "{goal}", model: params.model }],
 	} : workflows.find((item) => item.name === workflowName);
 	if (!baseWorkflow) return result(`Workflow '${workflowName}' not found.`, { action: "run", status: "error" }, true);
-	const workflow = directAgent ? baseWorkflow : expandParallelResearchWorkflow(baseWorkflow, resolvedCtx.cwd);
+	// Lazy-import to dodge the jiti ESM/CJS interop TDZ race on the static
+	// `import { expandParallelResearchWorkflow }` above (issue #28, RFC 17).
+	// At call time the module body has fully evaluated, so the dynamic
+	// import returns a live binding.
+	const { expandParallelResearchWorkflow: expandParallelResearch } = await import("../../runtime/parallel-research.ts");
+	const workflow = directAgent ? baseWorkflow : expandParallelResearch(baseWorkflow, resolvedCtx.cwd);
 
 	// RFC v0.5 vision: goal-wrap. If .crew/config.json has goalWrap[workflow.name].enabled=true,
 	// route to a goal loop where this workflow runs as the worker turn (judge → feedback → redo
@@ -250,12 +264,18 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		].join("\n"), { action: "run", status: "ok" }, false);
 	}
 
-	const validationErrors = validateWorkflowForTeam(workflow, team);
+	// Lazy-import to dodge the jiti ESM/CJS interop TDZ race on the static
+	// `import { validateWorkflowForTeam }` above (issue #28, RFC 17).
+	const { validateWorkflowForTeam: validateWorkflow } = await import("../../workflows/validate-workflow.ts");
+	const validationErrors = validateWorkflow(workflow, team);
 	if (validationErrors.length > 0) {
 		return result([`Workflow '${workflow.name}' is not valid for team '${team.name}':`, ...validationErrors.map((error) => `- ${error}`)].join("\n"), { action: "run", status: "error" }, true);
 	}
 
-	const skillOverride = normalizeSkillOverride(params.skill);
+	// Lazy-import to dodge the jiti ESM/CJS interop TDZ race on the static
+	// `import { normalizeSkillOverride }` above (issue #28, RFC 17).
+	const { normalizeSkillOverride: normalizeSkill } = await import("../../runtime/skill-instructions.ts");
+	const skillOverride = normalizeSkill(params.skill);
 	const { manifest, tasks, paths } = createRunManifest({
 		cwd: resolvedCtx.cwd,
 		team,
