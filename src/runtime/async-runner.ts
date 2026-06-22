@@ -198,6 +198,9 @@ export async function spawnBackgroundTeamRun(manifest: TeamRunManifest): Promise
 			"PI_TEAMS_PI_BIN",
 			"PI_TEAMS_MOCK_CHILD_PI",
 			"PI_CREW_ALLOW_MOCK",
+			// Phase 1.5: worker-thread atomic writer opt-in (RFC 15).
+			"PI_CREW_WORKER_ATOMIC_WRITER",
+			"PI_TEAMS_WORKER_ATOMIC_WRITER",
 		],
 	});
 	// FIX: removed delete workarounds — with explicit allowlist, these vars

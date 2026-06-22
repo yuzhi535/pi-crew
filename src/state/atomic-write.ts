@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { logInternalError } from "../utils/internal-error.ts";
+import { isWorkerAtomicWriterEnabled, atomicWriteFileViaWorker } from "./worker-atomic-writer.ts";
 import { sleepSync } from "../utils/sleep.ts";
 
 function hashContent(content: string): string {
@@ -380,6 +381,14 @@ export function atomicWriteFile(filePath: string, content: string, expectedHash?
 
 
 export async function atomicWriteFileAsync(filePath: string, content: string): Promise<void> {
+	// Phase 1.5 (RFC 15): when the worker-thread atomic writer is enabled
+	// (PI_CREW_WORKER_ATOMIC_WRITER=1), dispatch to a dedicated worker thread
+	// that performs SYNC fs ops with no internal yields. Mitigates the
+	// non-deterministic V8/libuv crash during event-loop yields in multi-step
+	// goal-wrapped workflows.
+	if (isWorkerAtomicWriterEnabled()) {
+		return atomicWriteFileViaWorker(filePath, content);
+	}
 	if (!isSymlinkSafePath(filePath)) throw new Error(`Refusing to write: target is a symlink or inside untrusted directory: ${filePath}`);
 	await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
 	const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;

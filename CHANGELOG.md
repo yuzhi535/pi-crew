@@ -4,6 +4,23 @@
 
 Two new features, both built on a shared `runKind` background-dispatch discriminator.
 
+### Phase 1.5: worker-thread atomic writer (opt-in, infrastructure)
+
+`PI_CREW_WORKER_ATOMIC_WRITER=1` routes `atomicWriteFileAsync` and
+`appendEventAsync` through a dedicated worker thread that performs SYNC fs
+ops with no internal yields. Implementation: `src/state/worker-atomic-writer.ts`.
+9 unit tests; 5169 existing tests pass; no regression.
+
+**Test result**: worker writer does NOT fix the multi-step crash (verified
+end-to-end with `default` workflow). The crash is NOT in fs writes — worker
+writes complete successfully but the process still dies during batch
+transition. Root cause is some other async operation yielding the main
+event loop. See `research-findings/goal-workflow/15-PHASE1.5-WORKER-WRITER-RFC.md`
+for full investigation notes.
+
+The worker writer is kept as **infrastructure** — opt-in, well-tested, no
+regression. It may help with future variants or concurrent-write contention.
+
 ### Resolution: multi-step goal-wrap crash (3/3 tasks now complete end-to-end)
 
 The silent crash at `atomicWriteFileAsync` of the inner turn's `manifest.json`

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isWorkerAtomicWriterEnabled, appendFileViaWorker } from "./worker-atomic-writer.ts";
 import { DEFAULT_EVENT_LOG } from "../config/defaults.ts";
 import { atomicWriteFile } from "./atomic-write.ts";
 import { errors } from "../errors.ts";
@@ -443,7 +444,12 @@ export async function appendEventAsync(eventsPath: string, event: AppendTeamEven
 
 		if (!skippedDueToSize) {
 			const line = JSON.stringify(redactSecrets(fullEvent)) + "\n";
-			await fs.promises.appendFile(eventsPath, line, { encoding: "utf-8", flag: "a" });
+			// Phase 1.5: when worker atomic writer is enabled, append via worker.
+			if (isWorkerAtomicWriterEnabled()) {
+				await appendFileViaWorker(eventsPath, line);
+			} else {
+				await fs.promises.appendFile(eventsPath, line, { encoding: "utf-8", flag: "a" });
+			}
 			// FIX: fsync to ensure event content is flushed to disk before persisting
 			// the sequence number. This closes the crash window between appendFile and
 			// persistSequence where sequence reuse could occur on restart.
