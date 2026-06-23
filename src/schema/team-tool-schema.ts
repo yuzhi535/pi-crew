@@ -303,6 +303,12 @@ export const TeamToolParams = Type.Object({
 		// "description-only schema" strict-provider check.
 		Type.Any(),
 	),
+	focus: Type.Optional(
+		Type.String({
+			description:
+				"Sub-focus for the doctor action. 'zombies' runs a READ-ONLY scan for orphaned pi-crew sub-agent processes (identified by PI_CREW_KIND=subagent); it never kills and never matches the user's interactive main session.",
+		}),
+	),
 });
 
 export interface TeamToolParamsValue {
@@ -379,6 +385,10 @@ export interface TeamToolParamsValue {
 	skill?: string | string[] | boolean;
 	scope?: "user" | "project" | "both";
 	config?: Record<string, unknown>;
+	/** Sub-focus for the `doctor` action. `"zombies"` runs a READ-ONLY scan for
+	 *  orphaned pi-crew sub-agent processes (identified by PI_CREW_KIND=subagent);
+	 *  it never kills and never matches the user's interactive main session. */
+	focus?: string;
 	dryRun?: boolean;
 	confirm?: boolean;
 	force?: boolean;

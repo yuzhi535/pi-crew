@@ -155,3 +155,27 @@ code + a help hint inline. Common ones:
 - `team action='summary' runId=…` — includes common failure-pattern detection
   ("4 of 5 failures share 2 root causes").
 - `team action='events' runId=…` — full event timeline for forensics.
+
+## Stuck / orphaned sub-agent processes ("zombies")
+
+A pi-crew sub-agent whose parent crashed may linger as an orphaned process.
+**Do NOT kill `pi` processes by eye** (uptime/RSS heuristics will match your
+own interactive main session — that is unrecoverable). Use the safe scanner:
+
+```
+team action='doctor' focus='zombies'
+```
+
+This is **read-only**. It matches ONLY processes carrying the authoritative
+`PI_CREW_KIND=subagent` marker (set by every child-pi spawn) whose
+`PI_CREW_PARENT_PID` is no longer alive. Your main session never carries the
+marker, so it can never appear in the list.
+
+To kill a confirmed zombie: `kill <PID>` (the OS reaps it). The scanner never
+kills on your behalf.
+
+### Why the marker exists
+
+Before `PI_CREW_KIND`, a heuristic zombie "cleanup" killed a live main session
+by accident. The marker makes sub-agent identity authoritative rather than
+guessed. See `src/runtime/zombie-scanner.ts` and `.crew/knowledge.md`.

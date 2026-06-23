@@ -10,6 +10,7 @@ import { DEFAULT_PATHS } from "../../config/defaults.ts";
 import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
 import { getPiSpawnCommand } from "../../runtime/pi-spawn.ts";
 import { getRuntimeWarmupStatus } from "../../runtime/runtime-warmup.ts";
+import { scanZombieSubagents, formatZombieReport } from "../../runtime/zombie-scanner.ts";
 import { validateResources } from "../validate-resources.ts";
 import { detectDrift, formatDriftReport, type DriftReport } from "../../config/drift-detector.ts";
 import { TeamToolParams } from "../../schema/team-tool-schema.ts";
@@ -237,6 +238,19 @@ export function buildTeamDoctorReport(input: TeamDoctorReportInput): TeamDoctorR
 }
 
 export function handleDoctor(ctx: TeamContext, params: TeamToolParamsValue = {}): PiTeamsToolResult {
+	// Sub-focus: zombie sub-agent scan. READ-ONLY — never kills. Returns a table of
+	// orphaned pi-crew sub-agents identified by the authoritative PI_CREW_KIND=subagent
+	// marker. The user's main session never carries that marker, so it can never appear.
+	if (params.focus === "zombies") {
+		const scan = scanZombieSubagents();
+		const text = formatZombieReport(scan);
+		return result(text, {
+			action: "doctor",
+			status: "ok",
+			data: { zombies: scan.zombies.length, live: scan.live.length, errors: scan.errors.length },
+		}, false);
+	}
+
 	const loadedConfig = loadConfig(ctx.cwd);
 	let smokeChildPi: { ok: boolean; detail: string } | undefined;
 	if (configRecord(params.config).smokeChildPi === true) {

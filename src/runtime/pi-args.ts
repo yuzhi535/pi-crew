@@ -243,7 +243,12 @@ export function createSafeTempDir(base: string, prefix: string): string {
 }
 
 export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerArgsResult {
-	const args = ["--mode", "json", "-p"];
+	// Process-identity marker (round fix: distinguish sub-agent child-pi from main session).
+	// `--crew-subagent` is a leading argv flag so `ps`/`pgrep` show it at a glance, and
+	// downstream diagnostics (doctor --zombies) can match it without reading /proc/<pid>/environ.
+	// Pi itself ignores unknown flags, so this is safe even if a future Pi version doesn't recognize it.
+	// The companion env var PI_CREW_KIND=subagent is the machine-readable signal used by doctor.
+	const args = ["--crew-subagent", "--mode", "json", "-p"];
 	if (input.sessionEnabled === false) args.push("--no-session");
 
 	const resolvedModel = input.model ?? input.agent.model;
@@ -327,6 +332,11 @@ export function buildPiWorkerArgs(input: BuildPiWorkerArgsInput): BuildPiWorkerA
 	return {
 		args,
 		env: {
+			// PI_CREW_KIND is the authoritative machine-readable sub-agent marker. It is always
+		// present on a child-pi process and NEVER present on a user's interactive main session.
+			// doctor --zombies uses it to safely list orphaned sub-agents without ever matching a
+		// main session (the lesson from an accidental `kill` of a live main session).
+			PI_CREW_KIND: "subagent",
 			PI_CREW_INHERIT_PROJECT_CONTEXT: input.agent.inheritProjectContext ? "1" : "0",
 			PI_CREW_INHERIT_SKILLS: input.agent.inheritSkills ? "1" : "0",
 			PI_CREW_DEPTH: String(parentDepth + 1),

@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.9.7] — round-18 (P2-3 resume/checkpoint) (2026-06-23)
+## [v0.9.7] — round-18 + process-safety fix (2026-06-23)
 
 P2-3 feature: durable checkpoint + resume for dynamic-workflow runs. When a `.dwf.ts`
 script crashes (timeout, OOM, agent error) between `ctx.agent()` calls, the runner now
@@ -60,6 +60,28 @@ completes, never before.
 ### Out of scope (future rounds)
 - P2-2 VM sandbox — still waiting for `isolated-vm` v1.5 (vm.createContext is not a
   real security boundary). This was the LAST P2 item.
+
+### Process-safety follow-up fix (same release)
+
+A heuristic-based zombie "cleanup" had killed a live interactive main `pi`
+session by accident (uptime/RSS/orphan heuristics match a main session just
+as readily as a real orphaned sub-agent). Fixed authoritatively:
+
+- **`PI_CREW_KIND=subagent`** env marker + **`--crew-subagent`** leading argv
+  flag, set by `buildPiWorkerArgs` (`src/runtime/pi-args.ts`) on every child-pi
+  spawn. A main session carries NEITHER, so it can never be matched as a
+  sub-agent.
+- **`src/runtime/zombie-scanner.ts`** (new): read-only scanner that matches
+  ONLY processes with `PI_CREW_KIND=subagent` AND a dead `PI_CREW_PARENT_PID`.
+  Never matches a main session. Never kills.
+- **`team action='doctor' focus='zombies'`**: renders the safe scan as a
+  human-readable report (zombies vs live sub-agents, with explicit do-not-kill
+  labelling for live parents).
+- **`PI_CREW_KIND`** added to the env allowlist in `child-pi.ts`.
+- **`docs/troubleshooting.md`** + **`.crew/knowledge.md`**: documented the
+  marker + the read-only rule so future agents never repeat the mistake.
+- 8 new unit tests in `test/unit/zombie-scanner.test.ts`, including a
+  regression test asserting the current (main-session) process is never matched.
 
 ## [v0.9.7] — round-17 (P2-4 worktree isolation per agent) (2026-06-23)
 

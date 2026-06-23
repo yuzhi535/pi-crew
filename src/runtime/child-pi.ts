@@ -267,6 +267,9 @@ export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): S
 			"PI_CREW_MAX_DEPTH",
 			"PI_CREW_INHERIT_PROJECT_CONTEXT",
 			"PI_CREW_INHERIT_SKILLS",
+			// PI_CREW_KIND marks this process as a crew sub-agent (vs the user's main session).
+			// doctor --zombies matches it to safely list orphaned sub-agents only.
+			"PI_CREW_KIND",
 			// PI_CREW_PARENT_PID is needed by child-pi's parent-guard (uses
 			// process.kill(pid, 0) liveness check). The PID is not a secret.
 			"PI_CREW_PARENT_PID",
