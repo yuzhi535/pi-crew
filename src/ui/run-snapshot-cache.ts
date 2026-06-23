@@ -10,6 +10,7 @@ import { loadRunManifestById, loadRunManifestByIdAsync } from "../state/state-st
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
 import type { RunSnapshotCache as RunSnapshotCacheBase, RunUiGroupJoin, RunUiMailbox, RunUiProgress, RunUiSnapshot, RunUiUsage } from "./snapshot-types.ts";
 import { runEventBus } from "./run-event-bus.ts";
+import { extractDwfPhaseState } from "./dwf-phase-display.ts";
 import { sequencePath } from "../state/event-log.ts";
 
 export interface RunSnapshotCache extends RunSnapshotCacheBase {
@@ -566,6 +567,7 @@ function signatureFor(input: Omit<RunUiSnapshot, "signature" | "fetchedAt" | "sl
 		groupJoins: input.groupJoins,
 		events: input.recentEvents.map((event) => [event.metadata?.seq, event.time, event.type, event.taskId, event.message, event.data?.reason]),
 		cancellationReason: input.cancellationReason,
+		dwfPhaseState: input.dwfPhaseState,
 		output: input.recentOutputLines,
 		stamps,
 	}));
@@ -684,6 +686,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			mailbox,
 			groupJoins,
 			cancellationReason: cancellationReasonFromEvents(recentEvents),
+			dwfPhaseState: extractDwfPhaseState(recentEvents),
 			recentEvents,
 			recentOutputLines: recentOutputLines(loaded.manifest, agents, recentOutputLimit),
 		};
@@ -730,6 +733,7 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			mailbox,
 			groupJoins,
 			cancellationReason: cancellationReasonFromEvents(recentEvents),
+			dwfPhaseState: extractDwfPhaseState(recentEvents),
 			recentEvents,
 			recentOutputLines: recentOutput,
 		};

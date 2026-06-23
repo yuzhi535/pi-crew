@@ -1,5 +1,41 @@
 # Changelog
 
+## [v0.9.7] — round-15 (P1-4 phase UI) (2026-06-23)
+
+The progress pane now **renders DWF phase markers** (▶/✓/⏸) by consuming the
+`dwf.phase_started` / `dwf.phase_completed` events emitted by `ctx.phase()`
+(round-12). **Backward compatible** — non-DWF runs are unaffected.
+
+### Feature — Phase UI in progress-pane (P1-4)
+
+**Files:** `src/ui/dwf-phase-display.ts` (new) + `progress-pane.ts` +
+`run-snapshot-cache.ts` + `snapshot-types.ts`
+
+Previously the phase events were produced but the UI did not consume them.
+Now the progress pane shows a phase overview:
+
+- `▶ Phase: <name>` — currently running phase.
+- `✓ Phase: <name>` — completed phase.
+- `⏸ Phase: <name>` — a phase whose completion scrolled out of the recent-event
+  window and is not the current one.
+
+Implementation details:
+
+- New pure-function module `src/ui/dwf-phase-display.ts`:
+  `extractDwfPhaseState(events)` derives phase state from the event window
+  (returns `null` for non-DWF runs); `renderDwfPhaseLines(state, { ascii })`
+  renders markers with Unicode glyphs and ASCII fallbacks (`[>]`/`[v]`/`[ ]`).
+- `RunUiSnapshot` gains an optional `dwfPhaseState` field, computed from the
+  existing tailed `recentEvents` window (no extra I/O) in both sync and async
+  snapshot builders.
+- `progress-pane.ts` renders the phase lines right after the summary line,
+  before the task-based phase grouping. Non-DWF runs produce zero lines.
+- `signatureFor` includes `dwfPhaseState` so cache invalidation reflects phase
+  changes.
+- Tests: `test/unit/dwf-phase-display.test.ts` — phase state tracking from an
+  event sequence (incl. scrolled-off recovery), correct markers (Unicode +
+  ASCII), header gating, and non-DWF snapshots unaffected.
+
 ## [v0.9.7] — round-14 (P1 DX + observability) (2026-06-23)
 
 Four additive P1 features land in this round — **authoring types**, **per-workflow

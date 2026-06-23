@@ -81,6 +81,31 @@ minimal (`source:'dynamic'`).
 - The runner auto-closes the last open phase when the script returns, so
   `dwf.completed` is always preceded by a matching `dwf.phase_completed`.
 
+#### Phase UI display (round-15 P1-4)
+
+The progress pane now **consumes** the `dwf.phase_started` / `dwf.phase_completed`
+events and renders a phase overview with status markers:
+
+```
+Progress pane: 2/4 completed · running=2 queued=0 failed=0
+  ── DWF Phases ──
+  ✓ Phase: Scan
+  ▶ Phase: Plan
+  ⏸ Phase: Review
+  ...
+```
+
+- `▶ Phase: <name>` — the currently running phase.
+- `✓ Phase: <name>` — a completed phase.
+- `⏸ Phase: <name>` — a phase whose completion scrolled out of the recent-event
+  window and is not the current one (indeterminate).
+
+Phase state is derived purely from the tailed `recentEvents` window (no extra
+I/O), so this is **backward compatible**: non-DWF runs (static workflows,
+goal-loops) produce no `dwf.phase_*` events and show no phase markers at all.
+For terminals that mis-render the Unicode glyphs, ASCII fallbacks
+(`[>]`/`[v]`/`[ ]`) are available via `renderDwfPhaseLines(state, { ascii: true })`.
+
 ### Log API (round-14 P1-3)
 
 `ctx.log(message)` appends a workflow-level log line. It stringifies non-string

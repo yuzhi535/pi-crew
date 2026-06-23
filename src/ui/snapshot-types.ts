@@ -1,6 +1,7 @@
 import type { CrewAgentRecord } from "../runtime/crew-agent-runtime.ts";
 import type { TeamEvent } from "../state/event-log.ts";
 import type { TeamRunManifest, TeamTaskState } from "../state/types.ts";
+import type { DwfPhaseState } from "./dwf-phase-display.ts";
 
 export interface RunUiProgress {
 	total: number;
@@ -73,6 +74,8 @@ export interface RunUiSnapshot {
 	groupJoins?: RunUiGroupJoin[];
 	/** Structured cancellation reason from run.cancelled event data, when available. */
 	cancellationReason?: string;
+	/** DWF phase state derived from `recentEvents`. Null/absent for non-DWF runs. */
+	dwfPhaseState?: DwfPhaseState | null;
 	recentEvents: TeamEvent[];
 	recentOutputLines: string[];
 }

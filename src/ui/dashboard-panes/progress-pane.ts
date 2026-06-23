@@ -1,5 +1,6 @@
 import type { RunUiSnapshot } from "../snapshot-types.ts";
 import { computePhaseProgress, formatPhaseProgressLine } from "../../runtime/phase-progress.ts";
+import { renderDwfPhaseLines } from "../dwf-phase-display.ts";
 
 export function renderProgressPane(snapshot: RunUiSnapshot | undefined): string[] {
 	if (!snapshot) return ["Progress pane: snapshot unavailable"];
@@ -16,8 +17,12 @@ export function renderProgressPane(snapshot: RunUiSnapshot | undefined): string[
 		})
 		: [];
 	const phaseHeader = phaseLines.length > 0 ? [formatPhaseProgressLine(runProgress), ...phaseLines] : [];
+	// DWF logical phases (round-15 P1-4): derived from dwf.phase_* events.
+	// Null/absent for non-DWF runs → zero visible change.
+	const dwfPhaseLines = snapshot.dwfPhaseState ? renderDwfPhaseLines(snapshot.dwfPhaseState) : [];
 	return [
 		`Progress pane: ${progress.completed}/${progress.total} completed · running=${progress.running} queued=${progress.queued} failed=${progress.failed}`,
+		...dwfPhaseLines,
 		...phaseHeader,
 		...cancellationLine,
 		...groupJoinLines,
