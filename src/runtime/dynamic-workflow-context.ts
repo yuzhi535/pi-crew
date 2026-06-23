@@ -40,6 +40,7 @@ import type { TSchema } from "@sinclair/typebox";
 import type { AgentConfig } from "../agents/agent-config.ts";
 import type { TeamConfig } from "../teams/team-config.ts";
 import type { TeamRunManifest } from "../state/types.ts";
+import type { DwfCheckpointState } from "./dwf-state-store.ts";
 
 export interface AgentCallOpts {
 	prompt: string;
@@ -162,6 +163,15 @@ export interface MakeWorkflowCtxOptions {
 	tokenBudget?: number | null;
 	/** round-14 P1-5: typed workflow arguments (sourced from manifest.args). Defaults to {}. */
 	args?: unknown;
+	/** round-18 P2-3: checkpoint state to hydrate ctx with on resume. When provided,
+	 *  the ctx starts with the resumed vars/phases/logs/spent/agentCount instead of
+	 *  empty defaults. Omit (or undefined) for a fresh run — backward compatible. */
+	resumedState?: DwfCheckpointState;
+	/** round-18 P2-3: callback invoked after each `ctx.agent()` call completes
+	 *  (success OR fail). The runner wires this to `DwfStore.save()` so a crash after
+	 *  an agent call leaves a durable checkpoint. Best-effort — failures are swallowed
+	 *  so checkpointing can never crash the workflow. */
+	onCheckpoint?: (state: DwfCheckpointState) => void;
 }
 
 /**
@@ -218,15 +228,22 @@ export function makeWorkflowCtx(manifest: TeamRunManifest, opts: MakeWorkflowCtx
 	const concurrency = Math.max(1, opts.concurrency ?? 4);
 	const semaphore = new Semaphore(concurrency);
 	let finalResult: { artifactPath: string; meta?: Record<string, unknown> } | undefined;
+	// round-18 P2-3: agent invocation counter. Hydrated from a resumed checkpoint so a
+	// resumed run keeps an accurate count; incremented in agent()'s finally block.
+	let agentCount = opts.resumedState ? opts.resumedState.agentCount : 0;
 	// round-12 P0-1: in-memory phase state, exposed via non-enumerable getter like __finalResult.
 	// The events log is the durable source of truth for phase boundaries.
-	let phaseState: { currentPhase: string | undefined; phases: string[] } = { currentPhase: undefined, phases: [] };
+	// round-18 P2-3: hydrate phaseState from a resumed checkpoint (backward compatible when unset).
+	let phaseState: { currentPhase: string | undefined; phases: string[] } = opts.resumedState
+		? { currentPhase: opts.resumedState.currentPhase, phases: [...opts.resumedState.phases] }
+		: { currentPhase: undefined, phases: [] };
 	let phaseCapWarned = false;
 	// round-14 P1-2/P1-3/P1-5: closure-scoped runtime state shared by budget/log/args.
 	// Mirrors the pi-dynamic-workflows RuntimeState pattern (workflow.ts:state).
+	// round-18 P2-3: hydrate spent/logs from a resumed checkpoint (backward compatible when unset).
 	const wfState: { spent: number; logs: string[]; args: unknown } = {
-		spent: 0,
-		logs: [],
+		spent: opts.resumedState?.spent ?? 0,
+		logs: opts.resumedState ? [...opts.resumedState.logs].slice(0, 1000) : [],
 		args: opts.args ?? {},
 	};
 	// round-14 P1-2: frozen budget surface. The closures read wfState.spent so the
@@ -373,6 +390,26 @@ export function makeWorkflowCtx(manifest: TeamRunManifest, opts: MakeWorkflowCtx
 						logInternalError("dynamic-workflow-context.worktree-cleanup", cleanupError, `worktreePath=${worktreePath}`);
 					}
 				}
+				// round-18 P2-3: checkpoint AFTER the agent completes (success or fail) so a
+				// crash between agent calls leaves durable state to resume from. The counter is
+				// incremented here (after the call) so the checkpoint reflects the call that ran.
+				agentCount++;
+				if (opts.onCheckpoint) {
+					try {
+						opts.onCheckpoint({
+							runId: manifest.runId,
+							vars: ctx.vars,
+							phases: phaseState.phases,
+							currentPhase: phaseState.currentPhase,
+							logs: wfState.logs.slice(0, 1000),
+							spent: wfState.spent,
+							agentCount,
+							updatedAt: new Date().toISOString(),
+						});
+					} catch (checkpointError) {
+						logInternalError("dynamic-workflow-context.checkpoint", checkpointError, `runId=${manifest.runId}`);
+					}
+				}
 				semaphore.release();
 			}
 		},
@@ -505,7 +542,7 @@ export function makeWorkflowCtx(manifest: TeamRunManifest, opts: MakeWorkflowCtx
 		renderTemplate(name: string, vars: Record<string, string>): unknown {
 			return renderPlanTemplate(name, vars);
 		},
-		vars: {} as Record<string, unknown>,
+		vars: opts.resumedState ? { ...opts.resumedState.vars } : ({} as Record<string, unknown>),
 		setResult(artifactPath: string, meta?: Record<string, unknown>): void {
 			finalResult = { artifactPath, meta };
 		},
@@ -581,6 +618,13 @@ export function makeWorkflowCtx(manifest: TeamRunManifest, opts: MakeWorkflowCtx
 		get: () => wfState.logs,
 		enumerable: false,
 	});
+	// round-18 P2-3: agent invocation counter is read-only from the runner. The script can
+	// only advance it via ctx.agent() (incremented in agent()'s finally). Exposed so
+	// getWorkflowCheckpoint() can report an accurate count.
+	Object.defineProperty(ctx, "__agentCount", {
+		get: () => agentCount,
+		enumerable: false,
+	});
 	return ctx;
 }
 
@@ -598,6 +642,25 @@ export function getWorkflowPhaseState(ctx: WorkflowCtx): { currentPhase: string 
  *  Capped at 1000 entries — the events log (dwf.log) is the durable source of truth. */
 export function getWorkflowLogs(ctx: WorkflowCtx): string[] | undefined {
 	return (ctx as unknown as { __logs?: string[] }).__logs;
+}
+
+/** round-18 P2-3: snapshot the current DWF checkpoint state (runner-only; not part of the public
+ *  ctx surface). Mirrors getWorkflowFinalResult/getWorkflowPhaseState. The runner relies on the
+ *  `onCheckpoint` callback for accurate per-agent-call checkpoints (it captures the closure value
+ *  at call time); this helper is a best-effort snapshot for inspection/debugging. */
+export function getWorkflowCheckpoint(ctx: WorkflowCtx): DwfCheckpointState {
+	const phaseState = getWorkflowPhaseState(ctx);
+	const logs = getWorkflowLogs(ctx);
+	return {
+		runId: ctx.runId,
+		vars: ctx.vars,
+		phases: phaseState?.phases ?? [],
+		currentPhase: phaseState?.currentPhase,
+		logs: logs ?? [],
+		spent: ctx.budget.spent(),
+		agentCount: (ctx as unknown as { __agentCount?: number }).__agentCount ?? 0,
+		updatedAt: new Date().toISOString(),
+	};
 }
 
 /** Compose the agent task: prompt + optional dependency-input context block. */

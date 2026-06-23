@@ -645,3 +645,234 @@ test("round-14 integration: dwf calling ctx.args<T>() reads typed args from mani
 		fs.rmSync(fx.tmpCwd, { recursive: true, force: true });
 	}
 });
+
+// ---------------------------------------------------------------------------
+// round-18 P2-3 integration tests: resume/checkpoint
+// ---------------------------------------------------------------------------
+
+interface Round18Fx {
+	repoRoot: string;
+	thisFile: string;
+	createJiti: (...args: unknown[]) => { import(p: string): Promise<unknown> };
+	tmpCwd: string;
+	dwfPath: string;
+	artifactPath: string;
+	runId: string;
+	stateRoot: string;
+	checkpointPath: string;
+	eventsPath: string;
+	manifest: Record<string, unknown>;
+	workflow: Record<string, unknown>;
+	team: Record<string, unknown>;
+}
+
+function makeRound18Fixture(name: string): Round18Fx {
+	const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+	const require = createRequire(import.meta.url);
+	const thisFile = fileURLToPath(import.meta.url);
+	const jitiMod = require(path.join(repoRoot, "node_modules/jiti/lib/jiti.cjs"));
+	const createJiti = (jitiMod as { default?: unknown }).default ?? jitiMod;
+
+	const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), `pi-crew-dwf-r18-${name}-`));
+	fs.mkdirSync(path.join(tmpCwd, ".crew", "workflows"), { recursive: true });
+	const artifactPath = path.join(tmpCwd, "result.txt");
+	const dwfPath = path.join(tmpCwd, ".crew", "workflows", `r18-${name}.dwf.ts`);
+	const runId = `team_dwf_r18_${name}_${Date.now()}`;
+	const stateRoot = path.join(tmpCwd, "state");
+	fs.mkdirSync(stateRoot, { recursive: true });
+	const checkpointPath = path.join(stateRoot, "dwf-checkpoint.json");
+	const eventsPath = path.join(stateRoot, "events.jsonl");
+	fs.writeFileSync(eventsPath, "");
+
+	const manifest: Record<string, unknown> = {
+		schemaVersion: 1,
+		runId,
+		team: "test-team",
+		workflow: `r18-${name}`,
+		goal: "round-18 test",
+		status: "running",
+		workspaceMode: "single",
+		createdAt: new Date().toISOString(),
+		updatedAt: new Date().toISOString(),
+		cwd: tmpCwd,
+		stateRoot,
+		artifactsRoot: path.join(tmpCwd, "artifacts"),
+		tasksPath: path.join(stateRoot, "tasks.json"),
+		eventsPath,
+		artifacts: [],
+	};
+	const workflow = {
+		name: `r18-${name}`,
+		description: "round-18 test",
+		source: "project",
+		filePath: dwfPath,
+		steps: [],
+		runtime: "dynamic",
+		dynamicScript: dwfPath,
+	};
+	const team = {
+		name: "test-team",
+		description: "test",
+		source: "dynamic",
+		filePath: "<test>",
+		roles: [{ name: "worker", agent: "executor" }],
+		workspaceMode: "single",
+	};
+
+	return {
+		repoRoot, thisFile, createJiti: createJiti as Round18Fx["createJiti"], tmpCwd, dwfPath, artifactPath,
+		runId, stateRoot, checkpointPath, eventsPath, manifest, workflow, team,
+	};
+}
+
+async function runRound18(fx: Round18Fx): Promise<{ status: string; summary: string }> {
+	const jiti = fx.createJiti(fx.thisFile);
+	const dwfMod = (await jiti.import(
+		path.join(fx.repoRoot, "src/runtime/dynamic-workflow-runner.ts"),
+	)) as { default?: { runDynamicWorkflow: (...a: unknown[]) => Promise<unknown> } };
+	const { runDynamicWorkflow } = dwfMod.default ?? (dwfMod as unknown as { runDynamicWorkflow: (...a: unknown[]) => Promise<unknown> });
+	const result = (await runDynamicWorkflow({
+		manifest: fx.manifest, workflow: fx.workflow, team: fx.team, signal: AbortSignal.timeout(8000),
+	})) as { manifest: { status: string; summary: string } };
+	return result.manifest;
+}
+
+function readRound18Events(eventsPath: string): Array<{ type: string; data?: Record<string, unknown> }> {
+	return fs.readFileSync(eventsPath, "utf-8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l) as { type: string; data?: Record<string, unknown> });
+}
+
+test("round-18 fresh run: no checkpoint loaded (no dwf.resumed event)", async () => {
+	const fx = makeRound18Fixture("fresh");
+	const savedMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const savedAllow = process.env.PI_CREW_ALLOW_MOCK;
+	try {
+		process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
+		process.env.PI_CREW_ALLOW_MOCK = "1";
+		fs.writeFileSync(fx.artifactPath, "fresh-result\n");
+		fs.writeFileSync(
+			fx.dwfPath,
+			`export default async function run(ctx) {
+  await ctx.agent({ role: "executor", prompt: "step" });
+  ctx.setResult(${JSON.stringify(fx.artifactPath)});
+}
+`,
+		);
+		// No pre-existing checkpoint → this is a fresh run.
+		assert.ok(!fs.existsSync(fx.checkpointPath), "no checkpoint before the fresh run");
+
+		const m = await runRound18(fx);
+		assert.equal(m.status, "completed");
+		const events = readRound18Events(fx.eventsPath);
+		assert.equal(events.filter((e) => e.type === "dwf.resumed").length, 0, "fresh run must NOT emit dwf.resumed");
+	} finally {
+		if (savedMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = savedMock;
+		if (savedAllow === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = savedAllow;
+		fs.rmSync(fx.tmpCwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 completed run: checkpoint is deleted after clean completion", async () => {
+	const fx = makeRound18Fixture("completed");
+	const savedMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const savedAllow = process.env.PI_CREW_ALLOW_MOCK;
+	try {
+		process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
+		process.env.PI_CREW_ALLOW_MOCK = "1";
+		fs.writeFileSync(fx.artifactPath, "completed-result\n");
+		fs.writeFileSync(
+			fx.dwfPath,
+			`export default async function run(ctx) {
+  await ctx.agent({ role: "executor", prompt: "step" });
+  ctx.setResult(${JSON.stringify(fx.artifactPath)});
+}
+`,
+		);
+		await runRound18(fx);
+		// After a clean completion the runner MUST delete the checkpoint so a re-run
+		// with the same runId starts fresh rather than resuming stale state.
+		assert.ok(!fs.existsSync(fx.checkpointPath), "checkpoint deleted after clean completion");
+	} finally {
+		if (savedMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = savedMock;
+		if (savedAllow === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = savedAllow;
+		fs.rmSync(fx.tmpCwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 resume: pre-existing checkpoint hydrates ctx + emits dwf.resumed", async () => {
+	const fx = makeRound18Fixture("resume");
+	try {
+		fs.writeFileSync(fx.artifactPath, "resume-result\n");
+		// Pre-write a checkpoint file at the run's stateRoot with vars the script will read.
+		const checkpoint = {
+			runId: fx.runId,
+			vars: { lastPhase: "scan", carried: "RESUMED_VALUE_42" },
+			phases: ["scan"],
+			currentPhase: "scan",
+			logs: ["prior-log"],
+			spent: 111,
+			agentCount: 1,
+			updatedAt: "2026-06-23T00:00:00.000Z",
+		};
+		fs.writeFileSync(fx.checkpointPath, JSON.stringify(checkpoint));
+
+		// The script reads ctx.vars (hydrated from the checkpoint) and logs them so we can
+		// observe hydration end-to-end via the events log. No agent() call needed —
+		// resume hydration is independent of agent spawning.
+		fs.writeFileSync(
+			fx.dwfPath,
+			`export default async function run(ctx) {
+  ctx.log("HYDRATED:" + JSON.stringify(ctx.vars));
+  ctx.setResult(${JSON.stringify(fx.artifactPath)});
+}
+`,
+		);
+
+		const m = await runRound18(fx);
+		assert.equal(m.status, "completed");
+
+		// 1. The hydrated vars reached the events log.
+		const events = readRound18Events(fx.eventsPath);
+		const logEvents = events.filter((e) => e.type === "dwf.log");
+		const hydrated = logEvents.map((e) => String(e.data?.message ?? "")).find((msg) => msg.startsWith("HYDRATED:"));
+		assert.ok(hydrated, "ctx.vars were logged by the resumed script");
+		const out = JSON.parse(hydrated!.slice("HYDRATED:".length));
+		assert.equal(out.carried, "RESUMED_VALUE_42", "ctx.vars hydrated from the checkpoint end-to-end");
+		assert.equal(out.lastPhase, "scan");
+
+		// 2. A dwf.resumed event was emitted.
+		const resumed = events.find((e) => e.type === "dwf.resumed");
+		assert.ok(resumed, "dwf.resumed event emitted on resume");
+		assert.equal(resumed?.data?.agentCount, 1, "resumed event carries the prior agentCount");
+
+		// 3. The checkpoint is deleted after the resumed run completes cleanly.
+		assert.ok(!fs.existsSync(fx.checkpointPath), "checkpoint deleted after resumed run completes");
+	} finally {
+		fs.rmSync(fx.tmpCwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 resume: corrupt checkpoint is treated as a fresh run (no throw)", async () => {
+	const fx = makeRound18Fixture("corrupt");
+	try {
+		fs.writeFileSync(fx.artifactPath, "corrupt-result\n");
+		// A corrupt checkpoint file must not crash the runner — load() returns undefined.
+		fs.writeFileSync(fx.checkpointPath, "{not valid json at all");
+		fs.writeFileSync(
+			fx.dwfPath,
+			`export default async function run(ctx) {
+  ctx.setResult(${JSON.stringify(fx.artifactPath)});
+}
+`,
+		);
+		const m = await runRound18(fx);
+		assert.equal(m.status, "completed", "corrupt checkpoint → fresh run → completes normally");
+		const events = readRound18Events(fx.eventsPath);
+		assert.equal(events.filter((e) => e.type === "dwf.resumed").length, 0, "corrupt checkpoint is NOT resumed");
+	} finally {
+		fs.rmSync(fx.tmpCwd, { recursive: true, force: true });
+	}
+});

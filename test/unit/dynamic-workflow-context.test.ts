@@ -19,6 +19,7 @@ import {
 	getWorkflowFinalResult,
 	getWorkflowPhaseState,
 	getWorkflowLogs,
+	getWorkflowCheckpoint,
 	classifyReviewOutcome,
 } from "../../src/runtime/dynamic-workflow-context.ts";
 import { prepareAgentWorktree, cleanupAgentWorktree } from "../../src/worktree/worktree-manager.ts";
@@ -1043,6 +1044,205 @@ test("round-17 P2-4: ctx.agent({worktree:true}) cleans up the worktree even when
 		else process.env.PI_TEAMS_MOCK_CHILD_PI = savedMock;
 		if (savedAllow === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
 		else process.env.PI_CREW_ALLOW_MOCK = savedAllow;
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+// ---------------------------------------------------------------------------
+// round-18 P2-3: resume/checkpoint
+// ---------------------------------------------------------------------------
+
+test("round-18 ctx.agent() fires onCheckpoint after each call (success path)", async () => {
+	const cwd = tmpCwd();
+	const savedMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const savedAllow = process.env.PI_CREW_ALLOW_MOCK;
+	try {
+		process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
+		process.env.PI_CREW_ALLOW_MOCK = "1";
+		const manifest = fakeManifest(cwd);
+		const checkpoints: import("../../src/runtime/dwf-state-store.ts").DwfCheckpointState[] = [];
+		const ctx = makeWorkflowCtx(manifest, {
+			signal: new AbortController().signal,
+			concurrency: 1,
+			onCheckpoint: (state) => { checkpoints.push(state); },
+		});
+		ctx.vars.lastPhase = "init";
+		ctx.phase("scan");
+		ctx.log("hello checkpoint");
+		await ctx.agent({ role: "executor", prompt: "step 1" });
+		assert.equal(checkpoints.length, 1, "onCheckpoint fired exactly once after one agent call");
+		const cp = checkpoints[0];
+		assert.equal(cp.runId, "team_dwf_test_abc");
+		assert.equal(cp.vars.lastPhase, "init");
+		assert.deepEqual(cp.phases, ["scan"], "checkpoint captures phase list");
+		assert.equal(cp.currentPhase, "scan", "checkpoint captures current phase");
+		assert.ok(cp.logs.includes("hello checkpoint"), "checkpoint captures logs");
+		assert.equal(cp.agentCount, 1, "agentCount incremented to 1 after the call");
+		assert.equal(typeof cp.updatedAt, "string");
+	} finally {
+		if (savedMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = savedMock;
+		if (savedAllow === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = savedAllow;
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 ctx.agent() fires onCheckpoint even when the agent fails", async () => {
+	const cwd = tmpCwd();
+	try {
+		process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
+		// PI_CREW_ALLOW_MOCK intentionally NOT set → mock returns exit 1 → agent ok:false.
+		const manifest = fakeManifest(cwd);
+		const checkpoints: import("../../src/runtime/dwf-state-store.ts").DwfCheckpointState[] = [];
+		const ctx = makeWorkflowCtx(manifest, {
+			signal: new AbortController().signal,
+			concurrency: 1,
+			onCheckpoint: (state) => { checkpoints.push(state); },
+		});
+		await ctx.agent({ role: "executor", prompt: "will fail", maxTurns: 1 });
+		assert.equal(checkpoints.length, 1, "checkpoint fires on the failure path too");
+		assert.equal(checkpoints[0].agentCount, 1);
+	} finally {
+		delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 onCheckpoint agentCount accumulates across multiple calls", async () => {
+	const cwd = tmpCwd();
+	const savedMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const savedAllow = process.env.PI_CREW_ALLOW_MOCK;
+	try {
+		process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
+		process.env.PI_CREW_ALLOW_MOCK = "1";
+		const manifest = fakeManifest(cwd);
+		const counts: number[] = [];
+		const ctx = makeWorkflowCtx(manifest, {
+			signal: new AbortController().signal,
+			concurrency: 1,
+			onCheckpoint: (state) => { counts.push(state.agentCount); },
+		});
+		await ctx.agent({ role: "executor", prompt: "a" });
+		await ctx.agent({ role: "executor", prompt: "b" });
+		await ctx.agent({ role: "executor", prompt: "c" });
+		assert.deepEqual(counts, [1, 2, 3], "agentCount increments 1,2,3 across three calls");
+	} finally {
+		if (savedMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = savedMock;
+		if (savedAllow === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = savedAllow;
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 onCheckpoint never fires when the callback is omitted (backward compat)", async () => {
+	const cwd = tmpCwd();
+	const savedMock = process.env.PI_TEAMS_MOCK_CHILD_PI;
+	const savedAllow = process.env.PI_CREW_ALLOW_MOCK;
+	try {
+		process.env.PI_TEAMS_MOCK_CHILD_PI = "json-success";
+		process.env.PI_CREW_ALLOW_MOCK = "1";
+		const manifest = fakeManifest(cwd);
+		// No onCheckpoint — must not throw and must not checkpoint.
+		const ctx = makeWorkflowCtx(manifest, { signal: new AbortController().signal, concurrency: 1 });
+		await assert.doesNotReject(() => ctx.agent({ role: "executor", prompt: "x" }));
+	} finally {
+		if (savedMock === undefined) delete process.env.PI_TEAMS_MOCK_CHILD_PI;
+		else process.env.PI_TEAMS_MOCK_CHILD_PI = savedMock;
+		if (savedAllow === undefined) delete process.env.PI_CREW_ALLOW_MOCK;
+		else process.env.PI_CREW_ALLOW_MOCK = savedAllow;
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 makeWorkflowCtx hydrates vars/phases/logs/spent/agentCount from resumedState", () => {
+	const cwd = tmpCwd();
+	try {
+		const manifest = fakeManifest(cwd);
+		const resumedState = {
+			runId: "team_dwf_test_abc",
+			vars: { lastPhase: "analyze", items: ["a", "b"] },
+			phases: ["scan", "analyze"],
+			currentPhase: "analyze",
+			logs: ["resumed-log-1", "resumed-log-2"],
+			spent: 5000,
+			agentCount: 4,
+			updatedAt: "2026-06-23T00:00:00.000Z",
+		};
+		const ctx = makeWorkflowCtx(manifest, { signal: new AbortController().signal, resumedState });
+		// vars hydrated.
+		assert.deepEqual(ctx.vars, { lastPhase: "analyze", items: ["a", "b"] });
+		// phaseState hydrated.
+		const phaseState = getWorkflowPhaseState(ctx);
+		assert.deepEqual(phaseState?.phases, ["scan", "analyze"]);
+		assert.equal(phaseState?.currentPhase, "analyze");
+		// logs hydrated.
+		assert.deepEqual(getWorkflowLogs(ctx), ["resumed-log-1", "resumed-log-2"]);
+		// spent hydrated (budget).
+		assert.equal(ctx.budget.spent(), 5000);
+		// agentCount hydrated.
+		assert.equal(getWorkflowCheckpoint(ctx).agentCount, 4);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 makeWorkflowCtx without resumedState starts empty (fresh run, backward compat)", () => {
+	const cwd = tmpCwd();
+	try {
+		const manifest = fakeManifest(cwd);
+		const ctx = makeWorkflowCtx(manifest, { signal: new AbortController().signal });
+		assert.deepEqual(ctx.vars, {});
+		assert.equal(getWorkflowPhaseState(ctx)?.currentPhase, undefined);
+		assert.deepEqual(getWorkflowPhaseState(ctx)?.phases, []);
+		assert.deepEqual(getWorkflowLogs(ctx), []);
+		assert.equal(ctx.budget.spent(), 0);
+		assert.equal(getWorkflowCheckpoint(ctx).agentCount, 0);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 resumedState ctx.vars is a copy (mutating it does not affect the source)", () => {
+	const cwd = tmpCwd();
+	try {
+		const manifest = fakeManifest(cwd);
+		const resumed = {
+			runId: "team_dwf_test_abc",
+			vars: { x: 1 },
+			phases: [],
+			currentPhase: undefined,
+			logs: [],
+			spent: 0,
+			agentCount: 0,
+			updatedAt: "x",
+		};
+		const ctx = makeWorkflowCtx(manifest, { signal: new AbortController().signal, resumedState: resumed });
+		ctx.vars.x = 99;
+		assert.equal(resumed.vars.x, 1, "hydrated ctx.vars is a shallow copy — source checkpoint untouched");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("round-18 getWorkflowCheckpoint() snapshots the current ctx state", () => {
+	const cwd = tmpCwd();
+	try {
+		const manifest = fakeManifest(cwd);
+		const ctx = makeWorkflowCtx(manifest, { signal: new AbortController().signal });
+		ctx.vars.k = "v";
+		ctx.phase("build");
+		ctx.log("snap");
+		const cp = getWorkflowCheckpoint(ctx);
+		assert.equal(cp.runId, "team_dwf_test_abc");
+		assert.equal(cp.vars.k, "v");
+		assert.deepEqual(cp.phases, ["build"]);
+		assert.equal(cp.currentPhase, "build");
+		assert.ok(cp.logs.includes("snap"));
+		assert.equal(cp.agentCount, 0);
+		assert.equal(typeof cp.updatedAt, "string");
+	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}
 });

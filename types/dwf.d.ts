@@ -26,6 +26,31 @@
  *
  * These interfaces mirror the runtime types in `src/runtime/dynamic-workflow-context.ts`.
  * They are authoring-only (no runtime values); the real implementations live in the runner.
+ *
+ * ## Resume & Checkpoint (round-18 P2-3)
+ *
+ * The runner persists a checkpoint after every `ctx.agent()` call so that a crash
+ * (timeout, OOM, agent error) between calls does not lose all progress. When you run
+ * `team action='resume' runId='X'`, the runner re-executes the script from the top
+ * but **hydrates** `ctx.vars`, `ctx.budget.spent()`, the phase list, and the log
+ * buffer from the last checkpoint.
+ *
+ * Because the script re-runs from the top, write it **defensively** — check
+ * `ctx.vars` to skip already-completed work:
+ *
+ * ```ts
+ * export default async function run(ctx) {
+ *   // Defensive resume: skip the scan phase if it already ran.
+ *   if (ctx.vars.lastPhase !== "scan") {
+ *     const res = await ctx.agent({ role: "explorer", prompt: "scan" });
+ *     ctx.vars.lastPhase = "scan";   // checkpointed after this call
+ *   }
+ *   // ... continue with analyze, using ctx.vars from the prior run
+ * }
+ * ```
+ *
+ * On a clean completion the checkpoint is deleted, so a re-run with the same runId
+ * starts fresh. A missing or corrupt checkpoint is treated as a fresh run.
  */
 
 export interface AgentCallOpts {
@@ -116,7 +141,11 @@ export interface WorkflowCtx {
 	cwd: string;
 	runId: string;
 	goal?: string;
-	/** Script-local persistent variables. */
+	/** Script-local persistent variables.
+	 *
+	 *  On resume (round-18 P2-3), these are hydrated from the last checkpoint so a
+	 *  re-run continues where it left off. Write defensive scripts that inspect
+	 *  `ctx.vars` to skip work already done in a prior (crashed) run. */
 	vars: Record<string, unknown>;
 	/** Abort signal (cancel/stop). */
 	signal: AbortSignal;

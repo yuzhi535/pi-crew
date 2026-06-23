@@ -1,5 +1,66 @@
 # Changelog
 
+## [v0.9.7] — round-18 (P2-3 resume/checkpoint) (2026-06-23)
+
+P2-3 feature: durable checkpoint + resume for dynamic-workflow runs. When a `.dwf.ts`
+script crashes (timeout, OOM, agent error) between `ctx.agent()` calls, the runner now
+persists a checkpoint after every agent call so `team action='resume' runId='X'` can
+continue from the last checkpoint instead of re-running from scratch. **Backward
+compatible** — fresh runs (no checkpoint) behave exactly as before.
+
+### Implementation
+
+**New file** `src/runtime/dwf-state-store.ts` (`DwfStore`):
+- Atomic CRUD for a single run's DWF checkpoint, modeled on `GoalStore` /
+  `FileCheckpointStore`.
+- Persists `DwfCheckpointState` (vars, phases, currentPhase, logs, spent, agentCount,
+  updatedAt) to `<stateRoot>/dwf-checkpoint.json` via `atomicWriteJson`.
+- `load()` returns `undefined` for a missing/corrupt checkpoint (fresh run); `delete()`
+  is best-effort and never throws.
+
+**`ctx.agent()` checkpoint hook** in `src/runtime/dynamic-workflow-context.ts`:
+- New `MakeWorkflowCtxOptions.onCheckpoint?: (state) => void` — invoked after each
+  `ctx.agent()` call (success OR fail) so a crash between calls leaves durable state.
+- New `MakeWorkflowCtxOptions.resumedState?` — hydrates `ctx.vars`, phase state, logs,
+  `budget.spent()`, and `agentCount` from the checkpoint on resume.
+- New closure counter `agentCount` (incremented in `agent()`'s `finally`), exposed via a
+  non-enumerable `__agentCount` getter.
+- New `getWorkflowCheckpoint(ctx)` helper (mirror of `getWorkflowPhaseState`).
+
+**Runner wiring** in `src/runtime/dynamic-workflow-runner.ts`:
+- On run start: `DwfStore.load()` → hydrate ctx (`resumedState`) + emit `dwf.resumed`.
+- `onCheckpoint` → `DwfStore.save()` (best-effort, errors swallowed).
+- On clean completion: `DwfStore.delete()` so a re-run starts fresh.
+
+### Resume semantics
+
+`team action='resume' runId='X'` re-dispatches with `runKind='dynamic-workflow'`. The
+runner loads the checkpoint, hydrates `ctx.vars`/phases/logs, and re-executes the
+script from the top. Scripts SHOULD be written defensively — check `ctx.vars.lastPhase`
+to skip completed work (documented in `docs/dynamic-workflows.md`). No partial-resume of
+a single agent call (it re-runs from scratch); checkpoints are written AFTER an agent
+completes, never before.
+
+### Tests (14 new)
+- `test/unit/dwf-state-store.test.ts` (10): save/load round-trip, missing→undefined,
+  delete, corrupt-file resilience, path layout, dir creation, large-state preservation.
+- `test/unit/dynamic-workflow-context.test.ts` (+8): onCheckpoint fires on success/fail,
+  agentCount accumulation, backward-compat (no callback), resumedState hydration,
+  shallow-copy isolation, getWorkflowCheckpoint snapshot.
+- `test/integration/dwf-setresult.test.ts` (+4): fresh run (no resumed event),
+  completed run (checkpoint deleted), resume (hydration + dwf.resumed + delete),
+  corrupt checkpoint treated as fresh run.
+
+### Docs
+- `docs/dynamic-workflows.md` — new "Resume & Checkpoint (round-18 P2-3)" section +
+  defensive-script example.
+- `types/dwf.d.ts` — resume pattern documented in header + `ctx.vars` JSDoc.
+- `package.json` — bumped 1.0.1 → 1.1.0 (minor — new opt-in capability).
+
+### Out of scope (future rounds)
+- P2-2 VM sandbox — still waiting for `isolated-vm` v1.5 (vm.createContext is not a
+  real security boundary). This was the LAST P2 item.
+
 ## [v0.9.7] — round-17 (P2-4 worktree isolation per agent) (2026-06-23)
 
 P2-4 feature: `ctx.agent({worktree: true})` spawns the agent in an isolated

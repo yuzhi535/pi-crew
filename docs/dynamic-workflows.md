@@ -57,7 +57,7 @@ Slash command: `/workflows` lists all workflows (static + dynamic).
 | `ctx.mail(to, body, opts?)` | Mailbox message to another agent/leader. |
 | `ctx.gatherReplies(ids, deadlineMs)` | Block until N replies arrive or deadline. |
 | `ctx.renderTemplate(name, vars)` | Render a built-in plan template. |
-| `ctx.vars` | Script-local variables. |
+| `ctx.vars` | Script-local variables. (round-18: hydrated from the last checkpoint on resume — see [Resume & Checkpoint](#resume--checkpoint-round-18-p2-3).) |
 | `ctx.phase(title)` | Mark the start of a named workflow phase. Emits `dwf.phase_started` (and `dwf.phase_completed` for the previous phase, if any) to the run's events.jsonl. Idempotent on the same title. Phase events let downstream consumers (UI, log readers) group agents by logical phase. |
 | `ctx.log(message)` | **round-14.** Append a workflow-level log line. Stringifies non-strings, keeps a bounded in-memory copy (capped at 1000), and always emits a `dwf.log` event (`{message}`) to `events.jsonl`. |
 | `ctx.budget` | **round-14.** Frozen `{total, spent(), remaining()}` token-budget surface. `total` is `null` when unbounded (default). `ctx.agent()` auto-rejects with `ok:false` (`"workflow token budget exhausted"`) once exhausted. `spent()` accumulates each agent run's reported usage. Set via `workflow.maxTokenBudget` or the run `tokenBudget` param. |
@@ -341,3 +341,63 @@ holds results only in JS variables + `ctx.vars`. Only `ctx.setResult(artifactPat
 read back into the tool result returned to the main context — mirroring the static
 workflow `summary.md` contract. The orchestrator's context never holds raw worker
 output.
+
+## Resume & Checkpoint (round-18 P2-3)
+
+When a dynamic-workflow script crashes (timeout, OOM, agent error) between
+`ctx.agent()` calls, all in-memory state (JS vars, phases, logs, budget) is lost and
+the user previously had to re-run from scratch. Round-18 adds a durable checkpoint.
+
+**How it works:**
+
+1. After **every** `ctx.agent()` call (success or failure), the runner persists a
+   checkpoint to `<stateRoot>/dwf-checkpoint.json` (atomic write via
+   `atomicWriteJson`). The checkpoint captures `ctx.vars`, the phase list + current
+   phase, the log buffer (capped at 1000), `ctx.budget.spent()`, and an `agentCount`.
+2. On a clean completion (`ctx.setResult()` + script returns normally), the checkpoint
+   is **deleted** so a re-run with the same `runId` starts fresh.
+3. `team action='resume' runId='X'` re-dispatches the run with `runKind='dynamic-workflow'`.
+   The runner detects the checkpoint, emits a `dwf.resumed` event, and **hydrates**
+   `ctx.vars`/phases/logs/spent/agentCount from it before re-executing the script.
+
+A missing or corrupt checkpoint is treated as a fresh run — resuming is always safe.
+
+### Writing defensive (resumable) scripts
+
+Because the script re-runs **from the top** on resume (not from the crash point), you
+should write it defensively: record progress in `ctx.vars` after each agent call and
+skip work that already completed.
+
+```ts
+export default async function run(ctx) {
+  // Phase 1 — scan (skipped on resume if it already ran)
+  if (ctx.vars.lastPhase !== "scan") {
+    const res = await ctx.agent({ role: "explorer", prompt: "scan the repo" });
+    ctx.vars.scanResult = res.text;      // checkpointed after this ctx.agent() call
+    ctx.vars.lastPhase = "scan";          // marker for the defensive guard
+  }
+
+  // Phase 2 — analyze (re-uses the resumed/hydrated scanResult)
+  const analysis = await ctx.agent({
+    role: "analyst",
+    prompt: `Analyze: ${ctx.vars.scanResult ?? ""}`,
+  });
+  ctx.vars.lastPhase = "analyze";
+
+  ctx.setResult(analysis.artifactPath ?? "");
+}
+```
+
+Key constraints:
+
+- **No partial-resume of an agent**: if the crash happens *mid-agent*, that agent
+  re-runs from scratch on resume. Agent results should be idempotent-ish.
+- **Checkpoint AFTER the agent completes** (never before), so a failed/incomplete
+  agent call is never persisted as “done.”
+- **Capped state**: logs are capped at 1000, phases at 100 — the checkpoint does not
+  grow unbounded.
+- **Backward compatible**: fresh runs (no checkpoint) behave exactly as before; the
+  checkpoint file only appears when an agent call has run and the run hasn't completed.
+
+See `src/runtime/dwf-state-store.ts` (`DwfStore`) and the runner wiring in
+`src/runtime/dynamic-workflow-runner.ts`.

@@ -24,6 +24,7 @@ import { appendEvent } from "../state/event-log.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import { logInternalError } from "../utils/internal-error.ts";
 import { makeWorkflowCtx, getWorkflowFinalResult, getWorkflowPhaseState } from "./dynamic-workflow-context.ts";
+import { DwfStore } from "./dwf-state-store.ts";
 import { assertDeterministicScript, isDeterminismCheckEnabled } from "./deterministic-ast.ts";
 import { projectCrewRoot, userPiRoot, packageRoot } from "../utils/paths.ts";
 import type { DynamicWorkflowConfig } from "../workflows/workflow-config.ts";
@@ -145,6 +146,20 @@ export async function runDynamicWorkflow(input: RunDynamicWorkflowInput): Promis
 
 	appendEvent(eventsPath, { type: "dwf.started", runId: manifest.runId, data: { workflow: workflow.name, script: scriptPath } });
 
+	// round-18 P2-3: resume/checkpoint. Load any existing checkpoint for this run's stateRoot.
+	// stateRoot is already <crewRoot>/state/runs/<runId>, so the checkpoint lands at
+	// <stateRoot>/dwf-checkpoint.json (no double-nesting). A missing checkpoint (fresh run)
+	// yields undefined — makeWorkflowCtx starts with empty defaults (backward compatible).
+	const dwfStore = new DwfStore(manifest.stateRoot);
+	const resumedState = dwfStore.load();
+	if (resumedState) {
+		appendEvent(eventsPath, {
+			type: "dwf.resumed",
+			runId: manifest.runId,
+			data: { agentCount: resumedState.agentCount, phases: resumedState.phases, currentPhase: resumedState.currentPhase },
+		});
+	}
+
 	const ctx = makeWorkflowCtx(manifest, {
 		concurrency: input.concurrency ?? workflow.maxConcurrency ?? 4,
 		signal,
@@ -152,6 +167,16 @@ export async function runDynamicWorkflow(input: RunDynamicWorkflowInput): Promis
 		modelOverride: input.modelOverride,
 		tokenBudget: input.tokenBudget ?? workflow.maxTokenBudget,
 		args: manifest.args,
+		resumedState,
+		// round-18 P2-3: checkpoint after each ctx.agent() call so a crash between calls
+		// leaves durable state. onCheckpoint captures the closure values at call time.
+		onCheckpoint: (state) => {
+			try {
+				dwfStore.save(state);
+			} catch (error) {
+				logInternalError("dynamic-workflow-runner.checkpoint-save", error, `runId=${manifest.runId}`);
+			}
+		},
 	});
 
 	// Freeze the ctx so the script cannot add/override capability methods (§0c C4).
@@ -216,6 +241,10 @@ export async function runDynamicWorkflow(input: RunDynamicWorkflowInput): Promis
 	}
 
 	appendEvent(eventsPath, { type: "dwf.completed", runId: manifest.runId, data: { workflow: workflow.name, summaryArtifact: summary.path } });
+
+	// round-18 P2-3: the run completed cleanly — delete the checkpoint so a fresh re-run
+	// (same runId) starts from scratch rather than resuming stale state.
+	dwfStore.delete();
 
 	// round-12 P0-4: also guard the manifest.summary slice (the value is
 	// written into JSON-serialized manifest state — a Promise here would also
