@@ -63,16 +63,21 @@ builtInRegistry.register(VitePlugin);
  * executing. The team-runner has no periodic heartbeat today, so any
  * team run lasting >5min is at risk.
  */
-function startTeamRunHeartbeat(stateRoot: string, runId: string, lastTaskUpdateAt?: string): () => void {
+function startTeamRunHeartbeat(stateRoot: string, runId: string): () => void {
 	const heartbeatPath = path.join(stateRoot, "heartbeat.json");
 	const writeHeartbeat = (): void => {
 		try {
+			// lastTaskUpdateAt is written fresh on each tick so the heartbeat
+			// never carries a stale creation-time timestamp. Previously this
+			// captured manifest.updatedAt once at startup, making the value
+			// permanently stale throughout the run.
+			const now = new Date().toISOString();
 			fs.writeFileSync(heartbeatPath, JSON.stringify({
 				pid: process.pid,
 				at: Date.now(),
 				runId,
 				kind: "team-runner",
-				lastTaskUpdateAt,
+				lastTaskUpdateAt: now,
 			}), { encoding: "utf-8", mode: 0o600 });
 		} catch {
 			// best-effort
@@ -439,7 +444,7 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 	// (NO_PID_HEARTBEAT_STALE_MS). Previously only sub-task runners wrote
 	// heartbeats; the team-level run had no heartbeat, so any multi-phase
 	// workflow lasting >5min was marked stale and cancelled.
-	const stopTeamHeartbeat = startTeamRunHeartbeat(manifest.stateRoot, manifest.runId, manifest.updatedAt);
+	const stopTeamHeartbeat = startTeamRunHeartbeat(manifest.stateRoot, manifest.runId);
 
 	const cleanupUsage = (): void => {
 		for (const task of input.tasks) clearTrackedTaskUsage(task.id);
