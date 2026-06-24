@@ -20,7 +20,10 @@ import { appendEvent } from "../../src/state/event-log.ts";
 import type { TeamRunManifest, TeamTaskState } from "../../src/state/types.ts";
 
 test("HB-001 integration: interleaved manifest + event writes reload consistently", () => {
-	const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-hb001-durability-"));
+	// Use realpath to avoid macOS /var -> /private/var symlink mismatch: mkdtemp
+	// returns the lexical /var path but resolveRealContainedPath canonicalises to
+	// /private/var, so loadRunManifestById would not find the run dir.
+	const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-hb001-durability-")));
 	fs.writeFileSync(path.join(tmpRoot, "package.json"), "{}\n", "utf-8");
 	fs.mkdirSync(path.join(tmpRoot, ".git"), { recursive: true });
 	try {
