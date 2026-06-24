@@ -16,10 +16,14 @@ export const DEFAULT_CHILD_PI: Readonly<{
 	// Keep this as a coarse stuck-worker guard rather than a short per-message latency budget.
 	responseTimeoutMs: 5 * 60_000,
 	maxCaptureBytes: 256 * 1024,
-	maxAssistantTextChars: 8192,
-	maxToolResultChars: 1024,
-	maxToolInputChars: 2048,
-	maxCompactContentChars: 4096,
+	// L4 output-handling: thresholds sized from real worker-output data
+	// (27 result artifacts measured: max 9226 bytes, median 8272, 100% < 16KB).
+	// Previous values (8192/1024/4096) truncated 62% of real results.
+	// See .crew/research/worker-output-handling.md + source/deer-flow/.research/.
+	maxAssistantTextChars: 16_384,
+	maxToolResultChars: 8_192,
+	maxToolInputChars: 4_096,
+	maxCompactContentChars: 8_192,
 };
 
 export const DEFAULT_LIVE_SESSION = {

@@ -380,7 +380,14 @@ function appendTranscript(input: ChildPiRunInput, line: string): void {
 
 function compactString(value: string, maxChars = MAX_COMPACT_CONTENT_CHARS): string {
 	if (value.length <= maxChars) return value;
-	return `${value.slice(0, maxChars)}\n[pi-crew compacted ${value.length - maxChars} chars]`;
+	// L4: head + tail instead of head-only. Keeps closing markdown structure
+	// (code fences, headings, list tails) instead of dropping them — the old
+	// head-only slice left unclosed ``` fences that downstream parsers and
+	// output-validator.ts flagged as "output may be truncated". Head gets 75%
+	// (opening structure + bulk of content); tail gets 25% (closing structure).
+	const head = Math.floor(maxChars * 0.75);
+	const tail = maxChars - head;
+	return `${value.slice(0, head)}\n...[pi-crew compacted ${value.length - maxChars} chars, head+tail preserved]...\n${value.slice(-tail)}`;
 }
 
 function compactValue(value: unknown): unknown {

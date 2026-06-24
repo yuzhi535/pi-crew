@@ -30,20 +30,36 @@ function containedExists(filePath: string, baseDir?: string): boolean {
 	}
 }
 
-function readIfSmall(filePath: string, maxBytes = 24_000, baseDir?: string): string | undefined {
+/**
+ * L4 output-handling: single consistent threshold for all artifact reads.
+ * Sized from real data (27 result artifacts: max 9226 bytes; 100% < 16KB).
+ * 32KB gives 2x headroom over the largest observed real output while still
+ * bounding memory. Larger than the old inconsistent per-call-site values
+ * (24K/40K/80K) which truncated the same artifact differently depending on
+ * which code path read it.
+ */
+const MAX_RESULT_INLINE_BYTES = 32_000;
+
+function readIfSmall(filePath: string, baseDir?: string): string | undefined {
+	const maxBytes = MAX_RESULT_INLINE_BYTES;
 	try {
 		const safePath = baseDir ? resolveRealContainedPath(baseDir, filePath) : filePath;
 		const stat = fs.statSync(safePath);
 		if (stat.size > maxBytes) {
-			// Use bounded read to avoid loading entire file into memory
-			const buf = Buffer.alloc(maxBytes);
+			// L4: head + tail instead of head-only. Keeps closing markdown
+			// structure (code fences, headings) instead of leaving them truncated.
+			const head = Math.floor(maxBytes * 0.75);
+			const tail = maxBytes - head;
+			const headBuf = Buffer.alloc(head);
+			const tailBuf = Buffer.alloc(tail);
 			const fd = fs.openSync(safePath, "r");
 			try {
-				fs.readSync(fd, buf, 0, maxBytes, 0);
+				fs.readSync(fd, headBuf, 0, head, 0);
+				fs.readSync(fd, tailBuf, 0, tail, stat.size - tail);
 			} finally {
 				fs.closeSync(fd);
 			}
-			return `${buf.toString("utf-8")}\n\n...(truncated ${stat.size - maxBytes} bytes)`;
+			return `${headBuf.toString("utf-8")}\n\n...[pi-crew truncated ${stat.size - maxBytes} bytes, head+tail preserved]...\n${tailBuf.toString("utf-8")}`;
 		}
 		return fs.readFileSync(safePath, "utf-8");
 	} catch {
@@ -99,7 +115,7 @@ export function collectDependencyOutputContext(manifest: TeamRunManifest, tasks:
 	const byStep = new Map(tasks.map((item) => [item.stepId, item]).filter((entry): entry is [string, TeamTaskState] => Boolean(entry[0])));
 	const byId = new Map(tasks.map((item) => [item.id, item]));
 	const dependencies = task.dependsOn.map((dep) => byStep.get(dep) ?? byId.get(dep)).filter((item): item is TeamTaskState => Boolean(item)).map((item) => {
-		const resultText = item.resultArtifact ? readIfSmall(item.resultArtifact.path, 24_000, manifest.artifactsRoot) : undefined;
+		const resultText = item.resultArtifact ? readIfSmall(item.resultArtifact.path, manifest.artifactsRoot) : undefined;
 		return {
 			taskId: item.id,
 			role: item.role,
@@ -113,7 +129,7 @@ export function collectDependencyOutputContext(manifest: TeamRunManifest, tasks:
 	});
 	const sharedReads = (step.reads === false ? [] : step.reads ?? []).map((name) => {
 		const filePath = sharedPath(manifest, name);
-		return { name, path: filePath, content: readIfSmall(filePath, 24_000, path.resolve(manifest.artifactsRoot, "shared")) ?? "" };
+		return { name, path: filePath, content: readIfSmall(filePath, path.resolve(manifest.artifactsRoot, "shared")) ?? "" };
 	}).filter((item) => item.content.trim().length > 0);
 	return { dependencies, sharedReads };
 }
@@ -139,7 +155,7 @@ export function renderDependencyOutputContext(context: DependencyOutputContext):
 export function writeTaskSharedOutput(manifest: TeamRunManifest, step: WorkflowStep, task: TeamTaskState): ArtifactDescriptor | undefined {
 	if (step.output === false) return undefined;
 	const name = safeSharedName(step.output || `${task.id}.md`);
-	const source = task.resultArtifact ? readIfSmall(task.resultArtifact.path, 80_000, manifest.artifactsRoot) : undefined;
+	const source = task.resultArtifact ? readIfSmall(task.resultArtifact.path, manifest.artifactsRoot) : undefined;
 	if (!source) return undefined;
 	return writeArtifact(manifest.artifactsRoot, {
 		kind: "metadata",
@@ -160,7 +176,7 @@ export function writeTaskInputsArtifact(manifest: TeamRunManifest, task: TeamTas
 
 export function aggregateTaskOutputs(tasks: TeamTaskState[], manifest?: TeamRunManifest): string {
 	return tasks.map((task, index) => {
-		const body = task.resultArtifact ? readIfSmall(task.resultArtifact.path, 40_000, manifest?.artifactsRoot) : undefined;
+		const body = task.resultArtifact ? readIfSmall(task.resultArtifact.path, manifest?.artifactsRoot) : undefined;
 		const hasBody = Boolean(body?.trim());
 		const expectedMissing = task.resultArtifact && !containedExists(task.resultArtifact.path, manifest?.artifactsRoot);
 		const status = task.status === "skipped"
