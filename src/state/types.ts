@@ -116,6 +116,13 @@ export interface WorkerExitStatus {
 	signal?: string;
 	cleanupErrors: string[];
 	finalDrainMs: number;
+	/** Phase-0 diagnostic (HB-003a): final-drain race state for the exit-null
+	 *  disableTools bug. Optional + read-only — absent when no drain timer was
+	 *  ever armed. Phase 1 will use `finalDrainArmed` to decide whether a
+	 *  signal-death (exitCode=null) should be treated as a forced final drain. */
+	finalDrainArmed?: boolean;
+	forcedFinalDrain?: boolean;
+	finalDrainFiredMonotonicMs?: number;
 }
 
 export interface OperationTerminalEvidence {

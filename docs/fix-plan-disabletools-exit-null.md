@@ -35,23 +35,48 @@ the model's answer — pi produced output, then died via signal.
 
 ## 2. Root-cause hypotheses (to confirm in Phase 0)
 
-The killer is currently unidentified because the `signal` arg of the `exit` event is
-**discarded** after building the error string (it never reaches `exitStatus` or logs).
-The leading hypotheses, in priority order:
+### ✅ PHASE 0 COMPLETE — root cause confirmed (2026-06-24)
 
-- **H1 (most likely): the final-drain timer fires SIGTERM during a race window, but
-  `forcedFinalDrain` is set AFTER `child.kill()` is called — so if `exit`/`close`
-  races ahead of the `forcedFinalDrain = true` assignment, the close handler sees
-  `forcedFinalDrain=false` and does NOT override `null → 0`.** With `--no-tools`, pi
-  emits `message_end`/`agent_end` very fast, so the 5s finalDrainTimer and the natural
-  close land close together, widening the race. (The keep-alive case works because
-  something about the longer-lived event loop changes the ordering — to be confirmed.)
-- **H2: the child pi process self-terminates via signal** (uncaught exception → SIGABRT,
-  or an extension-load crash under `--no-tools`). The presence of stdout answer argues
-  against a total crash, but a late shutdown crash is possible.
-- **H3: an external signal** (parent-guard, abort). Already ruled out:
-  `startParentGuard` is never called in `src/` (only docstring refs); abort would set
-  `abortRequested` and emit a different lifecycle event.
+**Root cause: erroneous steer-backpressure kill at `child-pi.ts:716-726`** (NOT the
+final-drain race hypothesised in H1).
+
+When `maxTurns` is reached on a `turn_end` event, the code injects a "wrap up"
+steer by writing to `child.stdin`. Node's `writable.write()` returns `false` when
+the internal buffer is above the high-water mark (normal backpressure) OR when
+the stream is draining. The current code treats **any** `false` return as a
+fatal injection failure and calls `killProcessTree(child.pid, child)` → SIGTERM.
+
+This fires deterministically for the `ctx.agent({maxTurns:1, disableTools:true})`
+pattern (and the smoke-test repro): with `--no-tools`, pi finishes in exactly one
+real turn, so `turn_end` arrives the instant the answer is ready; pi has nothing
+more to read from stdin, the write returns `false`, and the worker is killed mid-
+answer. The answer IS in stdout, but exit comes back `null` (SIGTERM).
+
+**Repro confirmed via Phase-0 instrumentation** (`PI_TEAMS_DEBUG=1`):
+```
+[pi-crew:child-pi.kill-process-tree-invoked] pid=783270 called from:
+    at killProcessTree (src/runtime/child-pi.ts:102:23)
+    at Object.onJsonEvent (src/runtime/child-pi.ts:731:11)   ← steer-backpressure kill
+```
+maxTurns=1 × 5 runs: 3/5 exit=null (flaky, depends on OS buffer state).
+maxTurns=5 × 5 runs: 5/5 exit=0 (soft limit not hit on turn 1).
+
+**The `disableTools` correlation was a red herring** — the real trigger is
+`maxTurns:1` (the smoke workflow happened to combine both). Any single-turn
+agent call hitting `maxTurns` on its first `turn_end` can reproduce this.
+
+### Original hypotheses (kept for the audit trail)
+
+The killer was initially unidentified because the `signal` arg of the `exit`
+event was discarded. The leading hypotheses, in priority order:
+
+- **H1 (DISPROVEN): final-drain timer race.** Instrumentation showed
+  `forcedFinalDrain=false` on failing runs — the final-drain timer was armed but
+  never fired. The SIGTERM came from elsewhere.
+- **H2 (DISPROVEN): pi self-terminates via signal.** stdout contains the answer;
+  the kill-process-tree caller stack points squarely at the steer-injection path.
+- **H3 (already ruled out): external signal / parent-guard.** `startParentGuard`
+  is never invoked in `src/`; abort would set `cancelled:true` (it stayed false).
 
 ## 3. Phased plan
 
@@ -76,43 +101,51 @@ Goal: identify the exact signal and the code path that sent it. **No fix yet.**
 **Deliverable:** amended §2 with the confirmed root cause; no commit to `main`
 beyond the read-only instrumentation (kept behind a debug flag or reverted).
 
-### Phase 1 — Fix  [~1 day]
+### Phase 1 — Fix  [~0.5 day]
 
-The fix depends on Phase 0's finding. The two most likely fixes:
+**Confirmed fix: stop killing the worker on a normal backpressure `write() === false`.**
 
-**Fix A (if H1 confirmed): close the `forcedFinalDrain` race.**
-
-Today the close handler derives:
+At `child-pi.ts:723-726`:
 ```ts
-const finalExitCode = forcedFinalDrain && !timeoutError ? 0 : exitCode;
+const writeSucceeded = child.stdin.write(steerPayload);
+if (!writeSucceeded) {
+  logInternalError("child-pi.steer-backpressure", ...);
+  steerInjectionFailed = true;
+  killProcessTree(child.pid, child);   // ← BUG: backpressure is not fatal
+}
 ```
-The race: `forcedFinalDrain` is assigned inside the timer callback *just before*
-`child.kill(SIGTERM)`, but the SIGTERM can land and trigger `exit`/`close` on a
-different tick before the assignment is observed (or the assignment is gated on
-conditions that the race skips). 
 
-Proposed change: **treat a signal-death (`code === null`) that occurs while the
-final-drain timer is armed (or was armed and not yet cleared) as a forced final
-drain.** Concretely, track `finalDrainArmed` (set true when the timer is created,
-false when cleared) and in the close handler:
+`Writable.write()` returning `false` is **normal backpressure** — Node buffers the
+write and emits `'drain'` later. It does NOT mean the write failed. Killing the
+worker on it destroys a perfectly good answer (stdout already has it). The
+original intent was to handle a genuinely unwritable stdin (the `else` branch at
+line 727 logs `steer-not-writable` and ALSO kills — that one is more defensible
+but still too aggressive).
+
+**Proposed change:** keep the steer-injection best-effort. On `write() === false`,
+simply wait for `'drain'` (or do nothing — the soft-limit steer is advisory). If
+the worker ignores it and runs past `maxTurns + graceTurns`, the existing hard-
+abort at line 735 (`turnCount >= maxTurns + graceTurns`) already terminates it.
+
 ```ts
-const treatedAsFinalDrain = forcedFinalDrain || (exitCode === null && finalDrainArmed && !responseTimeoutHit && !abortRequested);
-const finalExitCode = treatedAsFinalDrain && !timeoutError ? 0 : exitCode;
+const writeSucceeded = child.stdin.write(steerPayload);
+if (!writeSucceeded) {
+  // Backpressure: Node buffered the write and will flush on 'drain'. This is
+  // NOT a failure — do NOT kill the worker. The steer is advisory; if the worker
+  // keeps running, the hard-abort at maxTurns + graceTurns (line ~735) handles it.
+  logInternalError("child-pi.steer-backpressure", new Error("stdin write returned false (normal backpressure); steer buffered, worker NOT killed"), `pid=${child.pid}`);
+}
 ```
-This is surgical, localized to the close handler, and preserves the existing
-override semantics. Add a `logInternalError` telemetry line (mirroring the existing
-M6 "final-drain-zero-exit" log) so a *real* crash isn't silently hidden — the
-distinction is "we had an armed final-drain timer and stdout has content" vs "no
-timer, no stdout".
 
-**Fix B (if H2 confirmed — pi self-crashes under --no-tools):** the fix is NOT in
-pi-crew; escalate upstream (pi binary) and add a `child-pi` workaround that retries
-once if stdout is non-empty and exit is signal-death with an armed final-drain timer.
-Less likely; defer unless Phase 0 proves H1 wrong.
+Keep the `else` branch (stdin not writable at all) as-is for now, but downgrade
+it too in a follow-up — a closed stdin after the worker is done is also not fatal.
 
-**Verification gate:** the repro matrix in §1 must go all-green (every ❌ row → ✅)
-with `exitCode=0` and the model answer present in stdout. No regression in the
-existing `test/unit/child-pi-*.test.ts` suites (5 files, ~85 tests).
+**Verification gate:** the repro matrix in §1 must go all-green with `exitCode=0`
+and the answer present in stdout, run **10× consecutively** (the bug is flaky at
+~60%, so a single pass is insufficient). No regression in the existing
+`test/unit/child-pi-*.test.ts` suites (5 files, ~85 tests). Add a unit test that
+fakes a `child.stdin` whose `write()` returns `false` and asserts the worker is
+NOT killed and the buffered write eventually flushes.
 
 ### Phase 2 — Regression prevention (HB-004)  [~1 day]
 

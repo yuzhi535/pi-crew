@@ -95,6 +95,17 @@ export function killProcessPid(pid: number): void {
 }
 
 function killProcessTree(pid: number | undefined, child?: ChildProcess): void {
+	// Phase-0 diagnostic (HB-003a): capture who invoked killProcessTree so the
+	// exit-null race has a provenance trail. .stack is best-effort (may be undefined
+	// under deep async), so we take a snapshot lazily.
+	try {
+		const callerStack = new Error("killProcessTree caller").stack ?? "(no stack)";
+		logInternalError(
+			"child-pi.kill-process-tree-invoked",
+			new Error(`pid=${pid} called from:\n${callerStack.split("\n").slice(0, 8).join("\n")}`),
+			`pid=${pid}`,
+		);
+	} catch { /* diagnostic best-effort */ }
 	if (!pid || !Number.isInteger(pid) || pid <= 0) return;
 	if (child && child.exitCode !== null) return;
 	killProcessPid(pid);
@@ -124,6 +135,18 @@ export interface ChildPiLifecycleEvent {
 	stderrExcerpt?: string;
 	/** Timestamp (ISO). */
 	ts: string;
+	/** Phase-0 diagnostic (HB-003a): the signal that killed the child (when
+	 *  available). Was previously discarded after building the error string. */
+	signal?: string;
+	/** Phase-0 diagnostic (HB-003a): final-drain race timing, present only on
+	 *  exit events where a drain timer was armed. Surfaces the exit-null race. */
+	diagnostic?: {
+		finalDrainArmed: boolean;
+		forcedFinalDrain: boolean;
+		finalDrainFiredMonotonicMs?: number;
+		finalAssistantEventMonotonicMs?: number;
+		exitMonotonicMs: number;
+	};
 }
 
 export interface ChildPiRunInput {
@@ -580,6 +603,15 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 			let noResponseTimer: NodeJS.Timeout | undefined;
 			const finalDrainMs = input.finalDrainMs ?? FINAL_DRAIN_MS;
 			const hardKillMs = input.hardKillMs ?? HARD_KILL_MS;
+			// Phase-0 diagnostic (HB-003a): track the final-drain race that produces
+			// `exit null` for ctx.agent({disableTools:true}). These vars are READ-ONLY
+			// instrumentation — no behavior change. finalDrainArmed lets the close
+			// handler know a drain timer existed even after clearFinalDrainTimers() ran;
+			// spawnMonotonicMs gives us relative timing to distinguish a race from a crash.
+			let finalDrainArmed = false;
+			let finalDrainFiredMonotonicMs: number | undefined;
+			const spawnMonotonicMs = performance.now();
+			let finalAssistantEventMonotonicMs: number | undefined;
 			// FIX (Round 14): Bound the env-controlled response timeout to
 			// [1_000ms, 3_600_000ms] (1s–1h) so a hostile or accidental value
 			// (e.g. 1, or 999_999_999) cannot disable the timeout or cause
@@ -711,9 +743,12 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 					}
 					input.onJsonEvent?.(event);
 					if (!isFinalAssistantEvent(event) || childExited || settled || finalDrainTimer) return;
+					finalAssistantEventMonotonicMs = performance.now();
+					finalDrainArmed = true; // Phase-0 diagnostic: track that a drain timer was created.
 					finalDrainTimer = setTimeout(() => {
 						if (settled || childExited) return;
 						forcedFinalDrain = true;
+						finalDrainFiredMonotonicMs = performance.now(); // Phase-0 diagnostic: race timing.
 						input.onLifecycleEvent?.({ type: "final_drain", pid: child.pid, ts: new Date().toISOString() });
 						try {
 							child.kill(process.platform === "win32" ? undefined : "SIGTERM");
@@ -768,7 +803,27 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				}
 				// Catch all errors from settle to prevent unhandled rejection from propagating
 				try {
-					resolve({ ...result, exitStatus: result.exitStatus ?? { exitCode: result.exitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
+					resolve({
+						...result,
+						exitStatus: result.exitStatus ?? {
+							exitCode: result.exitCode,
+							cancelled: abortRequested,
+							timedOut: responseTimeoutHit,
+							killed: hardKilled,
+							// Phase-0 diagnostic (HB-003a): surface the final-drain race state.
+							// finalDrainArmed lets Phase 1 decide whether a signal-death (exitCode=null)
+							// should be treated as a forced final drain. READ-ONLY for now.
+							...(finalDrainArmed || forcedFinalDrain
+								? {
+										finalDrainArmed,
+										forcedFinalDrain,
+										finalDrainFiredMonotonicMs,
+								  }
+								: {}),
+							cleanupErrors,
+							finalDrainMs,
+						},
+					});
 				} catch (resolveError) {
 					logInternalError("child-pi.settle-resolve", resolveError, `result=${JSON.stringify({ exitCode: result.exitCode })}`);
 				}
@@ -869,7 +924,30 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 					rejectPendingOperations(exitError);
 				}
 				try {
-					input.onLifecycleEvent?.({ type: "exit", pid: child.pid, exitCode: code, ts: new Date().toISOString(), error: exitError?.message, stderrExcerpt: isUnexpectedExit ? stderr.slice(-1000) || undefined : undefined });
+					// Phase-0 diagnostic (HB-003a): capture signal + drain timing in the
+					// exit lifecycle event so the exit-null race is diagnosable instead of
+					// opaque. `signal` was previously discarded after building the error msg.
+					input.onLifecycleEvent?.({
+						type: "exit",
+						pid: child.pid,
+						exitCode: code,
+						ts: new Date().toISOString(),
+						error: exitError?.message,
+						stderrExcerpt: isUnexpectedExit ? stderr.slice(-1000) || undefined : undefined,
+						// Phase-0 diagnostic fields (kept optional — no type change required).
+						...(signal ? { signal } : {}),
+						...(finalDrainArmed || forcedFinalDrain
+							? {
+									diagnostic: {
+										finalDrainArmed,
+										forcedFinalDrain,
+										finalDrainFiredMonotonicMs,
+										finalAssistantEventMonotonicMs,
+										exitMonotonicMs: performance.now() - spawnMonotonicMs,
+									},
+							  }
+							: {}),
+					});
 				} catch (err) {
 					logInternalError("child-pi.on-lifecycle-event", err, `event=exit, pid=${child.pid}`);
 				}
