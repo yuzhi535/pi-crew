@@ -12,6 +12,7 @@ import { attachPostExitStdioGuard, trySignalChild } from "./post-exit-stdio-guar
 import { redactJsonLine } from "../utils/redaction.ts";
 import { sanitizeEnvSecrets } from "../utils/env-filter.ts";
 import { registerChildProcess, unregisterChildProcess } from "../extension/crew-cleanup.ts";
+import { classifyProcessCrash } from "./crash-classification.ts";
 import { resolveRealContainedPath } from "../utils/safe-paths.ts";
 
 const POST_EXIT_STDIO_GUARD_MS = DEFAULT_CHILD_PI.postExitStdioGuardMs;
@@ -912,7 +913,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				} catch (err) {
 					logInternalError("child-pi.on-lifecycle-event", err, `event=error, pid=${child.pid}`);
 				}
-				settle({ exitCode: null, stdout, stderr, error: processError.message });
+				settle({ exitCode: null, stdout, stderr, error: processError.message, exitStatus: { exitCode: null, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: false, cleanupErrors, finalDrainMs, crashClass: classifyProcessCrash({ exitCode: null, cancelled: abortRequested, timedOut: responseTimeoutHit, spawnError: error, stderrSnippet: stderr ? stderr.slice(-1000) : undefined }).crashClass } });
 			});
 			child.on("exit", (code, signal) => {
 				if (child.pid) {
@@ -1001,7 +1002,19 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				// is logged, not fatal). The steerError branch is retained for safety in
 				// case a future change reintroduces a fatal steer path.
 				const steerError = steerInjectionFailed ? "Steer injection failed due to stdin backpressure; process killed" : undefined;
-				settle({ exitCode: finalExitCode, stdout, stderr, ...(timeoutError ? { error: timeoutError.error } : {}), ...(steerError ? { error: steerError } : {}), aborted: wasGraceAborted || wasParentAborted, steered: softLimitReached && !wasGraceAborted, exitStatus: { exitCode: finalExitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs } });
+				// P0 crash taxonomy: classify the exit so callers/dashboards can bucket
+				// failure modes (timeout vs cancel vs native panic vs signal …).
+				// The classifier is a pure function; this is the single integration point.
+				const crashClassification = classifyProcessCrash({
+					exitCode: finalExitCode,
+					signal: child.signalCode ?? undefined,
+					cancelled: abortRequested,
+					timedOut: responseTimeoutHit,
+					killed: hardKilled,
+					spawnError: undefined,
+					stderrSnippet: stderr ? stderr.slice(-1000) : undefined,
+				});
+				settle({ exitCode: finalExitCode, stdout, stderr, ...(timeoutError ? { error: timeoutError.error } : {}), ...(steerError ? { error: steerError } : {}), aborted: wasGraceAborted || wasParentAborted, steered: softLimitReached && !wasGraceAborted, exitStatus: { exitCode: finalExitCode, cancelled: abortRequested, timedOut: responseTimeoutHit, killed: hardKilled, cleanupErrors, finalDrainMs, crashClass: crashClassification.crashClass } });
 			});
 		});
 	} finally {

@@ -3,6 +3,7 @@ import type { TaskClaimState } from "./task-claims.ts";
 import type { WorkerHeartbeatState } from "../runtime/worker-heartbeat.ts";
 import type { CrewAgentProgress } from "../runtime/crew-agent-runtime.ts";
 import type { RolloutEntry, CoherenceMark } from "./decision-ledger.ts";
+import type { CrashClass } from "../runtime/crash-classification.ts";
 export type { RolloutEntry, CoherenceMark };
 export type { CrewAgentProgress };
 
@@ -116,6 +117,10 @@ export interface WorkerExitStatus {
 	signal?: string;
 	cleanupErrors: string[];
 	finalDrainMs: number;
+	/** Categorical classification of the exit (P0 crash taxonomy). Optional
+	 *  because it is populated by child-pi.ts at settle time; older/synthetic
+	 *  exit statuses may omit it. */
+	crashClass?: CrashClass;
 	/** Phase-0 diagnostic (HB-003a): final-drain race state for the exit-null
 	 *  disableTools bug. Optional + read-only — absent when no drain timer was
 	 *  ever armed. Phase 1 will use `finalDrainArmed` to decide whether a
