@@ -416,3 +416,188 @@ function drainIrcMessages(agentIdOrTaskId: string): IrcMessage[] {
 	handle.pendingMessages.length = 0;
 	return messages;
 }
+
+/* ── IRC reply support (side-channel Q&A) ─────────────────────────── */
+
+/** Default timeout for awaiting a side-channel reply (60s). */
+const DEFAULT_REPLY_TIMEOUT_MS = 60_000;
+
+/** Result of a background reply attempt. */
+export interface BackgroundReplyResult {
+	ok: boolean;
+	/** Correlation id for the pending reply (present once registered). */
+	corrId?: string;
+	/** Reply prose content (present on success when awaitReply was set). */
+	replyContent?: string;
+	/** Human-readable error description. */
+	error?: string;
+	/** True when the reply did not arrive before the timeout. */
+	timedOut?: boolean;
+}
+
+interface PendingReply {
+	corrId: string;
+	targetAgentId: string;
+	fromId: string;
+	deadline: number;
+	resolve: (result: BackgroundReplyResult) => void;
+	timer?: ReturnType<typeof setTimeout>;
+}
+
+/** In-process pending replies keyed by correlation id. */
+const pendingReplies = new Map<string, PendingReply>();
+/** Reverse index: targetAgentId → set of corrIds awaiting a reply from it. */
+const pendingRepliesByTarget = new Map<string, Set<string>>();
+
+function makeCorrelationId(): string {
+	return `irc_reply_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Deliver a message to a live agent's session as a *background* turn —
+ * without blocking the recipient's main agent loop — and (optionally)
+ * await a prose reply via a side-channel.
+ *
+ * Non-blocking invariant (mirrors gajae-code's `respondAsBackground`):
+ * the message is injected via `sendCustomMessage` (triggerTurn:false) or a
+ * fire-and-forget `session.prompt`; we NEVER await the recipient's full
+ * main-loop turn. When `awaitReply` is set we instead await an event-driven
+ * reply resolution (see {@link resolveIrcReply}) bounded by a timeout.
+ *
+ * Note on mailbox.ts reply fields: those file-based fields
+ * (`replyTo`/`replyContent`/`replyDeadline`/`updateMailboxMessageReply`)
+ * serve cross-process workers that communicate via on-disk mailbox files.
+ * Live-session agents share a single process, so an in-memory event-driven
+ * registry is used here — it is lower-latency and trivially non-blocking.
+ * Both mechanisms coexist; file-based workers keep using mailbox.ts.
+ */
+export async function respondAsBackground(
+	targetAgentId: string,
+	fromId: string,
+	message: string,
+	opts?: { awaitReply?: boolean; timeoutMs?: number; signal?: AbortSignal },
+): Promise<BackgroundReplyResult> {
+	const handle = getLiveAgent(targetAgentId);
+	if (!handle) return { ok: false, error: `Live agent '${targetAgentId}' not found.` };
+
+	const awaitReply = opts?.awaitReply ?? false;
+	const timeoutMs = opts?.timeoutMs ?? DEFAULT_REPLY_TIMEOUT_MS;
+	const corrId = makeCorrelationId();
+
+	// --- Non-blocking delivery -------------------------------------------
+	const session = handle.session as Record<string, unknown>;
+	const deliveredTag = `[DM from ${fromId}] ${message}`;
+	let delivered = false;
+	if (typeof session.sendCustomMessage === "function") {
+		try {
+			(session.sendCustomMessage as (msg: unknown, o?: unknown) => void)(
+				{ customType: "irc", content: deliveredTag, display: "collapsed", corrId },
+				{ deliverAs: "followUp", triggerTurn: false },
+			);
+			delivered = true;
+		} catch {
+			// fall through to prompt-based delivery
+		}
+	}
+	if (!delivered && typeof handle.session.prompt === "function") {
+		const promptText = `${deliveredTag}${awaitReply ? ` (reply correlation: ${corrId})` : ""}`;
+		void handle.session.prompt(promptText, { source: "api", expandPromptTemplates: false }).catch((error) => logInternalError("live-agent-manager.respondAsBackground", error, `agentId=${handle.agentId}`));
+		delivered = true;
+	}
+	if (!delivered) return { ok: false, error: `Target '${targetAgentId}' has no message channel.` };
+	handle.updatedAt = new Date().toISOString();
+
+	if (!awaitReply) return { ok: true, corrId };
+
+	// --- Await reply (event-driven, bounded by timeout) ------------------
+	return awaitPendingReply(corrId, targetAgentId, fromId, timeoutMs, opts?.signal);
+}
+
+/**
+ * Register a pending reply and resolve it when the reply arrives, the
+ * timeout elapses, or the caller's abort signal fires.
+ *
+ * @internal exported for testing
+ */
+export function awaitPendingReply(
+	corrId: string,
+	targetAgentId: string,
+	fromId: string,
+	timeoutMs: number,
+	signal?: AbortSignal,
+): Promise<BackgroundReplyResult> {
+	return new Promise((resolve) => {
+		const deadline = Date.now() + timeoutMs;
+		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let signalListener: (() => void) | undefined;
+
+		const finish = (result: BackgroundReplyResult) => {
+			if (settled) return;
+			settled = true;
+			if (timer) clearTimeout(timer);
+			if (signalListener && signal) signal.removeEventListener("abort", signalListener);
+			pendingReplies.delete(corrId);
+			const set = pendingRepliesByTarget.get(targetAgentId);
+			set?.delete(corrId);
+			if (set && set.size === 0) pendingRepliesByTarget.delete(targetAgentId);
+			resolve(result);
+		};
+
+		timer = setTimeout(() => finish({ ok: false, corrId, timedOut: true }), timeoutMs);
+
+		if (signal) {
+			if (signal.aborted) {
+				finish({ ok: false, corrId, error: "cancelled" });
+				return;
+			}
+			signalListener = () => finish({ ok: false, corrId, error: "cancelled" });
+			signal.addEventListener("abort", signalListener, { once: true });
+		}
+
+		pendingReplies.set(corrId, { corrId, targetAgentId, fromId, deadline, resolve: finish, timer });
+		const set = pendingRepliesByTarget.get(targetAgentId) ?? new Set<string>();
+		set.add(corrId);
+		pendingRepliesByTarget.set(targetAgentId, set);
+	});
+}
+
+/**
+ * Resolve a pending side-channel reply. Called by the reply-routing layer
+ * (e.g. irc-tool when the recipient sends a message back referencing the
+ * correlation id, or by tests simulating a recipient response).
+ *
+ * Returns true if a pending reply was resolved, false if none matched
+ * (already timed out / cancelled / unknown correlation id).
+ */
+export function resolveIrcReply(corrId: string, replyContent: string): boolean {
+	const pending = pendingReplies.get(corrId);
+	if (!pending) return false;
+	pending.resolve({ ok: true, corrId, replyContent });
+	return true;
+}
+
+/**
+ * Cancel a pending side-channel reply (e.g. sender gave up).
+ * Returns true if a pending reply was cancelled, false if none matched.
+ */
+export function cancelIrcReply(corrId: string, reason = "cancelled"): boolean {
+	const pending = pendingReplies.get(corrId);
+	if (!pending) return false;
+	pending.resolve({ ok: false, corrId, error: reason });
+	return true;
+}
+
+/** Correlation ids currently awaiting a reply from the given target agent. */
+export function pendingReplyCorrIdsForTarget(targetAgentId: string): string[] {
+	return [...(pendingRepliesByTarget.get(targetAgentId) ?? [])];
+}
+
+/** Clear all pending replies (test helper). */
+export function clearPendingRepliesForTest(): void {
+	for (const pending of pendingReplies.values()) {
+		if (pending.timer) clearTimeout(pending.timer);
+	}
+	pendingReplies.clear();
+	pendingRepliesByTarget.clear();
+}

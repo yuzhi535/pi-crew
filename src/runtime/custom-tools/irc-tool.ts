@@ -14,7 +14,7 @@
 
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@sinclair/typebox";
-import { listLiveAgents, sendIrcMessage, broadcastIrcMessage } from "../live-agent-manager.ts";
+import { listLiveAgents, sendIrcMessage, broadcastIrcMessage, respondAsBackground } from "../live-agent-manager.ts";
 import type { IrcMessage } from "../live-irc.ts";
 
 const IrcParams = Type.Object({
@@ -37,7 +37,7 @@ const IrcParams = Type.Object({
 	),
 	awaitReply: Type.Optional(
 		Type.Boolean({
-			description: "Wait for a reply (default: true for DM, false for broadcast). Not yet supported — messages are fire-and-forget.",
+			description: "Wait for a prose reply (default: true for DM, false for broadcast). For DMs the recipient receives the message as a non-blocking background turn and its reply is returned to the caller. Broadcast always ignores this flag.",
 		}),
 	),
 });
@@ -64,6 +64,8 @@ interface IrcDetails {
 	delivered?: string[];
 	notFound?: string[];
 	peers?: Array<{ id: string; status: string }>;
+	/** Replies received from recipients (awaitReply DM path). */
+	replies?: Array<{ from: string; text: string }>;
 	error?: string;
 }
 
@@ -130,10 +132,10 @@ function executeList(selfId: string): { content: Array<{ type: "text"; text: str
 	};
 }
 
-function executeSend(
+async function executeSend(
 	selfId: string,
 	params: IrcParams,
-): { content: Array<{ type: "text"; text: string }>; details: IrcDetails } {
+): Promise<{ content: Array<{ type: "text"; text: string }>; details: IrcDetails }> {
 	const to = params.to?.trim();
 	const message = params.message?.trim();
 
@@ -156,23 +158,52 @@ function executeSend(
 		};
 	}
 
+	// awaitReply defaults to true for DMs, false for broadcast. Broadcast
+	// always ignores the flag (fire-and-forget) — there is no single sender
+	// to receive a correlated reply from.
+	const isBroadcast = to === "all";
+	const wantsReply = !isBroadcast && (params.awaitReply ?? true);
+
 	const ircMessage: IrcMessage = {
 		from: selfId,
 		to,
 		content: message,
 		timestamp: new Date().toISOString(),
-		awaitReply: params.awaitReply,
+		awaitReply: wantsReply,
 	};
 
 	const notFound: string[] = [];
 	const delivered: string[] = [];
+	const replies: Array<{ from: string; text: string }> = [];
 
 	try {
-		if (to === "all") {
+		if (isBroadcast) {
+			// Broadcast: always fire-and-forget regardless of awaitReply.
 			const recipients = broadcastIrcMessage(selfId, ircMessage);
 			delivered.push(...recipients);
+		} else if (wantsReply) {
+			// DM with reply: use the non-blocking side-channel.
+			const agents = listLiveAgents();
+			const target = agents.find((a) => a.agentId === to);
+			if (!target || (target.status !== "running" && target.status !== "queued")) {
+				notFound.push(to);
+			} else {
+				const result = await respondAsBackground(to, selfId, message, { awaitReply: true });
+				if (result.ok) {
+					delivered.push(to);
+					if (result.replyContent) replies.push({ from: to, text: result.replyContent });
+				} else if (result.timedOut) {
+					// Message was delivered (non-blocking), but no reply in time.
+					delivered.push(to);
+					replies.push({ from: to, text: `(no reply — timed out)` });
+				} else {
+					// Delivery channel unavailable or cancelled.
+					if (result.error === "cancelled") delivered.push(to);
+					else notFound.push(to);
+				}
+			}
 		} else {
-			// DM to specific agent
+			// DM fire-and-forget (awaitReply explicitly false).
 			const agents = listLiveAgents();
 			const target = agents.find((a) => a.agentId === to);
 			if (!target || (target.status !== "running" && target.status !== "queued")) {
@@ -197,6 +228,14 @@ function executeSend(
 	} else {
 		lines.push("No recipients received the message.");
 	}
+	if (replies.length > 0) {
+		lines.push("");
+		lines.push("## Replies");
+		for (const reply of replies) {
+			lines.push(`### ${reply.from}`);
+			lines.push(reply.text);
+		}
+	}
 	if (notFound.length > 0) {
 		lines.push(`Unknown / unavailable peers: ${notFound.join(", ")}`);
 	}
@@ -209,6 +248,7 @@ function executeSend(
 			to,
 			delivered: delivered.length > 0 ? delivered : undefined,
 			notFound: notFound.length > 0 ? notFound : undefined,
+			replies: replies.length > 0 ? replies : undefined,
 		},
 	};
 }
