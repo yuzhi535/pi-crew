@@ -2,8 +2,8 @@ import { isSensitivePath } from "./sensitive-paths.ts";
 
 export type RolePermissionMode = "read_only" | "workspace_write" | "danger_full_access" | "explicit_confirm";
 
-const READ_ONLY_ROLES = new Set(["explorer", "reviewer", "security-reviewer", "verifier", "analyst", "critic", "planner", "writer"]);
-const WRITE_ROLES = new Set(["executor", "test-engineer"]);
+const READ_ONLY_ROLES = new Set(["explorer", "reviewer", "security-reviewer", "verifier", "analyst", "critic", "planner"]);
+const WRITE_ROLES = new Set(["executor", "test-engineer", "writer"]);
 const READ_ONLY_COMMANDS = new Set(["cat", "head", "tail", "less", "more", "wc", "ls", "find", "grep", "rg", "awk", "sed", "echo", "printf", "which", "where", "whoami", "pwd", "env", "printenv", "date", "df", "du", "uname", "file", "stat", "diff", "sort", "uniq", "tr", "cut", "paste", "test", "true", "false", "type", "readlink", "realpath", "basename", "dirname", "sha256sum", "md5sum", "xxd", "hexdump", "od", "strings", "tree", "jq", "git", "gh"]);
 
 export interface PermissionCheckResult {

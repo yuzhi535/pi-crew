@@ -39,8 +39,13 @@ describe("permissionForRole", () => {
 		assert.strictEqual(permissionForRole("planner"), "read_only");
 	});
 
-	it("returns 'read_only' for writer", () => {
-		assert.strictEqual(permissionForRole("writer"), "read_only");
+	it("returns 'workspace_write' for writer (P0 fix 2026-06-25 — parallel-research incident)", () => {
+		// Round 20: writer was misclassified as read-only, blocking built-in
+		// workflows (parallel-research, research, pipeline) from emitting their
+		// declared `output:` files. 3/3 workflows use writer for deliverable
+		// creation, not for read-only docs review. Audit confirmed.
+		// See: research-findings/pi-crew-parallel-research-failure-incident.md
+		assert.strictEqual(permissionForRole("writer"), "workspace_write");
 	});
 
 	it("returns 'workspace_write' for executor", () => {
