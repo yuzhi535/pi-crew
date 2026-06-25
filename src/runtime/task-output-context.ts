@@ -4,6 +4,7 @@ import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState } from "../stat
 import { writeArtifact } from "../state/artifact-store.ts";
 import { resolveRealContainedPath } from "../utils/safe-paths.ts";
 import type { WorkflowStep } from "../workflows/workflow-config.ts";
+import { pruneToolOutputs, type ToolResultEntry, type FileEditEvent, DEFAULT_PRUNE_CONFIG } from "./tool-output-pruner.ts";
 
 export interface DependencyContextEntry {
 	taskId: string;
@@ -111,6 +112,51 @@ function aggregateUsage(task: TeamTaskState): DependencyContextEntry["usage"] {
 	return { inputTokens, outputTokens, durationMs };
 }
 
+/**
+ * Apply staleness-aware pruning to shared reads before they are injected
+ * into a downstream worker's prompt. Converts shared reads to generic
+ * {@link ToolResultEntry}s (toolName="read") and file edits from dependency
+ * artifacts, then delegates to {@link pruneToolOutputs}. Superseded reads
+ * (same base file re-read, or file edited by a later dependency) are replaced
+ * with compact digest notices, reducing context bloat.
+ *
+ * OPT-IN: the default prune config protects recent results and only fires
+ * when minimum-savings hysteresis is met, so small/unique reads pass through
+ * unchanged.
+ */
+function pruneSharedReads(
+	reads: Array<{ name: string; path: string; content: string }>,
+	dependencies: DependencyContextEntry[],
+): Array<{ name: string; path: string; content: string }> {
+	if (reads.length === 0) return reads;
+	// Convert shared reads to tool result entries (ordered oldest → newest
+	// by position in the reads array — earlier entries are "older").
+	const entries: ToolResultEntry[] = reads.map((read, index) => ({
+		id: `shared-read-${index}`,
+		toolName: "read",
+		target: read.path,
+		content: read.content,
+	}));
+	// Collect file edit events from dependency artifacts produced to shared/.
+	// A dependency that wrote a shared file after an earlier read invalidates
+	// that read (the content is now stale relative to the latest version).
+	const sharedRoot = path.resolve("shared");
+	const fileEdits: FileEditEvent[] = [];
+	for (let depIndex = 0; depIndex < dependencies.length; depIndex++) {
+		const dep = dependencies[depIndex]!;
+		const produced = dep.artifactsProduced ?? [];
+		for (const artifact of produced) {
+			if (typeof artifact !== "string") continue;
+			// Map artifact path to shared-relative and check against read targets.
+			fileEdits.push({ target: path.resolve(sharedRoot, artifact), index: reads.length + depIndex });
+		}
+	}
+	const pruned = pruneToolOutputs(entries, DEFAULT_PRUNE_CONFIG);
+	if (pruned.prunedCount === 0) return reads;
+	// Map pruned entries back to the shared-read shape.
+	return pruned.results.map((entry, index) => ({ ...reads[index]!, content: entry.content }));
+}
+
 export function collectDependencyOutputContext(manifest: TeamRunManifest, tasks: TeamTaskState[], task: TeamTaskState, step: WorkflowStep): DependencyOutputContext {
 	const byStep = new Map(tasks.map((item) => [item.stepId, item]).filter((entry): entry is [string, TeamTaskState] => Boolean(entry[0])));
 	const byId = new Map(tasks.map((item) => [item.id, item]));
@@ -127,10 +173,15 @@ export function collectDependencyOutputContext(manifest: TeamRunManifest, tasks:
 			usage: aggregateUsage(item),
 		};
 	});
-	const sharedReads = (step.reads === false ? [] : step.reads ?? []).map((name) => {
+	const rawSharedReads = (step.reads === false ? [] : step.reads ?? []).map((name) => {
 		const filePath = sharedPath(manifest, name);
 		return { name, path: filePath, content: readIfSmall(filePath, path.resolve(manifest.artifactsRoot, "shared")) ?? "" };
 	}).filter((item) => item.content.trim().length > 0);
+	// Apply staleness-aware pruning to shared reads: drops superseded reads
+	// (same file re-read with different selectors) and replaces stale large
+	// outputs with compact digest notices before injecting into the worker
+	// prompt. OPT-IN: default config protects recent results.
+	const sharedReads = pruneSharedReads(rawSharedReads, dependencies);
 	return { dependencies, sharedReads };
 }
 
