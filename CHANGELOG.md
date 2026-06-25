@@ -1,16 +1,37 @@
 # Changelog
 
-## [v0.9.10] — TUI widget overflow fix (2026-06-25)
+## [v0.9.10] — fix TUI crash: count large-square emoji (⬜) as width 2 (2026-06-25)
 
-A background `pi-crew` foreground run crashed the host Pi process with `uncaughtException: Rendered line 241 exceeds terminal width (160 > 159)` originating in upstream `@earendil-works/pi-tui`. Root cause: `buildWidgetLines` in `src/ui/widget/widget-renderer.ts` composed task sub-lines (`│     ⊶ <activity> · <stats>`) without a width parameter and without truncating, so any task whose `description` carried wide chars (e.g. the pi-audit result text `| S7: pi-audit security test | ⬜ pending | |`, ~40 chars) plus prefix + stats could push past terminal width by a single column. The fix is **purely additive defense-in-depth** — no rendering semantics change:
+Fixes the recurring `uncaughtException: Rendered line N exceeds terminal width (160 > 159)` that killed the host Pi process while a pi-crew foreground team run was active. The crew run itself (a child process) kept running, but the Pi TUI died and could not be used to observe it.
 
-- `buildWidgetLines` gains a `width = DEFAULT_WIDGET_WIDTH` parameter (default 100); every `lines.push(\`...\`)` for run header, finished-agent, active-agent, activity sub-line, and "+N more agents" passes through the existing `truncate()` helper (already imported from `src/utils/visual.ts`).
-- Defense-in-depth: `description` is also pre-truncated to 60 chars (mirroring the existing `agentActivity` cap) so a single field cannot blow past `width` on its own.
-- New exported `getRenderWidth(width?)` helper resolves render width in priority order: explicit arg → `process.stdout.columns` → `DEFAULT_WIDGET_WIDTH`. Removes the previously hardcoded `100` fallback at the `setExtensionWidget` call site.
-- New `TASK_DESC_MAX = 60` constant exported for downstream consumers.
-- New test suite `test/unit/widget-truncate.test.ts` (7 tests): every line ≤ `width`, 200-char description guard, monotone in width, default fallback, `getRenderWidth` priority order + invalid-input handling.
+### Root cause — width-measurement mismatch (the earlier commit 7a3ac8b was WRONG about this)
 
-The crew run itself is a child process and continues independently of the host Pi UI — the crash only kills the TUI; `.crew/runs/<id>/` artifacts are still produced and visible via `team status` after Pi restart. The host Pi loads extensions once at startup and does not hot-reload, so the fix is effective for any **new** Pi session.
+`src/utils/visual.ts` `WIDE_RANGES` did **not** include `⬜` U+2B1C (WHITE LARGE SQUARE) or `⬛` U+2B1B (BLACK LARGE SQUARE), so pi-crew's `visibleWidth`/`truncate` counted them as **1 column**. Upstream `@earendil-works/pi-tui` (the renderer Pi runtime uses to detect overflow) counts them as **2 columns** (RGI emoji). 
+
+A widget sub-line such as
+
+```
+│     ⊶ | S7: pi-audit security test | ⬜ pending | | · 39 tools · *** tok · 49s
+```
+
+got composed, then `crew-widget.ts` `Box.render` **padded** it to 159 chars. pi-crew's own `visibleWidth` said 159 (⬜ = 1), so every truncate guard passed; but pi-tui re-measured the padded line at **160** (⬜ = 2) and threw → `uncaughtException` → Pi exits.
+
+Commit `7a3ac8b` (truncate widget lines) was **ineffective**: it measured with the same mismatched `visibleWidth`, so truncating "to 159" still left pi-tui seeing 160. It is kept as harmless defense-in-depth.
+
+### Fix (commit 3cd9001)
+
+Add `[0x2B1B, 0x2B1C]` to `WIDE_RANGES` so pi-crew's measurement agrees with upstream pi-tui for the large-square emoji that appear in task descriptions (e.g. pi-audit backlog markers `⬜ pending`). Surrounding codepoints (U+2B00, U+2BFF) stay width 1 — only the RGI large squares are wide.
+
+### Verification
+
+Cross-checked directly with the SAME `visibleWidth` the Pi runtime uses:
+
+```
+before fix: crewTruncate(paddedLine, 159) -> pi-tui visibleWidth 160  (CRASH)
+after  fix: crewTruncate(paddedLine, 159) -> pi-tui visibleWidth 159  (CRASH PREVENTED)
+```
+
+Tests: 2 new regression tests in `test/unit/visual.test.ts` pin `visibleWidth('⬜') === 2` (and `⬛`), that `⬀`/`⯿` stay 1, and that truncating a 159-char line containing `⬜` now fits `visibleWidth <= 159`. Existing visual/width-safety/widget/crew-widget suites (24 tests) stay green.
 
 ## [v0.9.9] — gajae-code distillation (4 P0) + notification race fix (2026-06-25)
 
