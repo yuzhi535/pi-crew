@@ -391,7 +391,12 @@ class CrewWidgetComponent implements WidgetComponent {
 		this.cachedTheme = this.theme;
 		this.cacheSignature = "";
 		this.unsubscribeTheme = subscribeThemeChange(themeLike, () => this.invalidate());
-		this.unsubscribeEventBus = runEventBus.onAny(() => this.invalidate());
+		this.unsubscribeEventBus = (() => {
+		const unsub1 = runEventBus.onChannel("run:state", () => this.invalidate());
+		const unsub2 = runEventBus.onChannel("worker:lifecycle", () => this.invalidate());
+		const unsub3 = runEventBus.onChannel("ui:invalidate", () => this.invalidate());
+		return () => { unsub1(); unsub2(); unsub3(); };
+	})();
 	}
 
 	private buildSignature(runs: WidgetRun[]): string {

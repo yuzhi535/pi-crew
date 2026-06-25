@@ -40,7 +40,7 @@ const RUN_STATE_TYPES = new Set([
 	"manifest.saved", "task.claimed", "task.unclaimed", "mailbox_updated",
 ]);
 const UI_INVALIDATE_TYPES = new Set([
-	"effectiveness_changed", "snapshot_stale",
+	"effectiveness_changed", "snapshot_stale", "run.cache_invalidated",
 ]);
 
 /** Classify an event type string into a typed channel. */

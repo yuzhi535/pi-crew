@@ -76,7 +76,12 @@ export class LiveRunSidebar {
 		this.config = input.config ?? {};
 		this.snapshotCache = input.snapshotCache;
 		this.unsubscribeTheme = subscribeThemeChange(input.theme, () => this.invalidate());
-		this.unsubscribeEventBus = runEventBus.onAny(() => this.invalidate());
+		this.unsubscribeEventBus = (() => {
+		const unsub1 = runEventBus.onChannel("run:state", () => this.invalidate());
+		const unsub2 = runEventBus.onChannel("worker:lifecycle", () => this.invalidate());
+		const unsub3 = runEventBus.onChannel("ui:invalidate", () => this.invalidate());
+		return () => { unsub1(); unsub2(); unsub3(); };
+	})();
 	}
 
 	private buildSignature(manifestStatus: string, tasks: TeamTaskState[], agents: ReturnType<typeof readCrewAgents>, waitingCount: number, snapshot?: RunUiSnapshot): string {

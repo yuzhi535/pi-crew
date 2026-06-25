@@ -787,11 +787,20 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 		}
 	}
 
-	const unsubscribe = runEventBus.onAny((event) => {
+	const unsubState = runEventBus.onChannel("run:state", (event) => {
 		if (entries.has(event.runId)) {
 			entries.delete(event.runId);
 		}
 	});
+	const unsubLifecycle = runEventBus.onChannel("worker:lifecycle", (event) => {
+		if (entries.has(event.runId)) {
+			entries.delete(event.runId);
+		}
+	});
+	const unsubscribe = () => {
+		unsubState();
+		unsubLifecycle();
+	};
 
 	return {
 		get(runId: string): RunUiSnapshot | undefined {

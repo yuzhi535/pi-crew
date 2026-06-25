@@ -294,7 +294,12 @@ export class RunDashboard implements DashboardComponent {
 		this.theme = asCrewTheme(theme);
 		this.options = options;
 		this.unsubscribeTheme = subscribeThemeChange(theme, () => this.invalidateAndRender());
-		this.unsubscribeEventBus = runEventBus.onAny(() => this.invalidateAndRender());
+		this.unsubscribeEventBus = (() => {
+		const unsub1 = runEventBus.onChannel("run:state", () => this.invalidateAndRender());
+		const unsub2 = runEventBus.onChannel("worker:lifecycle", () => this.invalidateAndRender());
+		const unsub3 = runEventBus.onChannel("ui:invalidate", () => this.invalidateAndRender());
+		return () => { unsub1(); unsub2(); unsub3(); };
+	})();
 	}
 
 	/**

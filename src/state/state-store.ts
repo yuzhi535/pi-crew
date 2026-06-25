@@ -634,7 +634,10 @@ export function loadRunManifestById(cwd: string, runId: string): { manifest: Tea
 	// between the final stat and the read. Callers needing strict consistency
 	// MUST use withRunLock() around load+modify+save.
 	if (attempts > 0) {
-		console.warn(`[state-store] loadRunManifestById: retry loop detected instability for run ${runId} after ${attempts} attempt(s) — best-effort only, use withRunLock() for strict consistency`);
+		// Round 19: downgrade to debug — retry-loop instability is expected under
+		// concurrent writes (live team runs constantly append to tasks.json).
+		// This is best-effort by design; strict consistency requires withRunLock().
+		console.debug(`[state-store] loadRunManifestById: retry loop detected instability for run ${runId} after ${attempts} attempt(s) — best-effort only, use withRunLock() for strict consistency`);
 	}
 	// NOTE: manifest mtime may legitimately be >= tasks mtime because
 	// saveManifestAndTasksAtomicSync writes manifest before tasks. However,
@@ -724,7 +727,10 @@ export async function loadRunManifestByIdAsync(cwd: string, runId: string): Prom
 	// between the final stat and the read. Callers needing strict consistency
 	// MUST use withRunLock() around load+modify+save.
 	if (attempts > 0) {
-		console.warn(`[state-store] loadRunManifestByIdAsync: retry loop detected instability for run ${runId} after ${attempts} attempt(s) — best-effort only, use withRunLock() for strict consistency`);
+		// Round 19: downgrade to debug — retry-loop instability is expected under
+		// concurrent writes (live team runs constantly append to tasks.json).
+		// This is best-effort by design; strict consistency requires withRunLock().
+		console.debug(`[state-store] loadRunManifestByIdAsync: retry loop detected instability for run ${runId} after ${attempts} attempt(s) — best-effort only, use withRunLock() for strict consistency`);
 	}
 	// NOTE: manifest mtime may legitimately be >= tasks mtime because
 	// saveManifestAndTasksAtomicSync writes manifest before tasks. However,
