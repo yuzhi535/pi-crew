@@ -292,6 +292,17 @@ export function withFileLockSync<T>(filePath: string, fn: () => T, options: RunL
 	// append, or even the lock acquisition itself) would race with the lock.
 	const lockFile = `${filePath}.lock`;
 	const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
+	// FIX (Round 29): re-entrance guard — mirrors withRunLockSync below.
+	// When the same call stack already holds the file lock (e.g.
+	// registerWorker -> cleanupOrphanWorkers -> readRegistry), the second
+	// acquisition would otherwise read its own freshly-written lock file
+	// (same pid, fresh createdAt), fail the steal check, and deadlock for
+	// the full staleMs window. Strace-confirmed in
+	// .github/issues/pre-existing-2026-06-10/04-orphan-worker-registry-tests.md:75-86.
+	const existingToken = fileLockHeldByUs.get(lockFile);
+	if (existingToken) {
+		return fn();
+	}
 	// FIX: Validate the parent directory is not a symlink BEFORE calling mkdirSync.
 	// Between mkdir and lock acquisition, an attacker could plant a symlink.
 	if (!isSymlinkSafePath(path.dirname(lockFile))) throw new Error("Refusing: parent of lock directory is a symlink");
@@ -322,10 +333,12 @@ export function withFileLockSync<T>(filePath: string, fn: () => T, options: RunL
 		}
 	}
 	if (token === "") throw new Error(`Run '${path.basename(lockFile)}' is locked by another operation.`);
+	fileLockHeldByUs.set(lockFile, token);
 	try {
 		return fn();
 	} finally {
 		// Token-guarded release: don't rm the lock if it has been stolen.
+		fileLockHeldByUs.delete(lockFile);
 		releaseLock(lockFile, token);
 	}
 }
@@ -353,6 +366,9 @@ export function withRunLockSync<T>(manifest: TeamRunManifest, fn: () => T, optio
 // already held by this call stack (handleResume -> executeTeamRun ->
 // executeTeamRunCore), we skip re-acquisition to avoid deadlock.
 const runLockHeldByUs = new Map<string, string>(); // filePath -> token
+// Round 29: parallel map for withFileLockSync re-entrance. See the comment
+// at the top of withFileLockSync for the full deadlock mechanism.
+const fileLockHeldByUs = new Map<string, string>(); // lockFile -> token
 
 export async function withRunLock<T>(manifest: TeamRunManifest, fn: () => Promise<T>, options: RunLockOptions = {}): Promise<T> {
 	const filePath = lockPath(manifest);
