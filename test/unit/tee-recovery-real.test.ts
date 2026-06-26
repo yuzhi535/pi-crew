@@ -184,15 +184,18 @@ test("teePathForArtifact produces ${artifactsRoot}/tee/${taskId}-${artifactName}
 
 test("teePathForArtifact sanitizes path separators and unsafe chars in taskId + artifactName", () => {
 	const p = teePathForArtifact("/run/artifacts", "../escape/me", "../../etc/passwd");
-	// Path-safety assertions: the FINAL filename segment must be single-segment
-	// (no path separators) so the tee file always lands inside artifactsRoot/tee/.
+	// Path-safety assertions: the tee file must land inside artifactsRoot/tee/,
+	// not escape via `..` or path separators. Use path.sep for cross-platform
+	// compat (Windows uses `\`; Linux/macOS use `/`). path.basename strips any
+	// path separators, so the post-sanitization filename is platform-agnostic.
 	// (`.` is intentionally allowed in the safe-char class for legitimate
 	// filenames like "result.json" — `..` sequences inside a filename segment
 	// are harmless because they are NOT path separators. The real safety check
-	// is that no `/` survives inside the final segment.)
-	assert.ok(!p.split("/").slice(-2, -1)[0]!.includes("/"), "the taskId portion must be a single segment");
+	// is that the file's parent dir is exactly `${artifactsRoot}/tee/`.)
 	const fileName = path.basename(p);
-	assert.ok(!fileName.includes("/"), `filename must not contain /: ${fileName}`);
+	assert.ok(!fileName.includes("/") && !fileName.includes("\\"), `filename must not contain path separator: ${fileName}`);
+	const expectedDir = path.join("/run/artifacts", "tee");
+	assert.equal(path.dirname(p), expectedDir, `file must be inside ${expectedDir}`);
 	assert.ok(fileName.endsWith(".full.txt"), `filename must end with .full.txt: ${fileName}`);
 });
 
