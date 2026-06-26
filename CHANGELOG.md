@@ -1,5 +1,51 @@
 # Changelog
 
+## [v0.9.10 (continued)] — Round 29 follow-ups: BG2 sweep bug fixes, test optimization, E2E verification (2026-06-26)
+
+A full-suite verify run (`verify-full2`, 5502 tests, 774 suites) surfaced 4 file-level timeouts and 2 real correctness bugs. This release fixes the 2 real bugs, the underlying cause of 2 of the 4 timeouts (chain-runner + orphan-worker-registry + cleanup-full-flow self-deadlock + HandoffManager interval leak), and adds E2E verification artifacts to prove all fixes hold against the live runtime, not just static analysis.
+
+### Bug fixes (BG2 sweep)
+
+- **CountdownTimer drift** (commit cadb5b7, `src/ui/loaders.ts`). `setInterval`-based tick scheduling can skip a second value under event-loop load — the BG2 regression test caught the case where expected `[3, 2, 1, 0]` was emitted as `[3, 2, 0]`. Replaced with recursive `setTimeout` chain + `lastEmittedSeconds` guard so a busy event loop never drops a tick. `dispose()` updated to call `clearTimeout`. Test: `test/unit/loaders.test.ts` (5/5 pass).
+- **redactSecretString ReDoS regression** (commit cadb5b7, `src/utils/redaction.ts:177`). `isSecretKey` used `/[a-zA-Z0-9_-]/.test(value[j])` per character in a 100K-iteration loop — exceeded the 200ms budget on a `_`.repeat(100_000) + `=x` input. Replaced the regex call with a `charCodeAt` numeric check (`isKeyChar` helper, `src/utils/redaction.ts:223-232`). ~5× faster, no regex allocation, O(n²) → O(n) via early exit on the first non-key char. Test: `test/unit/redaction-p1f.test.ts` (4/4 pass).
+- **HandoffManager `setInterval` leak** (commit 5876c38, `src/runtime/handoff-manager.ts:202-213`). `startCleanupTimer()` did not call `.unref()` on the cleanup `setInterval`. Every `new HandoffManager()` in a test mock held an event-loop reference — `chain-runner.test.ts` created 42 instances and the test file's process never exited. Fix: `.unref()` on the interval handle at `:212-213`. Verified: 42/42 tests pass in 362ms (was hanging at 30s file-level timeout).
+
+### Lock re-entrance guard (Round 29 follow-up to BG2 sweep)
+
+- **`withFileLockSync` self-deadlock** (commit 7085d8d, `src/state/locks.ts:288`). The function was missing the re-entrance guard that its sibling functions `withRunLockSync` (line 333) and `withRunLock` (line 359+) already had via the `runLockHeldByUs` Map. When the same call stack tried to acquire the file lock twice on the same path (e.g. `registerWorker` → `cleanupOrphanWorkers` → `readRegistry`), the second acquisition read its own freshly-written lock file (same pid, fresh createdAt), failed the steal check, and retried for the full `staleMs` window — hanging `orphan-worker-registry.test.ts` and `cleanup-full-flow.test.ts` at 30s. Strace evidence in `.github/issues/pre-existing-2026-06-10/04-orphan-worker-registry-tests.md:75-86`. Smoking gun: `src/runtime/orphan-worker-registry.ts:220-221` already documents the bug in a code comment (the workaround was to skip the lock in one hot path; the tests hit it through a path the workaround did not cover). Fix: added parallel `fileLockHeldByUs` Map mirroring `runLockHeldByUs`; consult at function entry, set after acquire, delete in `finally`. Reuses the same shape so the two functions stay structurally parallel. Regression test: `test/unit/round29-file-lock-reentrance.test.ts` (5/5 pass, 547ms; `orphan-worker-registry` 15/15 496ms was hanging; `cleanup-full-flow` 4/4 1377ms was hanging).
+
+### Doctor test optimization (16× speedup)
+
+- **Build-time + test-time doctor cost** (commit 8842e2c, `src/extension/team-tool/doctor.ts` + `test/unit/doctor-cov.test.ts`). `buildTeamDoctorReport` was NOT pure — it spawned `git --version` and `pi --version` via `spawnSync` (1-2s each), walked the filesystem 3× for discovery (agents/teams/workflows), and audited the JSON schema on every invocation. With 12 tests in `doctor-cov.test.ts` and 2 in `doctor-validation.test.ts`, the cost added up to 25.8s and 6.8s. Three independent fixes: (1) test-side: `doctor-cov` switched from `cwd: "/tmp"` to a fresh `mkdtempSync` cwd via `before`/`after` hooks; (2) production dedupe: hoisted `discoverX` calls to module-level consts (called twice — Drift + Discovery sections — now called once); (3) production memoize: `commandExists` and `piCommandExists` cached at module level. Cache is safe: a doctor check is informational, a stale `ok: true` self-corrects on next process restart, and the in-process discovery is what actually drives user-visible behavior in a long-running pi session. Result: `doctor-cov` 25.8s → 1.6s (16×), `doctor-validation` 6.8s → 3.0s (2.3×). `tsc --noEmit` clean.
+
+### Widget progress line flicker (v6 invariant format)
+
+- **`crew-widget` progress line coalesce** (commit 78cd813, `src/ui/widget/widget-renderer.ts`). The `├─ ...` run progress line flickered across renders because `progressPart` was recomputed from multiple optional sources on every snapshot. Reduced to the v6 invariant format: `${completed}/${agents.length} agents` only, with the surrounding `· toolCount · tokenCount · duration` field strip removed (those data points are still surfaced in the per-agent sub-lines below). Format is now stable across ticks, so the host Pi TUI sees no diff between consecutive renders → no flicker.
+
+### E2E verification artifacts
+
+- **`docs/fixes/v0.9.10/`** (commit 7bbda16) — two E2E smoke-test artifacts from real team runs, NOT unit tests:
+  - `smoke-test.md` — research workflow (`team_20260626102522_e00831a41ee1cdd8`) wrote a 3-bullet summary of the 3 fix commits with file:line citations. The writer agent writing the file is itself an end-to-end exercise of the v0.9.10 writer-permission fix.
+  - `locks-fix-verify.md` — implementation workflow (`team_20260626151258_edeadbe3c35de7de`) verified all four code paths affected by the 3 commits (CountdownTimer, redactSecretString, HandoffManager, withFileLockSync) in a single multi-agent run; reviewer re-verified every line citation against the source.
+
+### Lesson
+
+- When a test file "hangs" at the file-level timeout, the FIRST hypothesis to check is per-test slowness, not deadlock. Profile with `--test-reporter=tap` and look at per-test `duration_ms` before assuming resource leaks or lock contention. Saves hours of chasing ghosts (this Round 29 originally looked like a `notification-router` or `parent-guard` interval leak; the real cause was `withFileLockSync` self-deadlock, found only after a delegated research investigation).
+- Grep-by-pattern ("X timer không .unref()") does NOT find re-entrance deadlocks. Read the call stack.
+
+### Verification (all under 60s timeout, per the 3863s lesson)
+
+- `test/unit/round29-file-lock-reentrance.test.ts`  5/5  547ms
+- `test/unit/loaders.test.ts`  5/5
+- `test/unit/redaction-p1f.test.ts`  4/4
+- `test/unit/orphan-worker-registry.test.ts`  15/15  496ms
+- `test/integration/cleanup-full-flow.test.ts`  4/4  1377ms
+- `test/unit/doctor-cov.test.ts`  12/12  1.6s  (was 25.8s)
+- `test/unit/doctor-validation.test.ts`  2/2  3.0s  (was 6.8s)
+- 134/134 Sprint 1-5 + bug-fix regression pass
+- `npx tsc --noEmit`  EXIT 0
+- E2E: research workflow (3/3 tasks, 93K tokens, 5m19s, writer wrote file); implementation workflow (3/3 tasks, 66K tokens, 5m01s, reviewer re-verified all citations)
+
 ## [v0.9.10 (continued)] — migrate deferred truncation points through the stage-chain (Sprint 5) (2026-06-26)
 
 The Sprint 3 v0.9.10 (continued) entry listed 5 truncation points deferred from the P0-A stage-chain refactor. This release migrates 3 of them and defers 2 more with explicit reasons.
