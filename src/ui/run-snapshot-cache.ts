@@ -787,19 +787,54 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 		}
 	}
 
+	// Coalesced eager refresh on event-bus signals. Previously every
+	// `run:state` / `worker:lifecycle` event deleted the cache entry, leaving
+	// a window where `widget-model.ts: snapshotCache.get(runId)` returned
+	// `undefined`. The widget then fell back to `agentsFor(run)` (a disk read
+	// with no snapshot.tasks) and rendered the "0/1 done" branch of
+	// `widget-renderer.ts:39-41` instead of the "Phase 1/1 default: 0% (0/3)"
+	// branch — producing the live flicker between those two progressPart
+	// values every render tick. Replacing the delete with a coalesced
+	// refreshIfStale keeps the cache populated so the widget always sees the
+	// same logical snapshot between stamp changes; multiple events for the
+	// same runId within INVAL_COALESCE_MS are batched into one refresh.
+	function localRefresh(runId: string): RunUiSnapshot {
+		const previous = entries.get(runId);
+		const entry = build(runId, previous);
+		entries.set(runId, entry);
+		evictIfNeeded();
+		return entry.snapshot;
+	}
+	function localRefreshIfStale(runId: string): RunUiSnapshot {
+		const previous = entries.get(runId);
+		if (!previous) return localRefresh(runId);
+		const now = Date.now();
+		if (now - previous.loadedAtMs < ttlMs) return touch(runId, previous);
+		const stamps = currentStamps(previous);
+		if (sameStamps(stamps, previous.stamps)) return touch(runId, previous);
+		return localRefresh(runId);
+	}
+	const pendingRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
+	const INVAL_COALESCE_MS = 80;
+	const scheduleRefresh = (runId: string): void => {
+		const existing = pendingRefreshes.get(runId);
+		if (existing) clearTimeout(existing);
+		pendingRefreshes.set(runId, setTimeout(() => {
+			pendingRefreshes.delete(runId);
+			try { localRefreshIfStale(runId); } catch { /* best-effort; widget falls back gracefully */ }
+		}, INVAL_COALESCE_MS));
+	};
 	const unsubState = runEventBus.onChannel("run:state", (event) => {
-		if (entries.has(event.runId)) {
-			entries.delete(event.runId);
-		}
+		if (entries.has(event.runId)) scheduleRefresh(event.runId);
 	});
 	const unsubLifecycle = runEventBus.onChannel("worker:lifecycle", (event) => {
-		if (entries.has(event.runId)) {
-			entries.delete(event.runId);
-		}
+		if (entries.has(event.runId)) scheduleRefresh(event.runId);
 	});
 	const unsubscribe = () => {
 		unsubState();
 		unsubLifecycle();
+		for (const timer of pendingRefreshes.values()) clearTimeout(timer);
+		pendingRefreshes.clear();
 	};
 
 	return {
@@ -808,20 +843,10 @@ export function createRunSnapshotCache(cwd: string, options: RunSnapshotCacheOpt
 			return entry ? touch(runId, entry) : undefined;
 		},
 		refresh(runId: string): RunUiSnapshot {
-			const previous = entries.get(runId);
-			const entry = build(runId, previous);
-			entries.set(runId, entry);
-			evictIfNeeded();
-			return entry.snapshot;
+			return localRefresh(runId);
 		},
 		refreshIfStale(runId: string): RunUiSnapshot {
-			const previous = entries.get(runId);
-			if (!previous) return this.refresh(runId);
-			const now = Date.now();
-			if (now - previous.loadedAtMs < ttlMs) return touch(runId, previous);
-			const stamps = currentStamps(previous);
-			if (sameStamps(stamps, previous.stamps)) return touch(runId, previous);
-			return this.refresh(runId);
+			return localRefreshIfStale(runId);
 		},
 		preloadStale,
 		preloadAllStale,

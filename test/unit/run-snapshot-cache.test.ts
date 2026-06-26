@@ -80,6 +80,55 @@ test("RunSnapshotCache exposes structured cancellation reason", () => {
 	}
 });
 
+// Regression for the live-UI flicker reported on 2026-06-26. The widget
+// header alternated between "0/1 done" (no snapshot path) and
+// "Phase 1/1 default: 0% (0/3)" (snapshot path) every render tick because
+// `runEventBus.onChannel("run:state" | "worker:lifecycle", ...)` deleted the
+// cache entry on every event. The widget's `snapshotCache.get(runId)` then
+// returned `undefined`, forcing widget-model.ts to fall back to `agentsFor(run)`
+// (a disk read with no snapshot.tasks). Replacing the delete with a coalesced
+// refresh keeps the cache populated between stamp changes.
+test("RunSnapshotCache keeps entries populated across event-bus signals", async () => {
+	const cwd = tempCwd("pi-crew-snapshot-event-bus-");
+	try {
+		const { manifest } = fixtures(cwd);
+		const cache = createRunSnapshotCache(cwd, { ttlMs: 60_000 });
+		const initial = cache.refresh(manifest.runId);
+		assert.ok(initial);
+		// Import lazily so test process state is fresh per run.
+		const { runEventBus } = await import("../../src/ui/run-event-bus.ts");
+		const runId = manifest.runId;
+		// Burst of worker:lifecycle + run:state events that, before the fix,
+		// would have each deleted the cache entry. After the fix, the cache
+		// must still answer `get(runId)` synchronously without the widget
+		// having to call refreshIfStale itself. Use only event types that are
+		// in both RunEventType union AND in the channel classification Sets
+		// (`worker:lifecycle` / `run:state`) — that's what the fix's
+		// subscriptions actually listen on.
+		const burst = [
+			{ type: "run_started" as const, channel: "worker:lifecycle" as const },
+			{ type: "task_started" as const, channel: "worker:lifecycle" as const },
+			{ type: "mailbox_updated" as const, channel: "run:state" as const },
+			{ type: "task_completed" as const, channel: "worker:lifecycle" as const },
+			{ type: "run_completed" as const, channel: "worker:lifecycle" as const },
+		];
+		let survivalCount = 0;
+		for (const e of burst) {
+			runEventBus.emit({ ...e, runId });
+			const after = cache.get(runId);
+			if (after) survivalCount++;
+		}
+		assert.equal(survivalCount, burst.length, "cache entry must survive every event-bus signal");
+		// After the coalesce window (80ms) + a small buffer, the cache should
+		// have refreshed and still be populated.
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		const afterCoalesce = cache.get(runId);
+		assert.ok(afterCoalesce, "cache entry must remain populated after coalesced refresh");
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
 test("RunSnapshotCache marks mailbox counts approximate when tail-truncated", () => {
 	const cwd = tempCwd("pi-crew-snapshot-mailbox-large-");
 	try {

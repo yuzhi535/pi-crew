@@ -11,8 +11,10 @@ import { Box, Text } from "../layout-primitives.ts";
 import { listLiveAgents } from "../../runtime/live-agent-manager.ts";
 import { computePhaseProgress, formatPhaseProgressLine } from "../../runtime/phase-progress.ts";
 import { spinnerFrame } from "../spinner.ts";
-import { agentActivity, agentStats, notificationBadge } from "./widget-formatters.ts";
-import { shortRunLabel } from "./widget-model.ts";
+import { computeLiveDurationMs } from "../live-duration.ts";
+import { getTaskUsage } from "../../runtime/usage-tracker.ts";
+import { agentActivity, agentStats, elapsed, formatTokensCompact, notificationBadge } from "./widget-formatters.ts";
+import { activeWidgetRuns, shortRunLabel } from "./widget-model.ts";
 import type { WidgetRun } from "./widget-types.ts";
 
 const MAX_AGENTS_DISPLAY = 3;
@@ -45,7 +47,11 @@ export function widgetHeader(runs: WidgetRun[], runningGlyph: string, maxLines =
 // ── Line builder ──────────────────────────────────────────────────────
 
 export function buildWidgetLines(cwd: string, frame = 0, maxLines = 8, providedRuns?: WidgetRun[], notificationCount = 0, width = DEFAULT_WIDGET_WIDTH): string[] {
-	const runs = providedRuns ?? [];
+	// Match the legacy `buildCrewWidgetLines` API: when no runs are supplied,
+	// auto-fetch via activeWidgetRuns(cwd). Otherwise widgets calling with
+	// only `(cwd, frame)` would render an empty line set (regression vs. the
+	// pre-refactor implementation that called activeWidgetRuns here).
+	const runs = providedRuns ?? activeWidgetRuns(cwd);
 	if (!runs.length) return [];
 
 	const runningGlyph = spinnerFrame("widget-header");
@@ -63,8 +69,22 @@ export function buildWidgetLines(cwd: string, frame = 0, maxLines = 8, providedR
 		});
 		const completed = agents.filter((a) => a.status === "completed").length;
 		const runGlyph = iconForStatus(run.status, { runningGlyph });
-		const phaseLine = snapshot ? formatPhaseProgressLine(computePhaseProgress(snapshot.tasks)) : "";
-		const progressPart = phaseLine || `${completed}/${agents.length} done`;
+		// Run progress line. v1–v3 flickered on snapshot.tasks state, v4 was
+		// too minimal (`0/1 agents` only), v5 duplicated the worker activity
+		// line (tools/tokens/duration already shown one row below). v6 (this)
+		// shows only data that is RUN-level (not already in the per-agent
+		// activity line) and is GUARANTEED stable across ticks:
+		//   - agents count — from `agents` array, always populated, never empty.
+		//   - run elapsed   — from `run.createdAt`, always set on manifest.
+		// Both come from sources with no race window — `agents` is read from
+		// snapshot.agents OR agentsFor(run) (both always return same length
+		// for a healthy run), and `run.createdAt` is immutable. The format
+		// shape `"X/Y agents · Ns"` is therefore truly invariant: same number
+		// of `·`-separated fields, same field meanings, every render tick.
+		const agentCountText = `${completed}/${agents.length} agents`;
+		const runElapsedMs = Math.max(0, Date.now() - new Date(run.createdAt).getTime());
+		const runElapsedText = `${Math.floor(runElapsedMs / 1000)}s`;
+		const progressPart = `${agentCountText} · ${runElapsedText}`;
 		lines.push(truncate(`├─ ${runGlyph} ${shortRunLabel(run)} · ${progressPart} · ${run.runId.slice(-8)}`, width));
 
 		const liveForRun = listLiveAgents().filter((a) => a.runId === run.runId);

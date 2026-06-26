@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { handleTeamTool } from "../../src/extension/team-tool.ts";
-import { buildCrewWidgetLines, updateCrewWidget, type CrewWidgetState } from "../../src/ui/crew-widget.ts";
+import { buildCrewWidgetLines, updateCrewWidget, type CrewWidgetState } from "../../src/ui/widget/index.ts";
 import { saveCrewAgents } from "../../src/runtime/crew-agent-records.ts";
 import { clearLiveAgentsForTest } from "../../src/runtime/live-agent-manager.ts";
 import { createRunManifest, loadRunManifestById, saveRunManifest } from "../../src/state/state-store.ts";
