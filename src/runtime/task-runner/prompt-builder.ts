@@ -120,7 +120,11 @@ export async function renderTaskPrompt(manifest: TeamRunManifest, step: Workflow
 		// O4: project knowledge (.crew/knowledge.md) — workers don't load the
 		// pi-crew extension (spawned with --no-extensions), so before_agent_start
 		// never fires for them. Inject here so every worker sees project knowledge.
-		buildKnowledgeFragment(task.cwd),
+		buildKnowledgeFragment(task.cwd, {
+			goal: manifest.goal,
+			taskText: step.task,
+			role: step.role,
+		}),
 	].filter(Boolean).join("\n");
 
 	// Dynamic suffix: goal, step, skills, task packet, dependency context, memory — changes per task
