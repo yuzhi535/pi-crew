@@ -19,6 +19,10 @@ function makeResolvedTempDir(prefix: string): string {
 	} catch {
 		try { dir = fs.realpathSync(dir); } catch { /* keep as-is */ }
 	}
+	// LEAK PREVENTION: `.git` marker so useProjectState(dir) → true, keeping
+	// createRunManifest/writeRunFixture run records inside <tmpdir>/.crew/
+	// instead of leaking to the extension-global state dir the crew UI reads.
+	try { fs.mkdirSync(path.join(dir, ".git"), { recursive: true }); } catch { /* best-effort */ }
 	return dir;
 }
 

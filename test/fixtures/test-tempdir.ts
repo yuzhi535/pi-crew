@@ -27,6 +27,14 @@ export function createTrackedTempDir(prefix: string): string {
 		const r = fs.realpathSync.native(dir);
 		dir = r.startsWith("\\\\?\\") ? r.slice(4) : r;
 	} catch { /* keep as-is */ }
+	// LEAK PREVENTION: create a `.git` marker dir so findRepoRoot(dir) succeeds,
+	// making useProjectState(dir) → true. Without this, scopeBaseRoot falls back
+	// to userCrewRoot() and any createRunManifest/writeRunFixture/createRunPaths
+	// call writes run records into the EXTENSION-GLOBAL state dir
+	// (~/.pi/agent/extensions/pi-crew/state/runs/) — the one the crew UI reads —
+	// creating persistent "zombie agent" rows after every test run. A bare `.git`
+	// directory is enough for findRepoRoot; a real `git init` is unnecessary here.
+	try { fs.mkdirSync(path.join(dir, ".git"), { recursive: true }); } catch { /* best-effort */ }
 	tracked.add(dir);
 	return dir;
 }
