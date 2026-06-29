@@ -16,6 +16,7 @@ import { aggregateUsage, formatUsage } from "../state/usage.ts";
 import type { WorkflowConfig, WorkflowStep } from "../workflows/workflow-config.ts";
 import { evaluateCrewPolicy, summarizePolicyDecisions } from "./policy-engine.ts";
 import { buildRecoveryLedger } from "./recovery-recipes.ts";
+import { assessGoalAchievement, applyGoalAchievement } from "./goal-achievement.ts";
 import { buildTaskGraphIndex, refreshTaskGraphQueues, taskGraphSnapshot } from "./task-graph-scheduler.ts";
 import { buildExecutionPlan as buildDagExecutionPlan, getReadyTasks as getDagReadyTasks, type TaskNode } from "./task-graph.ts";
 import { checkBranchFreshness } from "../worktree/branch-freshness.ts";
@@ -462,6 +463,23 @@ export async function executeTeamRun(input: ExecuteTeamRunInput): Promise<{ mani
 
 	try {
 		const result = await executeTeamRunCore(input, manifest, workflow);
+		// #2 (assessment): goal-achievement detection — kill the silent false-green.
+		// A code-mutating run that "completed" but left the git working tree clean
+		// (and/or had a failed task) is a false-green. We expose goalAchieved on the
+		// manifest + emit an event so the lie is never silent, and downgrade status
+		// to "failed" only when a failed task corroborates it (conservative).
+		const gaAssessment = assessGoalAchievement(result.manifest, result.tasks, workflow);
+		const gaApplied = applyGoalAchievement(result.manifest, gaAssessment);
+		if (gaApplied.manifest !== result.manifest) {
+			result.manifest = gaApplied.manifest;
+			try {
+				saveRunManifest(result.manifest);
+			} catch (persistError) {
+				logInternalError("team-runner.goalAchievement.persist", persistError instanceof Error ? persistError : new Error(String(persistError)), `runId=${manifest.runId}`);
+			}
+		}
+		appendEvent(manifest.eventsPath, { type: "run.goal_achievement", runId: manifest.runId, message: gaApplied.manifest.goalAchievementNote ?? "", data: { achieved: gaAssessment.achieved, downgraded: gaApplied.downgraded, reason: gaAssessment.reason, signals: gaAssessment.signals } });
+		if (gaApplied.downgraded) logInternalError("team-runner.goalAchievement.falseGreen", new Error(gaApplied.manifest.goalAchievementNote ?? "false-green detected"), `runId=${manifest.runId}`);
 		stopTeamHeartbeat();
 		resolveRunPromise(manifest.runId, result);
 		cleanupUsage();

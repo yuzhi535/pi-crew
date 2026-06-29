@@ -201,6 +201,9 @@ export interface TeamRunManifest {
 	args?: unknown;
 	summary?: string;
 	policyDecisions?: PolicyDecision[];
+	/** #2 (assessment): goal-achievement verdict — kills the silent false-green. */
+	goalAchieved?: boolean | "unknown";
+	goalAchievementNote?: string;
 }
 
 export interface UsageState {
