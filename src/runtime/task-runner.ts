@@ -343,6 +343,7 @@ export async function runTeamTask(
 		let modelAttempts: ModelAttemptSummary[] | undefined;
 		let parsedOutput: ParsedPiJsonOutput | undefined;
 	let rawFinalText: string | undefined;
+		let intermediateFindings: string | undefined;
 		let finalStdout = "";
 		let transcriptPath: string | undefined;
 		let terminalEvidence: OperationTerminalEvidence[] = [];
@@ -719,6 +720,7 @@ export async function runTeamTask(
 				);
 				parsedOutput = parsePiJsonOutput(transcriptText);
 				rawFinalText = childResult.rawFinalText;
+				intermediateFindings = childResult.intermediateFindings;
 				error =
 					childResult.error ||
 					(childResult.exitCode && childResult.exitCode !== 0
@@ -846,6 +848,10 @@ export async function runTeamTask(
 					cleanResultText(parsedOutput?.finalText) ??
 					cleanResultText(finalStdout) ??
 					cleanResultText(finalStderr) ??
+					// #7 hardening: if all real output paths are empty (worker exhausted
+					// budget on tool calls, no assistant text), use intermediate findings.
+					// intermediateFindings captures the last N tool-result display lines.
+					cleanResultText(intermediateFindings) ??
 					"(no output)",
 				producer: task.id,
 			});

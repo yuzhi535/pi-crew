@@ -231,6 +231,12 @@ export interface ChildPiRunResult {
 	aborted?: boolean;
 	/** True if the agent was steered to wrap up (hit soft turn limit) but finished in time. */
 	steered?: boolean;
+	/** #7 hardening: bounded digest of intermediate findings (last N tool results or
+	 *  assistant text lines) from the run. Populated by ChildPiLineObserver so that
+	 *  workers that exhaust their budget on tool calls (never emit final assistant
+	 *  text) still produce a non-empty result. Consumers should prefer rawFinalText
+	 *  first — this is a last-resort fallback. */
+	intermediateFindings?: string;
 }
 
 export function buildChildPiSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): SpawnOptions {
@@ -526,6 +532,12 @@ export class ChildPiLineObserver {
 	 *  This is the source of the AUTHORITATIVE result.txt; the transcript stays
 	 *  compacted (memory bound). */
 	private readonly rawTextEvents: string[] = [];
+	/** #7 hardening: bounded digest of intermediate findings. When a worker spends
+	 *  its entire budget on tool calls (never emits a final assistant text),
+	 *  getRawFinalText() returns undefined but this digest captures the last
+	 *  display lines (tool results, stdout fragments) before budget exhaustion.
+	 *  Capped at MAX_INTERMEDIATE_DIGEST_LINES so result artifacts stay bounded. */
+	private readonly intermediateFindings: string[] = [];
 
 	constructor(input: ChildPiRunInput) {
 		this.input = input;
@@ -553,6 +565,22 @@ export class ChildPiLineObserver {
 		return this.rawTextEvents.length > 0 ? this.rawTextEvents[this.rawTextEvents.length - 1] : undefined;
 	}
 
+	/** #7 hardening: returns a bounded digest of intermediate findings accumulated
+	 *  during the run. This is NOT the final answer — it is a best-effort capture
+	 *  of the last assistant text or tool-result display lines before budget
+	 *  exhaustion. Only populated when getRawFinalText() would return undefined.
+	 *  @param maxChars - maximum total characters to return (default 500). */
+	getIntermediateFindings(maxChars = 500): string {
+		const MAX_INTERMEDIATE_DIGEST_LINES = 20;
+		if (this.intermediateFindings.length === 0) return "";
+		// Take the last N lines and join, then cap.
+		const lines = this.intermediateFindings.slice(-MAX_INTERMEDIATE_DIGEST_LINES);
+		const joined = lines.join("\n");
+		if (joined.length <= maxChars) return joined;
+		// Return the tail within the budget.
+		return joined.slice(-maxChars);
+	}
+
 	private emitLine(line: string): void {
 		if (!line.trim()) return;
 		// Parse the RAW line once so we can BOTH compact it (telemetry transcript,
@@ -561,7 +589,15 @@ export class ChildPiLineObserver {
 		try {
 			const rawParsed = JSON.parse(line);
 			const rawTexts = extractText(rawParsed);
-			if (rawTexts.length > 0) this.rawTextEvents.push(...rawTexts);
+			if (rawTexts.length > 0) {
+				this.rawTextEvents.push(...rawTexts);
+				// Also capture raw assistant text as intermediate findings — the last raw
+				// text may be a partial answer before the worker ran out of budget.
+				const last = rawTexts[rawTexts.length - 1];
+				if (last.trim().length > 0) {
+					this.intermediateFindings.push(last.trim());
+				}
+			}
 		} catch {
 			// Not valid JSON — compactChildPiLine handles the raw-text fallback below.
 		}
@@ -580,6 +616,10 @@ export class ChildPiLineObserver {
 			} catch (error) {
 				logInternalError("child-pi.on-stdout-line", error, `line=${compact.displayLine}`);
 			}
+			// #7 hardening: capture display lines (tool results, stdout) as intermediate
+			// findings. This ensures we capture tool output even when no assistant text
+			// is emitted (budget exhausted on tool calls).
+			this.intermediateFindings.push(compact.displayLine!.trim());
 		}
 	}
 }
@@ -827,6 +867,51 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 					} catch (error) {
 						logInternalError("child-pi.response-timeout-term", error, `pid=${child.pid}`);
 					}
+					// #3 hardening: if the child never exits (zombie) and neither the
+					// 'exit' nor 'close' event ever fires, the promise would hang forever.
+					// SIGKILL fires ~3s after SIGTERM via hardKillTimer in killProcessPid,
+					// but on platforms where SIGKILL also fails (e.g. permission issues),
+					// add a bounded safety settle so the promise always resolves. Using
+					// hardKillMs + 2s as the safety window: enough for SIGKILL to work
+					// normally, but forces settle if the process is truly immortal.
+					// NOTE: we do NOT clear hardKillTimer here (that would defeat its purpose);
+					// we intentionally add a parallel safety path.
+					const SAFETY_SETTLE_MS = HARD_KILL_MS + 2000;
+					const safetyTimer = setTimeout(() => {
+						if (settled || childExited) return;
+						logInternalError(
+							"child-pi.settle-safety-fired",
+							new Error(`Child did not exit within ${SAFETY_SETTLE_MS}ms of kill; forcing settle`),
+							`pid=${child.pid}, responseTimeoutMs=${responseTimeoutMs}`,
+						);
+						// Verify the child is still alive before forcing settle.
+						// If it somehow exited between childExited=false and here, the
+						// settled/childExited guard prevents double-settle (harmless but noisy).
+						try {
+							process.kill(child.pid!, 0);
+							// Child still alive — force settle with timeout error.
+							const timeoutErr = `Child Pi produced no new output for ${responseTimeoutMs}ms; killed but did not exit within ${SAFETY_SETTLE_MS}ms (possible zombie).`;
+							settle({
+								exitCode: null,
+								stdout,
+								stderr,
+								error: timeoutErr,
+								exitStatus: {
+									exitCode: null,
+									cancelled: abortRequested,
+									timedOut: true,
+									killed: hardKilled,
+									cleanupErrors,
+									finalDrainMs,
+									crashClass: "timeout",
+								},
+							});
+						} catch {
+							// ESRCH / EPERM — child is already gone. The 'exit'/'close' handler
+							// will fire shortly (or already fired in a race). Let it settle normally.
+						}
+					}, SAFETY_SETTLE_MS);
+					safetyTimer.unref();
 				}, responseTimeoutMs);
 				noResponseTimer.unref();
 			};
@@ -952,6 +1037,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 					resolve({
 						...result,
 						rawFinalText: lineObserver.getRawFinalText(),
+						intermediateFindings: lineObserver.getIntermediateFindings(),
 						exitStatus: result.exitStatus ?? {
 							exitCode: result.exitCode,
 							cancelled: abortRequested,
