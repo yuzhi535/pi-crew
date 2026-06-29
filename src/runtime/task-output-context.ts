@@ -14,6 +14,12 @@ export interface DependencyContextEntry {
 	status: string;
 	resultSummary: string;
 	resultPath?: string;
+	/** Absolute path to the FULL (untruncated) result, teed when the inline
+	 *  resultSummary was materially truncated (>TEE_THRESHOLD_MULTIPLIER). The
+	 *  downstream worker can `read` this to recover the dropped middle. Mirrors
+	 *  the sharedReads recovery path so dependency injection is no longer
+	 *  circular (re-reading resultPath used to yield the same truncated text). */
+	fullOutputPath?: string;
 	structuredResults?: Record<string, unknown>;
 	artifactsProduced?: string[];
 	usage?: { inputTokens: number; outputTokens: number; durationMs: number };
@@ -280,13 +286,18 @@ export function collectDependencyOutputContext(manifest: TeamRunManifest, tasks:
 	const byStep = new Map(tasks.map((item) => [item.stepId, item]).filter((entry): entry is [string, TeamTaskState] => Boolean(entry[0])));
 	const byId = new Map(tasks.map((item) => [item.id, item]));
 	const dependencies = task.dependsOn.map((dep) => byStep.get(dep) ?? byId.get(dep)).filter((item): item is TeamTaskState => Boolean(item)).map((item) => {
-		const resultText = item.resultArtifact ? readIfSmall(item.resultArtifact.path, manifest.artifactsRoot) : undefined;
+		const fullOutputPath = item.resultArtifact ? teePathForArtifact(manifest.artifactsRoot, task.id, item.id) : undefined;
+		const teeResult = item.resultArtifact
+			? readIfSmallWithTee(item.resultArtifact.path, { baseDir: manifest.artifactsRoot, ...(fullOutputPath ? { tee: { fullOutputPath } } : {}) })
+			: undefined;
+		const resultText = teeResult?.content;
 		return {
 			taskId: item.id,
 			role: item.role,
 			status: item.status,
 			resultSummary: resultText ?? "",
 			resultPath: item.resultArtifact?.path,
+			...(teeResult?.fullOutputPath ? { fullOutputPath: teeResult.fullOutputPath } : {}),
 			structuredResults: resultText ? tryParseJson(resultText) : undefined,
 			artifactsProduced: listTaskArtifacts(manifest, item.id),
 			usage: aggregateUsage(item),
@@ -330,6 +341,11 @@ export function renderDependencyOutputContext(context: DependencyOutputContext):
 		parts.push("# Dependency Outputs", "");
 		for (const dep of context.dependencies) {
 			parts.push(`## ${dep.taskId} (${dep.role})`, `Status: ${dep.status}`, dep.resultPath ? `Result artifact: ${dep.resultPath}` : "", "", dep.resultSummary?.trim() || "(no result output)", "");
+			// P1-A dependency tee-recovery hint: when the dependency's result was
+			// materially truncated (>1.25× MAX_RESULT_INLINE_BYTES) the full RAW
+			// content was teed to fullOutputPath. Mirrors the sharedReads hint so the
+			// downstream worker can read the dropped middle instead of re-deriving.
+			if (dep.fullOutputPath) parts.push(`Full output (if you need the missing middle): ${dep.fullOutputPath}`, "");
 			if (dep.structuredResults) parts.push("Structured results:", JSON.stringify(dep.structuredResults, null, 2), "");
 			if (dep.artifactsProduced?.length) parts.push(`Artifacts produced: ${dep.artifactsProduced.join(", ")}`, "");
 			if (dep.usage) parts.push(`Usage: ${dep.usage.inputTokens} input tokens, ${dep.usage.outputTokens} output tokens, ${dep.usage.durationMs}ms`, "");

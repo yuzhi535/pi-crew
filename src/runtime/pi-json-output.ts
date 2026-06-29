@@ -75,7 +75,11 @@ function textFromContent(content: unknown): string[] {
 	return text;
 }
 
-function extractText(value: unknown): string[] {
+/** Extract assistant-text fragments from a parsed Pi JSON event.
+ *  Exported so {@link ChildPiLineObserver} can capture the RAW (uncapped)
+ *  assistant text for the authoritative result, mirroring the extraction
+ *  order this function uses inside {@link parsePiJsonOutput}. */
+export function extractText(value: unknown): string[] {
 	const obj = asRecord(value);
 	if (!obj) return [];
 	const message = asRecord(obj.message);

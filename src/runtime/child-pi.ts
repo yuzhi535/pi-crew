@@ -17,6 +17,7 @@ import { sanitizeEnvSecrets } from "../utils/env-filter.ts";
 import { registerChildProcess, unregisterChildProcess } from "../extension/crew-cleanup.ts";
 import { classifyProcessCrash } from "./crash-classification.ts";
 import { resolveRealContainedPath } from "../utils/safe-paths.ts";
+import { extractText } from "./pi-json-output.ts";
 
 const POST_EXIT_STDIO_GUARD_MS = DEFAULT_CHILD_PI.postExitStdioGuardMs;
 const FINAL_DRAIN_MS = DEFAULT_CHILD_PI.finalDrainMs;
@@ -218,6 +219,13 @@ export interface ChildPiRunResult {
 	stdout: string;
 	stderr: string;
 	error?: string;
+	/** RAW (uncapped) final assistant text, captured at stream-parse time BEFORE
+	 *  the 16K transcript compaction. This is the AUTHORITATIVE worker output —
+	 *  it becomes results/<id>.txt so downstream dependencies are not bounded by
+	 *  the transcript's telemetry cap. Undefined when no assistant text was seen
+	 *  (mock paths, error paths) — callers MUST fall back to transcript-derived
+	 *  finalText. See research-findings/output-handling-deep-dive.md §A. */
+	rawFinalText?: string;
 	exitStatus?: WorkerExitStatus;
 	/** True if the agent was hard-aborted (max_turns + grace exceeded). */
 	aborted?: boolean;
@@ -512,6 +520,12 @@ function compactChildPiLine(line: string): { persistedLine: string; event?: unkn
 export class ChildPiLineObserver {
 	private buffer = "";
 	private readonly input: ChildPiRunInput;
+	/** RAW (uncapped) assistant-text fragments, accumulated in arrival order.
+	 *  Mirrors {@link parsePiJsonOutput}'s textEvents/finalText extraction but
+	 *  operates on the RAW event stream instead of the 16K-compacted transcript.
+	 *  This is the source of the AUTHORITATIVE result.txt; the transcript stays
+	 *  compacted (memory bound). */
+	private readonly rawTextEvents: string[] = [];
 
 	constructor(input: ChildPiRunInput) {
 		this.input = input;
@@ -531,8 +545,26 @@ export class ChildPiLineObserver {
 		this.emitLine(line);
 	}
 
+	/** Last non-empty RAW assistant text (mirrors {@link parsePiJsonOutput}'s
+	 *  finalText semantics but uncapped). Undefined when no assistant text was
+	 *  seen by this observer. {@link extractText} already drops empty fragments,
+	 *  so the last entry is the final assistant utterance. */
+	getRawFinalText(): string | undefined {
+		return this.rawTextEvents.length > 0 ? this.rawTextEvents[this.rawTextEvents.length - 1] : undefined;
+	}
+
 	private emitLine(line: string): void {
 		if (!line.trim()) return;
+		// Parse the RAW line once so we can BOTH compact it (telemetry transcript,
+		// 16K-capped memory bound) AND capture the uncapped assistant text for the
+		// authoritative result. Non-JSON lines contribute no assistant text.
+		try {
+			const rawParsed = JSON.parse(line);
+			const rawTexts = extractText(rawParsed);
+			if (rawTexts.length > 0) this.rawTextEvents.push(...rawTexts);
+		} catch {
+			// Not valid JSON — compactChildPiLine handles the raw-text fallback below.
+		}
 		const compact = compactChildPiLine(line);
 		if (compact.event !== undefined) {
 			try {
@@ -919,6 +951,7 @@ export async function runChildPi(input: ChildPiRunInput): Promise<ChildPiRunResu
 				try {
 					resolve({
 						...result,
+						rawFinalText: lineObserver.getRawFinalText(),
 						exitStatus: result.exitStatus ?? {
 							exitCode: result.exitCode,
 							cancelled: abortRequested,

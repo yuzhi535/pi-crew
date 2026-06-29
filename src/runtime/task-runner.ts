@@ -342,6 +342,7 @@ export async function runTeamTask(
 		let error: string | undefined;
 		let modelAttempts: ModelAttemptSummary[] | undefined;
 		let parsedOutput: ParsedPiJsonOutput | undefined;
+	let rawFinalText: string | undefined;
 		let finalStdout = "";
 		let transcriptPath: string | undefined;
 		let terminalEvidence: OperationTerminalEvidence[] = [];
@@ -717,6 +718,7 @@ export async function runTeamTask(
 					childResult.stdout,
 				);
 				parsedOutput = parsePiJsonOutput(transcriptText);
+				rawFinalText = childResult.rawFinalText;
 				error =
 					childResult.error ||
 					(childResult.exitCode && childResult.exitCode !== 0
@@ -836,6 +838,11 @@ export async function runTeamTask(
 				kind: "result",
 				relativePath: `results/${task.id}.txt`,
 				content:
+					// Prefer the RAW (uncapped) final assistant text captured before the
+					// transcript's 16K compaction — this is the authoritative worker output.
+					// Fall back to transcript-derived finalText, then stdout/stderr, so a
+					// missing raw capture (mock/error path) never yields empty/garbage.
+					cleanResultText(rawFinalText) ??
 					cleanResultText(parsedOutput?.finalText) ??
 					cleanResultText(finalStdout) ??
 					cleanResultText(finalStderr) ??
