@@ -1,6 +1,7 @@
 ---
 name: fast-fix
 description: Minimal workflow for small fixes
+topology: sequential
 ---
 
 ## explore

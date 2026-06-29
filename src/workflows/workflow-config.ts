@@ -48,6 +48,17 @@ export interface WorkflowConfig {
 	/** For runtime:"dynamic" — per-workflow token budget. When set, ctx.agent() auto-rejects with
 	 *  ok:false once exhausted. Accumulated from each agent run's reported usage. */
 	maxTokenBudget?: number;
+	/** Explicit topology classification from frontmatter `topology:` field.
+	 *  When set, overrides the auto-classified topology in analyzeWorkflowTopology().
+	 *  Used by preflight-validator to enforce "don't use pi-crew for sequential chains".
+	 *  Valid values: 'single' | 'sequential' | 'concurrent' | 'complex-dag' | 'dynamic'.
+	 *  Absent = auto-classify from step structure (default). */
+	topology?:
+		| "single"
+		| "sequential"
+		| "concurrent"
+		| "complex-dag"
+		| "dynamic";
 }
 
 /** A dynamic workflow (runtime === "dynamic"). steps is empty — the script is the source of truth. */

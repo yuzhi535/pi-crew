@@ -1,20 +1,31 @@
 import { statSync } from "node:fs";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { loadConfig } from "../../config/config.ts";
-import { TeamToolParams, type TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
+import type { MetricRegistry } from "../../observability/metric-registry.ts";
+import type { createManifestCache } from "../../runtime/manifest-cache.ts";
+import {
+	TeamToolParams,
+	type TeamToolParamsValue,
+} from "../../schema/team-tool-schema.ts";
+import { updatePiCrewPowerbar } from "../../ui/powerbar-publisher.ts";
+import type { createRunSnapshotCache } from "../../ui/run-snapshot-cache.ts";
+import { statusIcon, teamToolRenderer } from "../../ui/tool-renderers/index.ts";
 import type { CrewWidgetState } from "../../ui/widget/index.ts";
 import { updateCrewWidget } from "../../ui/widget/index.ts";
-import { updatePiCrewPowerbar } from "../../ui/powerbar-publisher.ts";
-import type { createManifestCache } from "../../runtime/manifest-cache.ts";
-import type { createRunSnapshotCache } from "../../ui/run-snapshot-cache.ts";
-import type { MetricRegistry } from "../../observability/metric-registry.ts";
 import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
-import { Text } from "@earendil-works/pi-tui";
-import { teamToolRenderer, statusIcon } from "../../ui/tool-renderers/index.ts";
 // Team tool handler — lazy-loaded because team-tool.ts imports many modules
 import type { handleTeamTool as HandleTeamToolFn } from "../team-tool.ts";
+
 let _cachedHandleTeamTool: typeof HandleTeamToolFn | undefined;
-async function handleTeamTool(params: Parameters<typeof HandleTeamToolFn>[0], ctx: Parameters<typeof HandleTeamToolFn>[1]): Promise<ReturnType<typeof HandleTeamToolFn>> {
+async function handleTeamTool(
+	params: Parameters<typeof HandleTeamToolFn>[0],
+	ctx: Parameters<typeof HandleTeamToolFn>[1],
+): Promise<ReturnType<typeof HandleTeamToolFn>> {
 	if (!_cachedHandleTeamTool) {
 		// LAZY: team-tool.ts imports many modules — defer until first use.
 		const mod = await import("../team-tool.ts");
@@ -22,12 +33,13 @@ async function handleTeamTool(params: Parameters<typeof HandleTeamToolFn>[0], ct
 	}
 	return _cachedHandleTeamTool(params, ctx);
 }
-import { withSessionId } from "../team-tool/context.ts";
-import { toolResult } from "../tool-result.ts";
-import { loadRunManifestById } from "../../state/state-store.ts";
+
 import { readCrewAgents } from "../../runtime/crew-agent-records.ts";
+import { loadRunManifestById } from "../../state/state-store.ts";
 import { formatCompactToolProgress } from "../../ui/tool-progress-formatter.ts";
 import { logInternalError } from "../../utils/internal-error.ts";
+import { withSessionId } from "../team-tool/context.ts";
+import { toolResult } from "../tool-result.ts";
 
 const TEAM_TOOL_PROGRESS_TICK_MS = 1000;
 
@@ -35,22 +47,35 @@ type OnUpdate = (chunk: { content: { type: "text"; text: string }[] }) => void;
 
 export interface RegisterTeamToolDeps {
 	foregroundControllers: Map<string | symbol, AbortController>;
-	startForegroundRun: (ctx: ExtensionContext, runner: (signal?: AbortSignal) => Promise<void>, runId?: string) => void;
+	startForegroundRun: (
+		ctx: ExtensionContext,
+		runner: (signal?: AbortSignal) => Promise<void>,
+		runId?: string,
+	) => void;
 	abortForegroundRun: (runId: string) => boolean;
 	openLiveSidebar: (ctx: ExtensionContext, runId: string) => void;
 	getManifestCache: (cwd: string) => ReturnType<typeof createManifestCache>;
-	getRunSnapshotCache?: (cwd: string) => ReturnType<typeof createRunSnapshotCache>;
+	getRunSnapshotCache?: (
+		cwd: string,
+	) => ReturnType<typeof createRunSnapshotCache>;
 	getMetricRegistry?: () => MetricRegistry | undefined;
 	widgetState: CrewWidgetState;
 	onJsonEvent?: (taskId: string, runId: string, event: unknown) => void;
 }
 
-export function resolveCwdOverride(baseCwd: string, override: string | undefined): { ok: true; cwd: string } | { ok: false; error: string } {
+export function resolveCwdOverride(
+	baseCwd: string,
+	override: string | undefined,
+): { ok: true; cwd: string } | { ok: false; error: string } {
 	if (!override) return { ok: true, cwd: baseCwd };
 	try {
 		const resolved = resolveRealContainedPath(baseCwd, override);
 		const stat = statSync(resolved);
-		if (!stat.isDirectory()) return { ok: false, error: `cwd override is not a directory: ${resolved}` };
+		if (!stat.isDirectory())
+			return {
+				ok: false,
+				error: `cwd override is not a directory: ${resolved}`,
+			};
 		return { ok: true, cwd: resolved };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -58,12 +83,28 @@ export function resolveCwdOverride(baseCwd: string, override: string | undefined
 	}
 }
 
-export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): void {
+export function registerTeamTool(
+	pi: ExtensionAPI,
+	deps: RegisterTeamToolDeps,
+): void {
 	const tool: ToolDefinition = {
 		name: "team",
 		label: "Team",
-		description: "Coordinate Pi teams. Use proactively for complex multi-file work, planning, implementation, tests, reviews, security audits, research, async/background runs, and worktree-isolated execution. Use action='recommend' when unsure which team/workflow to choose. Destructive actions require explicit user confirmation.",
-		promptSnippet: "Use the team tool proactively for coordinated multi-agent work. If unsure, call { action: 'recommend', goal } first, then run or plan with the suggested team/workflow.",
+		description: [
+			"Coordinate Pi teams. Use proactively for complex multi-file work, planning, implementation, tests, reviews, security audits, research, async/background runs, and worktree-isolated execution. Use action='recommend' when unsure which team/workflow to choose. Destructive actions require explicit user confirmation.",
+			"",
+			"ℹ️  ADVISORY NOTE (preflight, never blocks): pi-crew prints informational notes about workflow topology. Review the note, then decide. There is no BLOCK — agents always exercise judgment.",
+			"- Single-task run: raw `Agent` tool would be ~30× faster and ~5× cheaper. pi-crew notes this and proceeds anyway.",
+			"- 2–3 step sequential run: measured 5.7× slower than raw `Agent` calls in Run #3. pi-crew notes this and proceeds anyway.",
+			"- ≥3 concurrent or complex DAG: validated good use case, pi-crew notes 'validated use case'.",
+			"If unsure, call { action: 'recommend', goal } first to get a team/workflow suggestion.",
+		].join("\n"),
+		promptSnippet: [
+			"Use the team tool for multi-agent orchestration when you need ≥3 concurrent agents or a complex DAG.",
+			"For single tasks or 2–3 sequential steps, the raw Agent tool is usually faster (raw calls = ~5× faster for 3-step chains).",
+			"pi-crew notes the topology (informational only) but proceeds either way — you decide based on your context (audit trail, team coordination, etc.).",
+			"If unsure, call { action: 'recommend', goal } first.",
+		].join("\n"),
 		parameters: TeamToolParams as never,
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const controller = new AbortController();
@@ -71,19 +112,50 @@ export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): 
 			deps.foregroundControllers.set(toolKey, controller);
 			const abort = (): void => controller.abort();
 			signal?.addEventListener("abort", abort, { once: true });
-			const stopProgress = startTeamToolProgressBinder(onUpdate as OnUpdate | undefined);
+			const stopProgress = startTeamToolProgressBinder(
+				onUpdate as OnUpdate | undefined,
+			);
 			try {
 				const resolved = params as TeamToolParamsValue;
 				const cwdOverride = resolveCwdOverride(ctx.cwd, resolved.cwd);
-				if (!cwdOverride.ok) return toolResult(cwdOverride.error, { action: resolved.action ?? "list", status: "error" }, true);
+				if (!cwdOverride.ok)
+					return toolResult(
+						cwdOverride.error,
+						{ action: resolved.action ?? "list", status: "error" },
+						true,
+					);
 				const toolCtx = withSessionId({ ...ctx, cwd: cwdOverride.cwd });
 				// Phase 1.5: Auto-set session name from team run context
-				if (resolved.action === "run" && resolved.goal && !pi.getSessionName()) {
-					const runLabel = resolved.team ?? resolved.agent ?? "direct";
-					pi.setSessionName(`pi-crew: ${runLabel}/${resolved.workflow ?? "default"} — ${resolved.goal.slice(0, 60)}`);
+				if (
+					resolved.action === "run" &&
+					resolved.goal &&
+					!pi.getSessionName()
+				) {
+					const runLabel =
+						resolved.team ?? resolved.agent ?? "direct";
+					pi.setSessionName(
+						`pi-crew: ${runLabel}/${resolved.workflow ?? "default"} — ${resolved.goal.slice(0, 60)}`,
+					);
 				}
-				const output = await handleTeamTool(resolved, { ...toolCtx, signal: controller.signal, metricRegistry: deps.getMetricRegistry?.(), startForegroundRun: (runner, runId) => deps.startForegroundRun(toolCtx, runner, runId), abortForegroundRun: deps.abortForegroundRun, onRunStarted: (runId) => { stopProgress.attach(toolCtx.cwd, runId); deps.openLiveSidebar(toolCtx, runId); }, onJsonEvent: deps.onJsonEvent, getRunSnapshotCache: deps.getRunSnapshotCache });
-				if (resolved.action === "run" && !output.isError && typeof output.details?.runId === "string") {
+				const output = await handleTeamTool(resolved, {
+					...toolCtx,
+					signal: controller.signal,
+					metricRegistry: deps.getMetricRegistry?.(),
+					startForegroundRun: (runner, runId) =>
+						deps.startForegroundRun(toolCtx, runner, runId),
+					abortForegroundRun: deps.abortForegroundRun,
+					onRunStarted: (runId) => {
+						stopProgress.attach(toolCtx.cwd, runId);
+						deps.openLiveSidebar(toolCtx, runId);
+					},
+					onJsonEvent: deps.onJsonEvent,
+					getRunSnapshotCache: deps.getRunSnapshotCache,
+				});
+				if (
+					resolved.action === "run" &&
+					!output.isError &&
+					typeof output.details?.runId === "string"
+				) {
 					pi.appendEntry("crew:run-started", {
 						runId: output.details.runId,
 						team: resolved.team,
@@ -97,8 +169,21 @@ export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): 
 				const config = loadConfig(toolCtx.cwd).config.ui;
 				const cache = deps.getManifestCache(toolCtx.cwd);
 				const snapshotCache = deps.getRunSnapshotCache?.(toolCtx.cwd);
-				updateCrewWidget(toolCtx, deps.widgetState, config, cache, snapshotCache);
-				updatePiCrewPowerbar(pi.events, toolCtx.cwd, config, cache, snapshotCache, toolCtx);
+				updateCrewWidget(
+					toolCtx,
+					deps.widgetState,
+					config,
+					cache,
+					snapshotCache,
+				);
+				updatePiCrewPowerbar(
+					pi.events,
+					toolCtx.cwd,
+					config,
+					cache,
+					snapshotCache,
+					toolCtx,
+				);
 				return output;
 			} finally {
 				signal?.removeEventListener("abort", abort);
@@ -113,7 +198,12 @@ export function registerTeamTool(pi: ExtensionAPI, deps: RegisterTeamToolDeps): 
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		renderResult(result: any, options: any, theme: any, context: any): any {
 			try {
-				return teamToolRenderer.renderResult(result, options, theme, context);
+				return teamToolRenderer.renderResult(
+					result,
+					options,
+					theme,
+					context,
+				);
 			} catch {
 				return new Text(statusIcon("completed", theme) + " done", 0, 0);
 			}
@@ -127,7 +217,9 @@ interface TeamToolProgressBinder {
 	stop: () => void;
 }
 
-function startTeamToolProgressBinder(onUpdate: OnUpdate | undefined): TeamToolProgressBinder {
+function startTeamToolProgressBinder(
+	onUpdate: OnUpdate | undefined,
+): TeamToolProgressBinder {
 	if (!onUpdate) {
 		return { attach: () => {}, stop: () => {} };
 	}
@@ -137,20 +229,30 @@ function startTeamToolProgressBinder(onUpdate: OnUpdate | undefined): TeamToolPr
 	const tick = (): void => {
 		try {
 			if (!cwd || !runId) {
-				const elapsed = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+				const elapsed = Math.max(
+					0,
+					Math.round((Date.now() - startedAt) / 1000),
+				);
 				const msg = `team status=starting elapsed=${elapsed}s`;
 				onUpdate({ content: [{ type: "text", text: msg }] });
 				return;
 			}
 			const loaded = loadRunManifestById(cwd, runId);
 			if (!loaded) {
-				const elapsed = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+				const elapsed = Math.max(
+					0,
+					Math.round((Date.now() - startedAt) / 1000),
+				);
 				const msg = `team run=${runId} elapsed=${elapsed}s (manifest pending)`;
 				onUpdate({ content: [{ type: "text", text: msg }] });
 				return;
 			}
 			let agents;
-			try { agents = readCrewAgents(loaded.manifest); } catch { /* ignore */ }
+			try {
+				agents = readCrewAgents(loaded.manifest);
+			} catch {
+				/* ignore */
+			}
 			const text = formatCompactToolProgress({
 				agentId: runId,
 				status: loaded.manifest.status,
@@ -162,14 +264,22 @@ function startTeamToolProgressBinder(onUpdate: OnUpdate | undefined): TeamToolPr
 			});
 			onUpdate({ content: [{ type: "text", text }] });
 		} catch (error) {
-			logInternalError("team-tool.progress", error, `runId=${runId ?? ""}`);
+			logInternalError(
+				"team-tool.progress",
+				error,
+				`runId=${runId ?? ""}`,
+			);
 		}
 	};
 	tick();
 	const timer = setInterval(tick, TEAM_TOOL_PROGRESS_TICK_MS);
 	if (typeof timer.unref === "function") timer.unref();
 	return {
-		attach: (boundCwd: string, boundRunId: string) => { cwd = boundCwd; runId = boundRunId; tick(); },
+		attach: (boundCwd: string, boundRunId: string) => {
+			cwd = boundCwd;
+			runId = boundRunId;
+			tick();
+		},
 		stop: () => clearInterval(timer),
 	};
 }

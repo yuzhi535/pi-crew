@@ -1,6 +1,7 @@
 ---
 name: pipeline
 description: Multi-stage pipeline with automatic fan-out for array inputs
+topology: sequential
 ---
 
 ## Stage 1: Research

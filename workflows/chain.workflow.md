@@ -1,3 +1,9 @@
+---
+name: chain
+description: Sequential execution with context passing
+topology: dynamic
+---
+
 # Chain Workflow - Sequential execution with context passing
 
 **Source:** `docs/pi-boomerang-integration-plan.md`  

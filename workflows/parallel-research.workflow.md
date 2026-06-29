@@ -1,6 +1,7 @@
 ---
 name: parallel-research
 description: Parallel research with shard exploration and synthesis
+topology: concurrent
 ---
 
 ## discover

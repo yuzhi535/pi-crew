@@ -1,6 +1,7 @@
 ---
 name: default
 description: Explore, plan, execute, and verify
+topology: sequential
 ---
 
 ## explore

@@ -1,6 +1,7 @@
 ---
 name: implementation
 description: Adaptive implementation workflow where a planner agent decides the subagent fanout
+topology: complex-dag
 ---
 
 ## assess

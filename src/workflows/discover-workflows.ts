@@ -11,7 +11,24 @@ export interface WorkflowDiscoveryResult {
 	project: WorkflowConfig[];
 }
 
-const STEP_CONFIG_KEYS = new Set(["role", "dependsOn", "parallelGroup", "output", "reads", "model", "skills", "progress", "worktree", "verify", "task", "seedPaths", "preStepScript", "preStepArgs", "preStepTimeout", "preStepOptional"]);
+const STEP_CONFIG_KEYS = new Set([
+	"role",
+	"dependsOn",
+	"parallelGroup",
+	"output",
+	"reads",
+	"model",
+	"skills",
+	"progress",
+	"worktree",
+	"verify",
+	"task",
+	"seedPaths",
+	"preStepScript",
+	"preStepArgs",
+	"preStepTimeout",
+	"preStepOptional",
+]);
 
 function parseStepSection(id: string, body: string): WorkflowStep | undefined {
 	const lines = body.trim().split("\n");
@@ -47,22 +64,60 @@ function parseStepSection(id: string, body: string): WorkflowStep | undefined {
 		reads: config.reads === "false" ? false : parseCsv(config.reads),
 		model: config.model || undefined,
 		skills: config.skills === "false" ? false : parseCsv(config.skills),
-		progress: config.progress === "true" ? true : config.progress === "false" ? false : undefined,
-		worktree: config.worktree === "true" ? true : config.worktree === "false" ? false : undefined,
-		verify: config.verify === "true" ? true : config.verify === "false" ? false : undefined,
+		progress:
+			config.progress === "true"
+				? true
+				: config.progress === "false"
+					? false
+					: undefined,
+		worktree:
+			config.worktree === "true"
+				? true
+				: config.worktree === "false"
+					? false
+					: undefined,
+		verify:
+			config.verify === "true"
+				? true
+				: config.verify === "false"
+					? false
+					: undefined,
 		seedPaths: parseCsv(config.seedPaths) || undefined,
 		preStepScript: config.preStepScript || undefined,
 		preStepArgs: parseCsv(config.preStepArgs) || undefined,
-		preStepTimeout: parseOptionalInteger(config.preStepTimeout) ?? undefined,
-		preStepOptional: config.preStepOptional === "true" || config.preStepOptional === "1",
+		preStepTimeout:
+			parseOptionalInteger(config.preStepTimeout) ?? undefined,
+		preStepOptional:
+			config.preStepOptional === "true" || config.preStepOptional === "1",
 	};
 }
 
-const parseOptionalInteger = (value: string | undefined): number | undefined => {
+const parseOptionalInteger = (
+	value: string | undefined,
+): number | undefined => {
 	if (!value) return undefined;
 	const parsed = Number.parseInt(value, 10);
 	if (!Number.isFinite(parsed) || parsed < 1) return undefined;
 	return Math.trunc(parsed);
+};
+
+/** Parse frontmatter `topology:` field. Validates against allowed enum; bad values are silently
+ *  dropped (fall through to auto-classification in topology-analyzer). */
+const parseTopology = (
+	value: string | undefined,
+): WorkflowConfig["topology"] => {
+	if (!value) return undefined;
+	const v = value.trim().toLowerCase();
+	if (
+		v === "single" ||
+		v === "sequential" ||
+		v === "concurrent" ||
+		v === "complex-dag" ||
+		v === "dynamic"
+	) {
+		return v;
+	}
+	return undefined;
 };
 
 function hasSectionBoundary(body: string, match: RegExpMatchArray): boolean {
@@ -74,9 +129,15 @@ function hasSectionBoundary(body: string, match: RegExpMatchArray): boolean {
 }
 
 function isStepHeading(body: string, match: RegExpMatchArray): boolean {
-	const sectionStart = match.index! + match[0].length + (body[match.index! + match[0].length] === "\n" ? 1 : 0);
+	const sectionStart =
+		match.index! +
+		match[0].length +
+		(body[match.index! + match[0].length] === "\n" ? 1 : 0);
 	const nextHeading = body.slice(sectionStart).search(/^##\s+.+[^\S\n]*$/m);
-	const section = body.slice(sectionStart, nextHeading >= 0 ? sectionStart + nextHeading : body.length);
+	const section = body.slice(
+		sectionStart,
+		nextHeading >= 0 ? sectionStart + nextHeading : body.length,
+	);
 	for (const line of section.split("\n")) {
 		const trimmed = line.trim();
 		if (!trimmed) continue;
@@ -87,30 +148,58 @@ function isStepHeading(body: string, match: RegExpMatchArray): boolean {
 	return false;
 }
 
-function parseWorkflowFile(filePath: string, source: ResourceSource): WorkflowConfig | undefined {
+function parseWorkflowFile(
+	filePath: string,
+	source: ResourceSource,
+): WorkflowConfig | undefined {
 	try {
 		const content = fs.readFileSync(filePath, "utf-8");
 		const { frontmatter, body } = parseFrontmatter(content);
-		const name = frontmatter.name?.trim() || path.basename(filePath, ".workflow.md");
+		const name =
+			frontmatter.name?.trim() || path.basename(filePath, ".workflow.md");
 		const matches = [...body.matchAll(/^##\s+(.+)[^\S\n]*$/gm)];
-		const explicitStepIndexes = new Set(matches.map((match, index) => isStepHeading(body, match) ? index : undefined).filter((index): index is number => index !== undefined));
-		const effectiveMatches = matches.filter((match, index) => explicitStepIndexes.has(index) || (hasSectionBoundary(body, match) && /^[a-z][a-z0-9-]*$/.test(match[1]?.trim() ?? "")));
-		const parseMatches = explicitStepIndexes.size ? effectiveMatches : matches;
+		const explicitStepIndexes = new Set(
+			matches
+				.map((match, index) =>
+					isStepHeading(body, match) ? index : undefined,
+				)
+				.filter((index): index is number => index !== undefined),
+		);
+		const effectiveMatches = matches.filter(
+			(match, index) =>
+				explicitStepIndexes.has(index) ||
+				(hasSectionBoundary(body, match) &&
+					/^[a-z][a-z0-9-]*$/.test(match[1]?.trim() ?? "")),
+		);
+		const parseMatches = explicitStepIndexes.size
+			? effectiveMatches
+			: matches;
 		const steps: WorkflowStep[] = [];
 		for (let i = 0; i < parseMatches.length; i++) {
 			const match = parseMatches[i]!;
 			const id = match[1]!.trim();
-			const sectionStart = match.index! + match[0].length + (body[match.index! + match[0].length] === "\n" ? 1 : 0);
-			const sectionEnd = i + 1 < parseMatches.length ? parseMatches[i + 1]!.index! : body.length;
-			const step = parseStepSection(id, body.slice(sectionStart, sectionEnd));
+			const sectionStart =
+				match.index! +
+				match[0].length +
+				(body[match.index! + match[0].length] === "\n" ? 1 : 0);
+			const sectionEnd =
+				i + 1 < parseMatches.length
+					? parseMatches[i + 1]!.index!
+					: body.length;
+			const step = parseStepSection(
+				id,
+				body.slice(sectionStart, sectionEnd),
+			);
 			if (step) steps.push(step);
 		}
 		return {
 			name,
-			description: frontmatter.description?.trim() || "No description provided.",
+			description:
+				frontmatter.description?.trim() || "No description provided.",
 			source,
 			filePath,
 			maxConcurrency: parseOptionalInteger(frontmatter.maxConcurrency),
+			topology: parseTopology(frontmatter.topology),
 			steps,
 		};
 	} catch {
@@ -118,23 +207,37 @@ function parseWorkflowFile(filePath: string, source: ResourceSource): WorkflowCo
 	}
 }
 
-function readWorkflowDir(dir: string, source: ResourceSource): WorkflowConfig[] {
+function readWorkflowDir(
+	dir: string,
+	source: ResourceSource,
+): WorkflowConfig[] {
 	if (!fs.existsSync(dir)) return [];
-	const staticWorkflows = fs.readdirSync(dir)
+	const staticWorkflows = fs
+		.readdirSync(dir)
 		.filter((entry) => entry.endsWith(".workflow.md"))
 		.map((entry) => parseWorkflowFile(path.join(dir, entry), source))
-		.filter((workflow): workflow is WorkflowConfig => workflow !== undefined)
+		.filter(
+			(workflow): workflow is WorkflowConfig => workflow !== undefined,
+		)
 		.sort((a, b) => a.name.localeCompare(b.name));
 	// P2: also discover dynamic workflows (*.dwf.ts). A .dwf.ts's default export is a JS orchestrator.
-	const dynamicWorkflows = fs.readdirSync(dir)
+	const dynamicWorkflows = fs
+		.readdirSync(dir)
 		.filter((entry) => entry.endsWith(".dwf.ts"))
 		.map((entry) => parseDynamicWorkflowFile(path.join(dir, entry), source))
-		.filter((workflow): workflow is WorkflowConfig => workflow !== undefined);
-	return [...staticWorkflows, ...dynamicWorkflows].sort((a, b) => a.name.localeCompare(b.name));
+		.filter(
+			(workflow): workflow is WorkflowConfig => workflow !== undefined,
+		);
+	return [...staticWorkflows, ...dynamicWorkflows].sort((a, b) =>
+		a.name.localeCompare(b.name),
+	);
 }
 
 /** P2: a .dwf.ts is a dynamic workflow. Name = filename stem; script = the file itself. */
-function parseDynamicWorkflowFile(filePath: string, source: ResourceSource): WorkflowConfig | undefined {
+function parseDynamicWorkflowFile(
+	filePath: string,
+	source: ResourceSource,
+): WorkflowConfig | undefined {
 	try {
 		const basename = path.basename(filePath, ".dwf.ts");
 		return {
@@ -156,16 +259,28 @@ export function discoverWorkflows(cwd: string): WorkflowDiscoveryResult {
 		return { builtin: [], user: [], project: [] };
 	}
 	return {
-		builtin: readWorkflowDir(path.join(packageRoot(), "workflows"), "builtin"),
+		builtin: readWorkflowDir(
+			path.join(packageRoot(), "workflows"),
+			"builtin",
+		),
 		user: readWorkflowDir(path.join(userPiRoot(), "workflows"), "user"),
-		project: readWorkflowDir(path.join(projectCrewRoot(cwd), "workflows"), "project"),
+		project: readWorkflowDir(
+			path.join(projectCrewRoot(cwd), "workflows"),
+			"project",
+		),
 	};
 }
 
-export function allWorkflows(discovery: WorkflowDiscoveryResult | undefined): WorkflowConfig[] {
+export function allWorkflows(
+	discovery: WorkflowDiscoveryResult | undefined,
+): WorkflowConfig[] {
 	if (!discovery) return [];
 	const byName = new Map<string, WorkflowConfig>();
-	for (const workflow of [...discovery.project, ...discovery.builtin, ...discovery.user]) {
+	for (const workflow of [
+		...discovery.project,
+		...discovery.builtin,
+		...discovery.user,
+	]) {
 		byName.set(workflow.name, workflow);
 	}
 	return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));

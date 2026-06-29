@@ -1,6 +1,7 @@
 ---
 name: review
 description: Review workflow for correctness and security
+topology: concurrent
 ---
 
 ## explore

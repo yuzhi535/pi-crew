@@ -188,6 +188,11 @@ export interface CrewReliabilityConfig {
 	autoRepairIntervalMs?: number;
 	/** Remove /tmp/pi-crew-* directories after their orphaned runs are reconciled. Default: true. */
 	cleanupOrphanedTempDirs?: boolean;
+	/** Bypass the preflight topology validator (workflow threshold rule, .crew/knowledge.md
+	 *  'pi-crew USAGE THRESHOLD RULE'). When true, runs that would be BLOCKED or WARNED
+	 *  proceed without intervention. Audit-trail the override via events.jsonl.
+	 *  Default: false (enforce). Use only for legitimate audit/debug sessions. */
+	forcePreflight?: boolean;
 	/** Inject a compact ambient crew-status note into the agent's context on every LLM call while crew runs are in-flight, so the agent stays continuously aware of active runs without calling the `team` tool. No-op when no runs are active. Default: true. */
 	ambientStatusInjection?: boolean;
 	/**

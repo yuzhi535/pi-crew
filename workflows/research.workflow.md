@@ -1,6 +1,7 @@
 ---
 name: research
 description: Research and write up findings
+topology: sequential
 ---
 
 ## explore

@@ -1,23 +1,45 @@
 import { allAgents, discoverAgents } from "../../agents/discover-agents.ts";
-import { allTeams, discoverTeams } from "../../teams/discover-teams.ts";
-import { allWorkflows, discoverWorkflows } from "../../workflows/discover-workflows.ts";
 import { loadConfig } from "../../config/config.ts";
-import { findGitRoot, assertCleanLeader } from "../../worktree/worktree-manager.ts";
-import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
-import { writeArtifact } from "../../state/artifact-store.ts";
-import { registerActiveRun, unregisterActiveRun } from "../../state/active-run-registry.ts";
-import { createRunManifest, loadRunManifestById, updateRunStatus } from "../../state/state-store.ts";
-import { atomicWriteJson } from "../../state/atomic-write.ts";
-import { validateWorkflowForTeam } from "../../workflows/validate-workflow.ts";
-import { PipelineRunner, type PipelineWorkflow } from "../../runtime/pipeline-runner.ts";
+import {
+	PipelineRunner,
+	type PipelineWorkflow,
+} from "../../runtime/pipeline-runner.ts";
 // Heavy runtime — lazy-loaded to avoid 1.4s import cost at extension registration.
 import type { executeTeamRun as ExecuteTeamRunFn } from "../../runtime/team-runner.ts";
+import type { TeamToolParamsValue } from "../../schema/team-tool-schema.ts";
+import {
+	registerActiveRun,
+	unregisterActiveRun,
+} from "../../state/active-run-registry.ts";
+import { writeArtifact } from "../../state/artifact-store.ts";
+import { atomicWriteJson } from "../../state/atomic-write.ts";
+import {
+	createRunManifest,
+	loadRunManifestById,
+	updateRunStatus,
+} from "../../state/state-store.ts";
+import { allTeams, discoverTeams } from "../../teams/discover-teams.ts";
+import {
+	allWorkflows,
+	discoverWorkflows,
+} from "../../workflows/discover-workflows.ts";
+import { validateWorkflowForTeam } from "../../workflows/validate-workflow.ts";
+import {
+	assertCleanLeader,
+	findGitRoot,
+} from "../../worktree/worktree-manager.ts";
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- type-only import for TS inference
-const _typeCheck: typeof ExecuteTeamRunFn = null as never as typeof ExecuteTeamRunFn;
+const _typeCheck: typeof ExecuteTeamRunFn =
+	null as never as typeof ExecuteTeamRunFn;
+
 import { logInternalError } from "../../utils/internal-error.ts";
 import { resolveRealContainedPath } from "../../utils/safe-paths.ts";
+
 let _cachedExecuteTeamRun: typeof ExecuteTeamRunFn | undefined;
-async function executeTeamRun(...args: Parameters<typeof ExecuteTeamRunFn>): Promise<Awaited<ReturnType<typeof ExecuteTeamRunFn>>> {
+async function executeTeamRun(
+	...args: Parameters<typeof ExecuteTeamRunFn>
+): Promise<Awaited<ReturnType<typeof ExecuteTeamRunFn>>> {
 	if (!_cachedExecuteTeamRun) {
 		// LAZY: heavy runtime — defer 1.4s import cost until team run actually executes.
 		const mod = await import("../../runtime/team-runner.ts");
@@ -25,11 +47,15 @@ async function executeTeamRun(...args: Parameters<typeof ExecuteTeamRunFn>): Pro
 	}
 	return _cachedExecuteTeamRun(...args);
 }
-import { spawnBackgroundTeamRun } from "../../subagents/async-entry.ts";
-import { appendEventAsync, readEvents } from "../../state/event-log.ts";
-import { resolveCrewRuntime, runtimeResolutionState } from "../../runtime/runtime-resolver.ts";
-import { normalizeSkillOverride } from "../../runtime/skill-instructions.ts";
+
 import { expandParallelResearchWorkflow } from "../../runtime/parallel-research.ts";
+import {
+	resolveCrewRuntime,
+	runtimeResolutionState,
+} from "../../runtime/runtime-resolver.ts";
+import { normalizeSkillOverride } from "../../runtime/skill-instructions.ts";
+import { appendEventAsync, readEvents } from "../../state/event-log.ts";
+import { spawnBackgroundTeamRun } from "../../subagents/async-entry.ts";
 
 /**
  * Module-scoped latch for the crew-init dynamic import.
@@ -58,23 +84,33 @@ import { expandParallelResearchWorkflow } from "../../runtime/parallel-research.
  *   `team action='run' workflow='<dynamic>'` → "Cannot access 'crewInitPromise'
  *    before initialization" at run.ts load. See RFC 17 + commit fixing this.
  */
-var crewInitPromise: Promise<typeof import("../../state/crew-init.ts")> | undefined;
+var crewInitPromise:
+	| Promise<typeof import("../../state/crew-init.ts")>
+	| undefined;
 function loadCrewInit(): Promise<typeof import("../../state/crew-init.ts")> {
 	if (!crewInitPromise) {
 		crewInitPromise = import("../../state/crew-init.ts");
 	}
 	return crewInitPromise;
 }
-import { checkProcessLiveness, isActiveRunStatus } from "../../runtime/process-status.ts";
-import { waitForRun } from "../../runtime/run-tracker.ts";
-import { hasAsyncStartMarker } from "../../runtime/async-marker.ts";
-import { collectRunMetrics } from "../../state/run-metrics.ts";
+
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { hasAsyncStartMarker } from "../../runtime/async-marker.ts";
+import {
+	checkProcessLiveness,
+	isActiveRunStatus,
+} from "../../runtime/process-status.ts";
+import { waitForRun } from "../../runtime/run-tracker.ts";
+import { collectRunMetrics } from "../../state/run-metrics.ts";
 import type { PiTeamsToolResult } from "../tool-result.ts";
-import { buildParentContext, result, type TeamContext } from "./context.ts";
-import { isGoalWrapEnabled, shouldGoalWrap, startGoalWrappedRun } from "./goal-wrap.ts";
 import { effectiveRunConfig } from "./config-patch.ts";
+import { buildParentContext, result, type TeamContext } from "./context.ts";
+import {
+	isGoalWrapEnabled,
+	shouldGoalWrap,
+	startGoalWrappedRun,
+} from "./goal-wrap.ts";
 
 function tailFile(filePath: string, maxBytes = 4096): string | undefined {
 	try {
@@ -95,24 +131,49 @@ function tailFile(filePath: string, maxBytes = 4096): string | undefined {
 	}
 }
 
-function scheduleBackgroundEarlyExitGuard(cwd: string, runId: string, pid: number | undefined, logPath: string): void {
+function scheduleBackgroundEarlyExitGuard(
+	cwd: string,
+	runId: string,
+	pid: number | undefined,
+	logPath: string,
+): void {
 	if (process.env.PI_CREW_ASYNC_EARLY_EXIT_GUARD === "0") return;
 	const timer = setTimeout(() => {
 		const loaded = loadRunManifestById(cwd, runId);
 		if (!loaded || !isActiveRunStatus(loaded.manifest.status)) return;
 		if (hasAsyncStartMarker(loaded.manifest)) return;
-		if (readEvents(loaded.manifest.eventsPath).some((event) => event.type === "async.started" || event.type === "async.completed" || event.type === "async.failed")) return;
+		if (
+			readEvents(loaded.manifest.eventsPath).some(
+				(event) =>
+					event.type === "async.started" ||
+					event.type === "async.completed" ||
+					event.type === "async.failed",
+			)
+		)
+			return;
 		const liveness = checkProcessLiveness(pid);
 		if (liveness.alive) return;
 		const tail = tailFile(logPath);
 		const message = `Background runner exited within 3s; see background.log${tail ? `\n${tail}` : ""}`;
-		const failed = updateRunStatus(loaded.manifest, "failed", "Background runner exited within 3s; see background.log");
-		void appendEventAsync(failed.eventsPath, { type: "async.failed", runId: failed.runId, message, data: { pid, detail: liveness.detail } });
+		const failed = updateRunStatus(
+			loaded.manifest,
+			"failed",
+			"Background runner exited within 3s; see background.log",
+		);
+		void appendEventAsync(failed.eventsPath, {
+			type: "async.failed",
+			runId: failed.runId,
+			message,
+			data: { pid, detail: liveness.detail },
+		});
 	}, 3000);
 	timer.unref();
 }
 
-export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): Promise<PiTeamsToolResult> {
+export async function handleRun(
+	params: TeamToolParamsValue,
+	ctx: TeamContext,
+): Promise<PiTeamsToolResult> {
 	// CHAIN DISPATCH: runs before goal validation since a chain has no top-level
 	// goal. The injected handleRun reference breaks the run.ts ↔ chain-dispatch.ts
 	// import cycle; the lazy import defers the chain-executor cost until a chain is
@@ -123,7 +184,12 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		return handleChainRun(params, ctx, handleRun);
 	}
 	const goal = params.goal ?? params.task;
-	if (!goal) return result("Run requires goal or task.", { action: "run", status: "error" }, true);
+	if (!goal)
+		return result(
+			"Run requires goal or task.",
+			{ action: "run", status: "error" },
+			true,
+		);
 	const intentPrefix = goal.length > 60 ? `${goal.slice(0, 57)}...` : goal;
 
 	// P0: Ensure .crew directory structure exists before creating any manifests.
@@ -185,31 +251,102 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	const teams = allTeams(discoverTeams(resolvedCtx.cwd));
 	const workflows = allWorkflows(discoverWorkflows(resolvedCtx.cwd));
 	const agents = allAgents(discoverAgents(resolvedCtx.cwd));
-	const directAgent = params.agent ? agents.find((item) => item.name === params.agent) : undefined;
-	if (params.agent && !directAgent) return result(`Agent '${params.agent}' not found.`, { action: "run", status: "error" }, true);
+	const directAgent = params.agent
+		? agents.find((item) => item.name === params.agent)
+		: undefined;
+	if (params.agent && !directAgent)
+		return result(
+			`Agent '${params.agent}' not found.`,
+			{ action: "run", status: "error" },
+			true,
+		);
 	const teamName = params.team ?? "default";
-	const team = directAgent ? {
-		name: `direct-${directAgent.name}`,
-		description: `Direct subagent run for ${directAgent.name}`,
-		source: "builtin" as const,
-		filePath: "<generated>",
-		roles: [{ name: params.role ?? "agent", agent: directAgent.name, description: directAgent.description }],
-		defaultWorkflow: "direct-agent",
-		workspaceMode: params.workspaceMode,
-	} : teams.find((item) => item.name === teamName);
-	if (!team) return result(`Team '${teamName}' not found.`, { action: "run", status: "error" }, true);
-	const workflowName = directAgent ? "direct-agent" : params.workflow ?? team.defaultWorkflow ?? "default";
-	const baseWorkflow = directAgent ? {
-		name: "direct-agent",
-		description: `Direct task for ${directAgent.name}`,
-		source: "builtin" as const,
-		filePath: "<generated>",
-		steps: [{ id: "01_agent", role: params.role ?? "agent", task: "{goal}", model: params.model }],
-	} : workflows.find((item) => item.name === workflowName);
-	if (!baseWorkflow) return result(`Workflow '${workflowName}' not found.`, { action: "run", status: "error" }, true);
+	const team = directAgent
+		? {
+				name: `direct-${directAgent.name}`,
+				description: `Direct subagent run for ${directAgent.name}`,
+				source: "builtin" as const,
+				filePath: "<generated>",
+				roles: [
+					{
+						name: params.role ?? "agent",
+						agent: directAgent.name,
+						description: directAgent.description,
+					},
+				],
+				defaultWorkflow: "direct-agent",
+				workspaceMode: params.workspaceMode,
+			}
+		: teams.find((item) => item.name === teamName);
+	if (!team)
+		return result(
+			`Team '${teamName}' not found.`,
+			{ action: "run", status: "error" },
+			true,
+		);
+	const workflowName = directAgent
+		? "direct-agent"
+		: (params.workflow ?? team.defaultWorkflow ?? "default");
+	const baseWorkflow = directAgent
+		? {
+				name: "direct-agent",
+				description: `Direct task for ${directAgent.name}`,
+				source: "builtin" as const,
+				filePath: "<generated>",
+				steps: [
+					{
+						id: "01_agent",
+						role: params.role ?? "agent",
+						task: "{goal}",
+						model: params.model,
+					},
+				],
+			}
+		: workflows.find((item) => item.name === workflowName);
+	if (!baseWorkflow)
+		return result(
+			`Workflow '${workflowName}' not found.`,
+			{ action: "run", status: "error" },
+			true,
+		);
 	// LAZY: dodge the jiti ESM/CJS interop TDZ race on the static `import { expandParallelResearchWorkflow }` above (issue #28, RFC 17). At call time the module body has fully evaluated, so the dynamic import returns a live binding.
-	const { expandParallelResearchWorkflow: expandParallelResearch } = await import("../../runtime/parallel-research.ts");
-	const workflow = directAgent ? baseWorkflow : expandParallelResearch(baseWorkflow, resolvedCtx.cwd);
+	// LAZY: marker duplicated for biome-check compatibility (script checks `lineNum - 2`).
+	// LAZY: keep import on single line so the `// LAZY:` marker above remains 1-line away from `await import`.
+	const { expandParallelResearchWorkflow: expandParallelResearch } = await import(
+		"../../runtime/parallel-research.ts",
+	);
+	const workflow = directAgent
+		? baseWorkflow
+		: expandParallelResearch(baseWorkflow, resolvedCtx.cwd);
+
+	// PREFLIGHT (advisory only, since v0.9.15): classify workflow topology and emit
+	// informational notes per the rule in .crew/knowledge.md "pi-crew USAGE THRESHOLD
+	// RULE". Never blocks execution — the agent (caller) decides whether to proceed,
+	// refactor, or override. This honors Pi's design philosophy: tooling provides
+	// information, agents exercise judgment.
+	// Skip for direct-agent runs (they bypass the workflow system entirely).
+	if (!directAgent) {
+		// LAZY: defer preflight-validator import until a team run actually requests it.
+		const { validateWorkflowUsage } = await import(
+			"../../workflows/preflight-validator.ts"
+		);
+		const preflight = validateWorkflowUsage(workflow, {
+			force: params.force === true,
+		});
+		const icon =
+			preflight.level === "warn"
+				? "⚠️ "
+				: preflight.level === "note"
+					? "ℹ️  "
+					: "";
+		const tag = preflight.level.toUpperCase();
+		console.warn(
+			`${icon}[team-tool.preflight] ${tag}: ${preflight.message} (workflow=${workflow.name})`,
+		);
+		if (preflight.suggestion) {
+			console.warn(`[team-tool.preflight] → ${preflight.suggestion}`);
+		}
+	}
 
 	// RFC v0.5 vision: goal-wrap. If .crew/config.json has goalWrap[workflow.name].enabled=true,
 	// route to a goal loop where this workflow runs as the worker turn (judge → feedback → redo
@@ -221,7 +358,11 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	// transition). When goal-wrap is unsafe for this workflow, we do NOT error
 	// out — we fall through to the normal team-run path so the user still gets
 	// the run they asked for. The disabled reason is logged for traceability.
-	if (!directAgent && workflow.source === "builtin" && isGoalWrapEnabled(resolvedCtx.cwd, workflow.name)) {
+	if (
+		!directAgent &&
+		workflow.source === "builtin" &&
+		isGoalWrapEnabled(resolvedCtx.cwd, workflow.name)
+	) {
 		const decision = shouldGoalWrap(resolvedCtx.cwd, workflow);
 		if (decision.enabled) {
 			return await startGoalWrappedRun(params, ctx, workflow, goal);
@@ -231,7 +372,11 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		// debug logs. This preserves the trace of WHY goal-wrap was bypassed for
 		// a given run (vs. just disappearing without explanation).
 		if (decision.message) {
-			logInternalError("team-tool.run.goalWrapBypassed", new Error(decision.message), `workflow=${workflow.name} reason=${decision.reason}`);
+			logInternalError(
+				"team-tool.run.goalWrapBypassed",
+				new Error(decision.message),
+				`workflow=${workflow.name} reason=${decision.reason}`,
+			);
 		}
 	}
 
@@ -256,31 +401,48 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 
 		// For now, show pipeline workflow info - full integration would require
 		// connecting PipelineRunner to the actual team execution system
-		const stageInfo = pipelineWorkflow.stages.map((s) => `- ${s.name} (${s.team})`).join("\n");
-		return result([
-			`Pipeline workflow '${workflow.name}' is not yet wired into the team execution system.`,
-			`Goal: ${goal}`,
-			`Defined stages (${pipelineWorkflow.stages.length}):`,
-			stageInfo,
-			"",
-			"To actually run work right now, use a supported workflow instead:",
-			"  - action='run' workflow='default'  (explore → plan → execute → verify)",
-			"  - action='run' workflow='implementation'  (adaptive, parallel specialists)",
-			"  - action='run' workflow='research'  (explore → analyze → write)",
-			"",
-			"Run action='list' resource='workflow' to see all available workflows.",
-		].join("\n"), { action: "run", status: "ok" }, false);
+		const stageInfo = pipelineWorkflow.stages
+			.map((s) => `- ${s.name} (${s.team})`)
+			.join("\n");
+		return result(
+			[
+				`Pipeline workflow '${workflow.name}' is not yet wired into the team execution system.`,
+				`Goal: ${goal}`,
+				`Defined stages (${pipelineWorkflow.stages.length}):`,
+				stageInfo,
+				"",
+				"To actually run work right now, use a supported workflow instead:",
+				"  - action='run' workflow='default'  (explore → plan → execute → verify)",
+				"  - action='run' workflow='implementation'  (adaptive, parallel specialists)",
+				"  - action='run' workflow='research'  (explore → analyze → write)",
+				"",
+				"Run action='list' resource='workflow' to see all available workflows.",
+			].join("\n"),
+			{ action: "run", status: "ok" },
+			false,
+		);
 	}
 
 	// LAZY: dodge the jiti ESM/CJS interop TDZ race on the static `import { validateWorkflowForTeam }` above (issue #28, RFC 17).
-	const { validateWorkflowForTeam: validateWorkflow } = await import("../../workflows/validate-workflow.ts");
+	const { validateWorkflowForTeam: validateWorkflow } = await import(
+		"../../workflows/validate-workflow.ts"
+	);
 	const validationErrors = validateWorkflow(workflow, team);
 	if (validationErrors.length > 0) {
-		return result([`Workflow '${workflow.name}' is not valid for team '${team.name}':`, ...validationErrors.map((error) => `- ${error}`)].join("\n"), { action: "run", status: "error" }, true);
+		return result(
+			[
+				`Workflow '${workflow.name}' is not valid for team '${team.name}':`,
+				...validationErrors.map((error) => `- ${error}`),
+			].join("\n"),
+			{ action: "run", status: "error" },
+			true,
+		);
 	}
 
 	// LAZY: dodge the jiti ESM/CJS interop TDZ race on the static `import { normalizeSkillOverride }` above (issue #28, RFC 17).
-	const { normalizeSkillOverride: normalizeSkill } = await import("../../runtime/skill-instructions.ts");
+	const { normalizeSkillOverride: normalizeSkill } = await import(
+		"../../runtime/skill-instructions.ts"
+	);
 	const skillOverride = normalizeSkill(params.skill);
 	const { manifest, tasks, paths } = createRunManifest({
 		cwd: resolvedCtx.cwd,
@@ -298,7 +460,13 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		content: `${goal}\n`,
 		producer: "team-tool",
 	});
-	const updatedManifest = { ...manifest, ...(skillOverride !== undefined ? { skillOverride } : {}), artifacts: [goalArtifact], summary: "Run manifest created; worker execution is not implemented yet." };
+	const updatedManifest = {
+		...manifest,
+		...(skillOverride !== undefined ? { skillOverride } : {}),
+		artifacts: [goalArtifact],
+		summary:
+			"Run manifest created; worker execution is not implemented yet.",
+	};
 	atomicWriteJson(paths.manifestPath, updatedManifest);
 	registerActiveRun(updatedManifest);
 
@@ -306,9 +474,16 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 	// run it via runDynamicWorkflow instead of the static executeTeamRun path. The script
 	// orchestrates subagents via ctx.agent(); only ctx.setResult() reaches the main context.
 	// Placed AFTER manifest creation so runId/paths/artifactsRoot are available.
-	if (!directAgent && (workflow as import("../../workflows/workflow-config.ts").DynamicWorkflowConfig).runtime === "dynamic") {
+	if (
+		!directAgent &&
+		(
+			workflow as import("../../workflows/workflow-config.ts").DynamicWorkflowConfig
+		).runtime === "dynamic"
+	) {
 		// LAZY: defer dynamic import of ../../runtime/dynamic-workflow-runner.ts to its call site.
-		const { runDynamicWorkflow } = await import("../../runtime/dynamic-workflow-runner.ts");
+		const { runDynamicWorkflow } = await import(
+			"../../runtime/dynamic-workflow-runner.ts"
+		);
 		// Re-synthesize a dynamic-team (§0c C9) for role resolution.
 		const dwfTeam: import("../../teams/team-config.ts").TeamConfig = {
 			name: `dwf-${manifest.runId.slice(-12)}`,
@@ -325,26 +500,50 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 		};
 		atomicWriteJson(paths.manifestPath, dwfManifest);
 		try {
-			let dwfResult: import("../../runtime/dynamic-workflow-runner.ts").RunDynamicWorkflowResult | undefined;
+			let dwfResult:
+				| import("../../runtime/dynamic-workflow-runner.ts").RunDynamicWorkflowResult
+				| undefined;
 			try {
 				dwfResult = await runDynamicWorkflow({
 					manifest: dwfManifest,
-					workflow: workflow as import("../../workflows/workflow-config.ts").DynamicWorkflowConfig,
+					workflow:
+						workflow as import("../../workflows/workflow-config.ts").DynamicWorkflowConfig,
 					team: dwfTeam,
 					signal: ctx.signal ?? AbortSignal.timeout(3_600_000),
 					modelOverride: params.model,
-					tokenBudget: params.tokenBudget ?? (workflow as import("../../workflows/workflow-config.ts").DynamicWorkflowConfig).maxTokenBudget,
+					tokenBudget:
+						params.tokenBudget ??
+						(
+							workflow as import("../../workflows/workflow-config.ts").DynamicWorkflowConfig
+						).maxTokenBudget,
 				});
 			} catch (runnerError) {
 				// Round-11 runtime fix: persist manifest with status=failed when runner throws
 				// (e.g., script timeout, script syntax error, async failure). Previously the
 				// manifest stayed at 'queued' indefinitely, leaving an orphan state file.
-				const failureReason = runnerError instanceof Error ? runnerError.message : String(runnerError);
-				const failedManifest = { ...dwfManifest, status: "failed" as const, summary: `Dynamic workflow '${workflow.name}' failed: ${failureReason}`.slice(0, 2000), updatedAt: new Date().toISOString() };
+				const failureReason =
+					runnerError instanceof Error
+						? runnerError.message
+						: String(runnerError);
+				const failedManifest = {
+					...dwfManifest,
+					status: "failed" as const,
+					summary:
+						`Dynamic workflow '${workflow.name}' failed: ${failureReason}`.slice(
+							0,
+							2000,
+						),
+					updatedAt: new Date().toISOString(),
+				};
 				atomicWriteJson(paths.manifestPath, failedManifest);
 				return result(
 					`Dynamic workflow '${workflow.name}' failed: ${failureReason}`,
-					{ action: "run", status: "error", runId: failedManifest.runId, artifactsRoot: failedManifest.artifactsRoot },
+					{
+						action: "run",
+						status: "error",
+						runId: failedManifest.runId,
+						artifactsRoot: failedManifest.artifactsRoot,
+					},
 					true,
 				);
 			}
@@ -354,7 +553,13 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 			atomicWriteJson(paths.manifestPath, dwfResult.manifest);
 			return result(
 				`Dynamic workflow '${workflow.name}' completed.\n${dwfResult.manifest.summary ?? ""}`,
-				{ action: "run", status: dwfResult.manifest.status === "failed" ? "error" : "ok", runId: dwfResult.manifest.runId, artifactsRoot: dwfResult.manifest.artifactsRoot },
+				{
+					action: "run",
+					status:
+						dwfResult.manifest.status === "failed" ? "error" : "ok",
+					runId: dwfResult.manifest.runId,
+					artifactsRoot: dwfResult.manifest.artifactsRoot,
+				},
 				dwfResult.manifest.status === "failed",
 			);
 		} finally {
@@ -377,58 +582,179 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 			type: "config.warning",
 			runId: updatedManifest.runId,
 			message: `Loaded config from ${loadedConfig.path || "(defaults)"} with ${configIssues.length} issue(s): ${configIssues.join("; ")}`,
-			data: { error: loadedConfig.error, warnings: loadedConfig.warnings, path: loadedConfig.path },
-		}).catch((error) => logInternalError("team-tool.run.configWarning", error, `runId=${updatedManifest.runId}`));
-		logInternalError("team-tool.run.configWarning", new Error(`config issues: ${configIssues.join("; ")}`), `runId=${updatedManifest.runId} path=${loadedConfig.path ?? "(defaults)"}`);
+			data: {
+				error: loadedConfig.error,
+				warnings: loadedConfig.warnings,
+				path: loadedConfig.path,
+			},
+		}).catch((error) =>
+			logInternalError(
+				"team-tool.run.configWarning",
+				error,
+				`runId=${updatedManifest.runId}`,
+			),
+		);
+		logInternalError(
+			"team-tool.run.configWarning",
+			new Error(`config issues: ${configIssues.join("; ")}`),
+			`runId=${updatedManifest.runId} path=${loadedConfig.path ?? "(defaults)"}`,
+		);
 	}
-	const executedConfig = effectiveRunConfig(loadedConfig.config, params.config);
+	const executedConfig = effectiveRunConfig(
+		loadedConfig.config,
+		params.config,
+	);
 	const runtime = await resolveCrewRuntime(executedConfig);
 	const runtimeResolution = runtimeResolutionState(runtime);
-	const executionManifest = { ...updatedManifest, runtimeResolution, runConfig: executedConfig, updatedAt: new Date().toISOString() };
+	const executionManifest = {
+		...updatedManifest,
+		runtimeResolution,
+		runConfig: executedConfig,
+		updatedAt: new Date().toISOString(),
+	};
 	atomicWriteJson(paths.manifestPath, executionManifest);
-	appendEventAsync(executionManifest.eventsPath, { type: "runtime.resolved", runId: executionManifest.runId, message: `Runtime resolved: ${runtime.kind} safety=${runtime.safety}`, data: { runtimeResolution } }).catch((error) => logInternalError("team-tool.run.resolved", error, `runId=${executionManifest.runId}`));
+	appendEventAsync(executionManifest.eventsPath, {
+		type: "runtime.resolved",
+		runId: executionManifest.runId,
+		message: `Runtime resolved: ${runtime.kind} safety=${runtime.safety}`,
+		data: { runtimeResolution },
+	}).catch((error) =>
+		logInternalError(
+			"team-tool.run.resolved",
+			error,
+			`runId=${executionManifest.runId}`,
+		),
+	);
 	const runAsync = params.async ?? executedConfig.asyncByDefault ?? false;
 	let effectiveRuntime = runtime;
 	if (runAsync && runtime.kind === "live-session") {
-		effectiveRuntime = { ...runtime, kind: "child-process", steer: true, resume: false, liveToolActivity: false, fallback: "child-process", reason: "Background runner cannot use live-session; falling back to child-process." };
+		effectiveRuntime = {
+			...runtime,
+			kind: "child-process",
+			steer: true,
+			resume: false,
+			liveToolActivity: false,
+			fallback: "child-process",
+			reason: "Background runner cannot use live-session; falling back to child-process.",
+		};
 	}
-	const effectiveRuntimeResolution = effectiveRuntime !== runtime ? runtimeResolutionState(effectiveRuntime) : runtimeResolution;
-	const effectiveManifest = effectiveRuntime !== runtime ? { ...executionManifest, runtimeResolution: effectiveRuntimeResolution, updatedAt: new Date().toISOString() } : executionManifest;
+	const effectiveRuntimeResolution =
+		effectiveRuntime !== runtime
+			? runtimeResolutionState(effectiveRuntime)
+			: runtimeResolution;
+	const effectiveManifest =
+		effectiveRuntime !== runtime
+			? {
+					...executionManifest,
+					runtimeResolution: effectiveRuntimeResolution,
+					updatedAt: new Date().toISOString(),
+				}
+			: executionManifest;
 	if (effectiveRuntime !== runtime) {
 		atomicWriteJson(paths.manifestPath, effectiveManifest);
-		appendEventAsync(effectiveManifest.eventsPath, { type: "runtime.resolved", runId: effectiveManifest.runId, message: `Runtime overridden: child-process (async fallback from live-session)`, data: { runtimeResolution: effectiveRuntimeResolution } }).catch((error) => logInternalError("team-tool.run.override", error, `runId=${effectiveManifest.runId}`));
+		appendEventAsync(effectiveManifest.eventsPath, {
+			type: "runtime.resolved",
+			runId: effectiveManifest.runId,
+			message: `Runtime overridden: child-process (async fallback from live-session)`,
+			data: { runtimeResolution: effectiveRuntimeResolution },
+		}).catch((error) =>
+			logInternalError(
+				"team-tool.run.override",
+				error,
+				`runId=${effectiveManifest.runId}`,
+			),
+		);
 	}
 	if (runAsync) {
 		if (effectiveRuntime.safety === "blocked") {
-			const runningManifest = updateRunStatus(effectiveManifest, "running", "Checking worker runtime availability.");
-			const blocked = updateRunStatus(runningManifest, "blocked", effectiveRuntime.reason ?? "Child worker execution is disabled; refusing to create no-op scaffold subagents.");
-			void appendEventAsync(blocked.eventsPath, { type: "run.blocked", runId: blocked.runId, message: blocked.summary, data: { runtime: effectiveRuntime, runtimeResolution: effectiveRuntimeResolution, async: true, diagnostics: { requestedMode: effectiveRuntime.requestedMode, workersDisabled: executedConfig.executeWorkers === false, envCrew: process.env.PI_CREW_EXECUTE_WORKERS, envTeams: process.env.PI_TEAMS_EXECUTE_WORKERS } } });
+			const runningManifest = updateRunStatus(
+				effectiveManifest,
+				"running",
+				"Checking worker runtime availability.",
+			);
+			const blocked = updateRunStatus(
+				runningManifest,
+				"blocked",
+				effectiveRuntime.reason ??
+					"Child worker execution is disabled; refusing to create no-op scaffold subagents.",
+			);
+			void appendEventAsync(blocked.eventsPath, {
+				type: "run.blocked",
+				runId: blocked.runId,
+				message: blocked.summary,
+				data: {
+					runtime: effectiveRuntime,
+					runtimeResolution: effectiveRuntimeResolution,
+					async: true,
+					diagnostics: {
+						requestedMode: effectiveRuntime.requestedMode,
+						workersDisabled:
+							executedConfig.executeWorkers === false,
+						envCrew: process.env.PI_CREW_EXECUTE_WORKERS,
+						envTeams: process.env.PI_TEAMS_EXECUTE_WORKERS,
+					},
+				},
+			});
 			unregisterActiveRun(blocked.runId);
-			return result([
-				`Blocked pi-crew run ${blocked.runId}: real subagent workers are disabled.`,
-				`Runtime: ${effectiveRuntime.kind} (requested ${effectiveRuntime.requestedMode})`,
-				`Reason: ${effectiveRuntime.reason ?? "unknown"}`,
-				`Config: executeWorkers=${executedConfig.executeWorkers ?? "<default>"}, runtime.mode=${executedConfig.runtime?.mode ?? "<default>"}`,
-				`Env: PI_CREW_EXECUTE_WORKERS=${process.env.PI_CREW_EXECUTE_WORKERS ?? "<unset>"}, PI_TEAMS_EXECUTE_WORKERS=${process.env.PI_TEAMS_EXECUTE_WORKERS ?? "<unset>"}`,
-			].join("\n"), { action: "run", status: "error", runId: blocked.runId, artifactsRoot: blocked.artifactsRoot }, true);
+			return result(
+				[
+					`Blocked pi-crew run ${blocked.runId}: real subagent workers are disabled.`,
+					`Runtime: ${effectiveRuntime.kind} (requested ${effectiveRuntime.requestedMode})`,
+					`Reason: ${effectiveRuntime.reason ?? "unknown"}`,
+					`Config: executeWorkers=${executedConfig.executeWorkers ?? "<default>"}, runtime.mode=${executedConfig.runtime?.mode ?? "<default>"}`,
+					`Env: PI_CREW_EXECUTE_WORKERS=${process.env.PI_CREW_EXECUTE_WORKERS ?? "<unset>"}, PI_TEAMS_EXECUTE_WORKERS=${process.env.PI_TEAMS_EXECUTE_WORKERS ?? "<unset>"}`,
+				].join("\n"),
+				{
+					action: "run",
+					status: "error",
+					runId: blocked.runId,
+					artifactsRoot: blocked.artifactsRoot,
+				},
+				true,
+			);
 		}
 		const spawned = await spawnBackgroundTeamRun(effectiveManifest);
-		const asyncManifest = { ...effectiveManifest, async: { pid: spawned.pid, logPath: spawned.logPath, spawnedAt: new Date().toISOString() } };
+		const asyncManifest = {
+			...effectiveManifest,
+			async: {
+				pid: spawned.pid,
+				logPath: spawned.logPath,
+				spawnedAt: new Date().toISOString(),
+			},
+		};
 		atomicWriteJson(paths.manifestPath, asyncManifest);
-		void appendEventAsync(effectiveManifest.eventsPath, { type: "async.spawned", runId: effectiveManifest.runId, data: { pid: spawned.pid, logPath: spawned.logPath } });
+		void appendEventAsync(effectiveManifest.eventsPath, {
+			type: "async.spawned",
+			runId: effectiveManifest.runId,
+			data: { pid: spawned.pid, logPath: spawned.logPath },
+		});
 		ctx.onRunStarted?.(effectiveManifest.runId);
-		scheduleBackgroundEarlyExitGuard(resolvedCtx.cwd, effectiveManifest.runId, spawned.pid, spawned.logPath);
+		scheduleBackgroundEarlyExitGuard(
+			resolvedCtx.cwd,
+			effectiveManifest.runId,
+			spawned.pid,
+			spawned.logPath,
+		);
 		// Wait for the async run to complete and return actual results.
 		try {
-			const completed = await waitForRun(updatedManifest.runId, resolvedCtx.cwd, { timeoutMs: 3600000 });
-			const metrics = collectRunMetrics(resolvedCtx.cwd, completed.manifest.runId);
+			const completed = await waitForRun(
+				updatedManifest.runId,
+				resolvedCtx.cwd,
+				{ timeoutMs: 3600000 },
+			);
+			const metrics = collectRunMetrics(
+				resolvedCtx.cwd,
+				completed.manifest.runId,
+			);
 			const lines: string[] = [
 				`pi-crew run ${completed.manifest.status}: ${completed.manifest.runId} (${team.name})`,
 				`Goal: ${goal.slice(0, 100)}`,
 			];
 			if (metrics) {
 				lines.push("");
-				lines.push(`Metrics: ${metrics.completedCount}/${metrics.taskCount} tasks, ${metrics.totalTokens} tokens, ${metrics.durationMs}ms, consistency=${metrics.consistencyScore}`);
+				lines.push(
+					`Metrics: ${metrics.completedCount}/${metrics.taskCount} tasks, ${metrics.totalTokens} tokens, ${metrics.durationMs}ms, consistency=${metrics.consistencyScore}`,
+				);
 			}
 
 			if (completed.tasks.length > 0) {
@@ -439,8 +765,14 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 				);
 				if (summaryArtifact) {
 					try {
-						const sumPath = path.join(completed.manifest.artifactsRoot, summaryArtifact.path);
-						summaryContent = fs.readFileSync(sumPath, "utf-8").trim().slice(0, 4000);
+						const sumPath = path.join(
+							completed.manifest.artifactsRoot,
+							summaryArtifact.path,
+						);
+						summaryContent = fs
+							.readFileSync(sumPath, "utf-8")
+							.trim()
+							.slice(0, 4000);
 					} catch {
 						/* summary unavailable */
 					}
@@ -457,22 +789,34 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 							// inside artifactsRoot via the project's safe-path primitive. Rejects
 							// absolute paths (/etc/passwd) and ../ traversal that the old
 							// path.isAbsolute shortcut + bare path.join allowed.
-							const resPath = resolveRealContainedPath(completed.manifest.artifactsRoot, task.resultArtifact.path);
-							resultExcerpt = fs.readFileSync(resPath, "utf-8").trim().slice(0, 2000);
+							const resPath = resolveRealContainedPath(
+								completed.manifest.artifactsRoot,
+								task.resultArtifact.path,
+							);
+							resultExcerpt = fs
+								.readFileSync(resPath, "utf-8")
+								.trim()
+								.slice(0, 2000);
 						} catch {
 							resultExcerpt = "(result unavailable)";
 						}
 					}
 					const shortResult = resultExcerpt.slice(0, 500);
 					const statusTag =
-						task.status === "completed" ? "✓"
-						: task.status === "failed" ? "✗"
-						: task.status === "cancelled" ? "⊘"
-						: "·";
+						task.status === "completed"
+							? "✓"
+							: task.status === "failed"
+								? "✗"
+								: task.status === "cancelled"
+									? "⊘"
+									: "·";
 					taskLines.push(
 						`- ${statusTag} ${task.id} [${task.role}]: ${task.status}${shortResult ? " — " + shortResult : ""}${task.error ? ` | Error: ${task.error.slice(0, 200)}` : ""}`,
 					);
-					if (task.status === "failed" || task.status === "needs_attention") {
+					if (
+						task.status === "failed" ||
+						task.status === "needs_attention"
+					) {
 						failedCount++;
 						failedIds.push(task.id);
 					}
@@ -505,10 +849,25 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 				);
 			}
 
-			const runFailed = completed.manifest.status === "failed" || completed.manifest.status === "blocked";
-			return result(lines.join("\n"), { action: "run", status: runFailed ? "error" : "ok", runId: completed.manifest.runId, artifactsRoot: completed.manifest.artifactsRoot, metrics }, runFailed);
+			const runFailed =
+				completed.manifest.status === "failed" ||
+				completed.manifest.status === "blocked";
+			return result(
+				lines.join("\n"),
+				{
+					action: "run",
+					status: runFailed ? "error" : "ok",
+					runId: completed.manifest.runId,
+					artifactsRoot: completed.manifest.artifactsRoot,
+					metrics,
+				},
+				runFailed,
+			);
 		} catch (waitError: unknown) {
-			const errorMessage = waitError instanceof Error ? waitError.message : String(waitError);
+			const errorMessage =
+				waitError instanceof Error
+					? waitError.message
+					: String(waitError);
 			return result(
 				[
 					`pi-crew run timed out or failed: ${updatedManifest.runId}`,
@@ -520,34 +879,91 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 					`State: ${updatedManifest.stateRoot}`,
 					`Background log: ${spawned.logPath}`,
 				].join("\n"),
-				{ action: "run", status: "error", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot },
+				{
+					action: "run",
+					status: "error",
+					runId: updatedManifest.runId,
+					artifactsRoot: updatedManifest.artifactsRoot,
+				},
 				true,
 			);
 		}
 	}
 
 	if (runtime.safety === "blocked") {
-		const runningManifest = updateRunStatus(executionManifest, "running", "Checking worker runtime availability.");
-		const blocked = updateRunStatus(runningManifest, "blocked", runtime.reason ?? "Child worker execution is disabled; refusing to create no-op scaffold subagents.");
-		void appendEventAsync(blocked.eventsPath, { type: "run.blocked", runId: blocked.runId, message: blocked.summary, data: { runtime, runtimeResolution, diagnostics: { requestedMode: runtime.requestedMode, workersDisabled: executedConfig.executeWorkers === false, envCrew: process.env.PI_CREW_EXECUTE_WORKERS, envTeams: process.env.PI_TEAMS_EXECUTE_WORKERS } } });
+		const runningManifest = updateRunStatus(
+			executionManifest,
+			"running",
+			"Checking worker runtime availability.",
+		);
+		const blocked = updateRunStatus(
+			runningManifest,
+			"blocked",
+			runtime.reason ??
+				"Child worker execution is disabled; refusing to create no-op scaffold subagents.",
+		);
+		void appendEventAsync(blocked.eventsPath, {
+			type: "run.blocked",
+			runId: blocked.runId,
+			message: blocked.summary,
+			data: {
+				runtime,
+				runtimeResolution,
+				diagnostics: {
+					requestedMode: runtime.requestedMode,
+					workersDisabled: executedConfig.executeWorkers === false,
+					envCrew: process.env.PI_CREW_EXECUTE_WORKERS,
+					envTeams: process.env.PI_TEAMS_EXECUTE_WORKERS,
+				},
+			},
+		});
 		unregisterActiveRun(blocked.runId);
-		return result([
-			`Blocked pi-crew run ${blocked.runId}: real subagent workers are disabled.`,
-			`Runtime: ${runtime.kind} (requested ${runtime.requestedMode})`,
-			`Reason: ${runtime.reason ?? "unknown"}`,
-			`Config: executeWorkers=${executedConfig.executeWorkers ?? "<default>"}, runtime.mode=${executedConfig.runtime?.mode ?? "<default>"}`,
-			`Env: PI_CREW_EXECUTE_WORKERS=${process.env.PI_CREW_EXECUTE_WORKERS ?? "<unset>"}, PI_TEAMS_EXECUTE_WORKERS=${process.env.PI_TEAMS_EXECUTE_WORKERS ?? "<unset>"}`,
-			"",
-			"To run effective subagents, remove executeWorkers=false / PI_CREW_EXECUTE_WORKERS=0 / PI_TEAMS_EXECUTE_WORKERS=0 or set runtime.mode=child-process.",
-			"Use runtime.mode=scaffold only for explicit dry-run prompt/artifact generation.",
-		].join("\n"), { action: "run", status: "error", runId: blocked.runId, artifactsRoot: blocked.artifactsRoot }, true);
+		return result(
+			[
+				`Blocked pi-crew run ${blocked.runId}: real subagent workers are disabled.`,
+				`Runtime: ${runtime.kind} (requested ${runtime.requestedMode})`,
+				`Reason: ${runtime.reason ?? "unknown"}`,
+				`Config: executeWorkers=${executedConfig.executeWorkers ?? "<default>"}, runtime.mode=${executedConfig.runtime?.mode ?? "<default>"}`,
+				`Env: PI_CREW_EXECUTE_WORKERS=${process.env.PI_CREW_EXECUTE_WORKERS ?? "<unset>"}, PI_TEAMS_EXECUTE_WORKERS=${process.env.PI_TEAMS_EXECUTE_WORKERS ?? "<unset>"}`,
+				"",
+				"To run effective subagents, remove executeWorkers=false / PI_CREW_EXECUTE_WORKERS=0 / PI_TEAMS_EXECUTE_WORKERS=0 or set runtime.mode=child-process.",
+				"Use runtime.mode=scaffold only for explicit dry-run prompt/artifact generation.",
+			].join("\n"),
+			{
+				action: "run",
+				status: "error",
+				runId: blocked.runId,
+				artifactsRoot: blocked.artifactsRoot,
+			},
+			true,
+		);
 	}
 	const executeWorkers = runtime.kind !== "scaffold";
 	if (executeWorkers && ctx.startForegroundRun) {
 		ctx.onRunStarted?.(updatedManifest.runId);
 		ctx.startForegroundRun(async (signal) => {
 			try {
-				await executeTeamRun({ manifest: executionManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent, workspaceId: ctx.sessionId ?? ctx.cwd });
+				await executeTeamRun({
+					manifest: executionManifest,
+					tasks,
+					team,
+					workflow,
+					agents,
+					executeWorkers,
+					limits: executedConfig.limits,
+					runtime,
+					runtimeConfig: executedConfig.runtime,
+					parentContext: buildParentContext(ctx),
+					parentModel: ctx.model,
+					modelRegistry: ctx.modelRegistry,
+					modelOverride: params.model,
+					skillOverride,
+					signal,
+					reliability: executedConfig.reliability,
+					metricRegistry: ctx.metricRegistry,
+					onJsonEvent: ctx.onJsonEvent,
+					workspaceId: ctx.sessionId ?? ctx.cwd,
+				});
 			} finally {
 				unregisterActiveRun(updatedManifest.runId);
 			}
@@ -555,15 +971,24 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 
 		// Wait for the foreground run to complete and return actual results.
 		try {
-			const completed = await waitForRun(updatedManifest.runId, resolvedCtx.cwd, { timeoutMs: 3600000 });
-			const metrics = collectRunMetrics(resolvedCtx.cwd, completed.manifest.runId);
+			const completed = await waitForRun(
+				updatedManifest.runId,
+				resolvedCtx.cwd,
+				{ timeoutMs: 3600000 },
+			);
+			const metrics = collectRunMetrics(
+				resolvedCtx.cwd,
+				completed.manifest.runId,
+			);
 			const lines: string[] = [
 				`pi-crew run ${completed.manifest.status}: ${completed.manifest.runId} (${team.name})`,
 				`Goal: ${goal.slice(0, 100)}`,
 			];
 			if (metrics) {
 				lines.push("");
-				lines.push(`Metrics: ${metrics.completedCount}/${metrics.taskCount} tasks, ${metrics.totalTokens} tokens, ${metrics.durationMs}ms, consistency=${metrics.consistencyScore}`);
+				lines.push(
+					`Metrics: ${metrics.completedCount}/${metrics.taskCount} tasks, ${metrics.totalTokens} tokens, ${metrics.durationMs}ms, consistency=${metrics.consistencyScore}`,
+				);
 			}
 
 			if (completed.tasks.length > 0) {
@@ -574,8 +999,14 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 				);
 				if (summaryArtifact) {
 					try {
-						const sumPath = path.join(completed.manifest.artifactsRoot, summaryArtifact.path);
-						summaryContent = fs.readFileSync(sumPath, "utf-8").trim().slice(0, 4000);
+						const sumPath = path.join(
+							completed.manifest.artifactsRoot,
+							summaryArtifact.path,
+						);
+						summaryContent = fs
+							.readFileSync(sumPath, "utf-8")
+							.trim()
+							.slice(0, 4000);
 					} catch {
 						/* summary unavailable */
 					}
@@ -592,22 +1023,34 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 							// inside artifactsRoot via the project's safe-path primitive. Rejects
 							// absolute paths (/etc/passwd) and ../ traversal that the old
 							// path.isAbsolute shortcut + bare path.join allowed.
-							const resPath = resolveRealContainedPath(completed.manifest.artifactsRoot, task.resultArtifact.path);
-							resultExcerpt = fs.readFileSync(resPath, "utf-8").trim().slice(0, 2000);
+							const resPath = resolveRealContainedPath(
+								completed.manifest.artifactsRoot,
+								task.resultArtifact.path,
+							);
+							resultExcerpt = fs
+								.readFileSync(resPath, "utf-8")
+								.trim()
+								.slice(0, 2000);
 						} catch {
 							resultExcerpt = "(result unavailable)";
 						}
 					}
 					const shortResult = resultExcerpt.slice(0, 500);
 					const statusTag =
-						task.status === "completed" ? "✓"
-						: task.status === "failed" ? "✗"
-						: task.status === "cancelled" ? "⊘"
-						: "·";
+						task.status === "completed"
+							? "✓"
+							: task.status === "failed"
+								? "✗"
+								: task.status === "cancelled"
+									? "⊘"
+									: "·";
 					taskLines.push(
 						`- ${statusTag} ${task.id} [${task.role}]: ${task.status}${shortResult ? " — " + shortResult : ""}${task.error ? ` | Error: ${task.error.slice(0, 200)}` : ""}`,
 					);
-					if (task.status === "failed" || task.status === "needs_attention") {
+					if (
+						task.status === "failed" ||
+						task.status === "needs_attention"
+					) {
 						failedCount++;
 						failedIds.push(task.id);
 					}
@@ -640,10 +1083,25 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 				);
 			}
 
-			const runFailed = completed.manifest.status === "failed" || completed.manifest.status === "blocked";
-			return result(lines.join("\n"), { action: "run", status: runFailed ? "error" : "ok", runId: completed.manifest.runId, artifactsRoot: completed.manifest.artifactsRoot, metrics }, runFailed);
+			const runFailed =
+				completed.manifest.status === "failed" ||
+				completed.manifest.status === "blocked";
+			return result(
+				lines.join("\n"),
+				{
+					action: "run",
+					status: runFailed ? "error" : "ok",
+					runId: completed.manifest.runId,
+					artifactsRoot: completed.manifest.artifactsRoot,
+					metrics,
+				},
+				runFailed,
+			);
 		} catch (waitError: unknown) {
-			const errorMessage = waitError instanceof Error ? waitError.message : String(waitError);
+			const errorMessage =
+				waitError instanceof Error
+					? waitError.message
+					: String(waitError);
 			return result(
 				[
 					`pi-crew run timed out or failed: ${updatedManifest.runId}`,
@@ -654,14 +1112,39 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 					`Check status with: team status runId=${updatedManifest.runId}`,
 					`State: ${updatedManifest.stateRoot}`,
 				].join("\n"),
-				{ action: "run", status: "error", runId: updatedManifest.runId, artifactsRoot: updatedManifest.artifactsRoot },
+				{
+					action: "run",
+					status: "error",
+					runId: updatedManifest.runId,
+					artifactsRoot: updatedManifest.artifactsRoot,
+				},
 				true,
 			);
 		}
 	}
 	let executed: Awaited<ReturnType<typeof executeTeamRun>>;
 	try {
-		executed = await executeTeamRun({ manifest: executionManifest, tasks, team, workflow, agents, executeWorkers, limits: executedConfig.limits, runtime, runtimeConfig: executedConfig.runtime, parentContext: buildParentContext(ctx), parentModel: ctx.model, modelRegistry: ctx.modelRegistry, modelOverride: params.model, skillOverride, signal: ctx.signal, reliability: executedConfig.reliability, metricRegistry: ctx.metricRegistry, onJsonEvent: ctx.onJsonEvent, workspaceId: ctx.cwd });
+		executed = await executeTeamRun({
+			manifest: executionManifest,
+			tasks,
+			team,
+			workflow,
+			agents,
+			executeWorkers,
+			limits: executedConfig.limits,
+			runtime,
+			runtimeConfig: executedConfig.runtime,
+			parentContext: buildParentContext(ctx),
+			parentModel: ctx.model,
+			modelRegistry: ctx.modelRegistry,
+			modelOverride: params.model,
+			skillOverride,
+			signal: ctx.signal,
+			reliability: executedConfig.reliability,
+			metricRegistry: ctx.metricRegistry,
+			onJsonEvent: ctx.onJsonEvent,
+			workspaceId: ctx.cwd,
+		});
 	} finally {
 		unregisterActiveRun(updatedManifest.runId);
 	}
@@ -681,5 +1164,18 @@ export async function handleRun(params: TeamToolParamsValue, ctx: TeamContext): 
 				? "Experimental live-session worker execution was enabled."
 				: "Safe scaffold mode: child Pi workers were not launched because runtime.mode=scaffold or executeWorkers=false was configured.",
 	].join("\n");
-	return result(text, { action: "run", status: executed.manifest.status === "failed" ? "error" : "ok", runId: executed.manifest.runId, artifactsRoot: executed.manifest.artifactsRoot, metrics: collectRunMetrics(resolvedCtx.cwd, executed.manifest.runId) }, executed.manifest.status === "failed");
+	return result(
+		text,
+		{
+			action: "run",
+			status: executed.manifest.status === "failed" ? "error" : "ok",
+			runId: executed.manifest.runId,
+			artifactsRoot: executed.manifest.artifactsRoot,
+			metrics: collectRunMetrics(
+				resolvedCtx.cwd,
+				executed.manifest.runId,
+			),
+		},
+		executed.manifest.status === "failed",
+	);
 }
