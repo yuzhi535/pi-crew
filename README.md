@@ -43,6 +43,7 @@ repo: https://github.com/baphuongna/pi-crew
 
 ## Features
 
+- **Workflow topology advisory** (v0.9.15) — before each run, pi-crew classifies the workflow's shape (`single` / `sequential` / `concurrent` / `complex-dag`) and prints an **advisory note** with measured cost evidence (e.g. "3-step sequential: measured 5.7× slower than 3 raw Agent calls — proceeding anyway"). Never blocks — the agent decides. Tool description and prompt-snippet carry the same guidance up-front, so agents know the trade-off before calling. New files: `src/workflows/topology-analyzer.ts`, `src/workflows/preflight-validator.ts`. See [Workflow topology advisory](#workflow-topology-advisory) below.
 - **One Pi tool** — `team` handles routing, planning, execution, review, and cleanup
 - **Autonomous delegation** — policy injection decides when/how to delegate based on task complexity
 - **needs_attention status** — tasks that complete without calling `submit_result` get `needs_attention` (terminal) instead of `completed`; allows retry/re-run without blocking downstream phases
@@ -212,6 +213,71 @@ When unsure which team/workflow fits:
 | `review` | explore → code-review → security-review → verify | Code review + security audit |
 | `research` | explore → analyze → write | Research and documentation |
 | `parallel-research` | Parallel shards → synthesize → write | Multi-source research |
+
+---
+
+## Workflow topology advisory
+
+Before every `team action='run'`, pi-crew classifies the workflow shape and prints an informational note. **It never blocks** — agents decide whether to proceed, refactor, or override.
+
+### How it works
+
+```text
+team action='run', workflow='fast-fix', goal='...'
+  ↓
+pi-crew analyzes topology: 3-step sequential
+  ↓
+⚠️  [team-tool.preflight] WARN: 3-step sequential chain: measured 5.7× slower
+    and 1.9× costlier than 3 raw Agent calls (Run #3 in .crew/state/runs/).
+    Proceeding anyway.
+  ↓
+Workflow runs to completion. Agent sees the note, decides for next time.
+```
+
+### Topology → advisory level
+
+| Topology | When | Level | What pi-crew prints |
+|---|---|---|---|
+| `single` | 1 step, no concurrency | `warn` | "raw Agent tool would be ~30× faster and ~5× cheaper. Proceeding anyway." |
+| `sequential` (2-3 steps) | Linear chain, no fan-out | `warn` | "measured 5.7× slower than raw Agent calls. Proceeding anyway." |
+| `sequential` (4+ steps) | Linear chain, longer | `warn` | "audit trail may justify pi-crew overhead. Proceeding anyway." |
+| `concurrent` | ≥3 truly parallel agents (parallelGroup) | `note` | "✅ Validated use case: N-way parallel fan-out. pi-crew's parallelism wins." |
+| `complex-dag` | 4+ steps with data dependencies | `note` | "✅ Validated use case: complex DAG with adaptive plan." |
+| `dynamic` | `.dwf.ts` script | `info` | "Runtime decides topology." |
+
+### When to prefer raw `Agent` over `team`
+
+Use the raw `Agent` tool when:
+- You have a single task or quick question (1-step)
+- You have 2–3 sequential independent steps (no DAG branching, no concurrency)
+
+Use `team` when:
+- You have ≥3 agents running TRULY CONCURRENTLY (`parallelGroup`)
+- You have a COMPLEX DAG (4+ steps with data dependencies, branching)
+- You need an audit trail, team coordination, or worktree isolation that justifies pi-crew's overhead
+
+### How agents learn the rule
+
+The guidance is available in three places agents see:
+
+1. **`team` tool description** — the LLM reads this when considering whether to call the tool. Includes an explicit "ℹ️ ADVISORY NOTE (preflight, never blocks)" section.
+2. **`team` prompt snippet** — rendered in agent context when the tool is relevant. Single-line summary of the rule.
+3. **`.crew/knowledge.md` CONVENTIONS section** — always injected into every worker session's context. Contains the full 4-question self-check.
+
+### How to silence the advisory
+
+The advisory is **informational only** — there is no `force:true` flag needed (the run proceeds regardless). If you want to silence the `console.warn` output for cleaner logs, set `PI_CREW_QUIET_PREFLIGHT=1` in your environment.
+
+### Implementation
+
+- `src/workflows/topology-analyzer.ts` — pure classifier (parses workflow YAML, builds DAG, detects parallelGroups)
+- `src/workflows/preflight-validator.ts` — returns `{level: info|note|warn, message, suggestion}` (never throws)
+- Integration: `src/extension/team-tool/run.ts` (extension layer, prints advisory) + `src/runtime/team-runner.ts` (defense-in-depth, also logs)
+
+### Tests
+
+- `test/unit/topology-analyzer.test.ts` — 13 cases (each topology + edge cases)
+- `test/unit/preflight-validator.test.ts` — 11 cases (each level + advisory contract)
 
 ## Builtin Agents
 

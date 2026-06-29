@@ -1,5 +1,67 @@
 # Changelog
 
+## [v0.9.15] — workflow topology advisory (2026-06-29)
+
+After a parallel-research assessment of v0.9.13 + v0.9.14 (`research-findings/pi-crew-performance-quality-assessment.md`, effectiveness evaluation at `.crew/research/pi-crew-effectiveness-evaluation.md`), a user-driven refinement showed that the original BLOCK-on-misuse design was too aggressive — **agents know their context better than the orchestrator**. This release ships an **advisory-only** topology classifier that prints measured-cost notes and proceeds either way. The agent (caller) decides.
+
+Full rationale: `.crew/research/pi-crew-effectiveness-evaluation.md` §4.4 + the run-history evidence showing `fast-fix` (3-step sequential DAG) measured **5.7× slower and 1.9× costlier** than 3 raw `Agent` calls (`team_20260629092440_6b8538e31ba7616a`).
+
+### Added — workflow topology advisory
+
+- **New `src/workflows/topology-analyzer.ts`** — pure classifier that parses a `WorkflowConfig`, builds the DAG (Kahn-style longest-path depth), detects `parallelGroup:` declarations, and returns `{topology, stepCount, parallelGroupCount, fanOutDegree, dagDepth, recommendation, reason}`. Topologies: `single` (1 step, no concurrency), `sequential` (linear chain, no parallelGroup), `concurrent` (≥3 truly parallel agents via `parallelGroup`), `complex-dag` (4+ steps with branching — `≥2 deps` on ≥1 node), `dynamic` (`.dwf.ts` script). Honors explicit `topology:` frontmatter override when present.
+
+- **New `src/workflows/preflight-validator.ts`** — applies the topology rule from `.crew/knowledge.md` "pi-crew USAGE THRESHOLD RULE" (CONVENTIONS section). Returns `{level: "info" | "note" | "warn", message, suggestion, topology, stepCount, recommendation}`. **Never blocks.** Three severity levels:
+  - `info` — context-only (dynamic workflow, `force:true` acknowledged)
+  - `note` — validated use case (concurrent / complex-dag); "✅ proceeding"
+  - `warn` — potential inefficiency (single / sequential 2-3 / 4+); measured cost evidence + "Proceeding anyway"
+
+- **Top-level integration** (`src/extension/team-tool/run.ts`, called BEFORE `executeTeamRun`):
+  - Extension-layer guard logs the advisory via `console.warn` with icon (`⚠️ ` / `✅ ` / `ℹ️  `) and continues the run.
+  - Defense-in-depth in `src/runtime/team-runner.ts:447-468` also logs (catches direct API callers — CLI, tests, scheduler — that bypass the extension layer).
+  - Both layers **never throw / never short-circuit**. The agent is always in charge.
+
+### Changed — agent awareness surfaces
+
+- **`team` tool description** (`src/extension/registration/team-tool.ts`) now includes an explicit "ℹ️ ADVISORY NOTE (preflight, never blocks)" paragraph + 4 case-by-case notes. Agents reading the tool definition see the rule BEFORE deciding to call.
+- **`team` prompt snippet** shortened and re-toned: "Use the team tool for multi-agent orchestration when you need ≥3 concurrent agents or a complex DAG. For single tasks or 2–3 sequential steps, the raw Agent tool is usually faster. **pi-crew notes the topology (informational only) but proceeds either way — you decide.**"
+- **Workflow YAML frontmatter** — 8 builtin workflows now declare `topology:` (`single` / `sequential` / `concurrent` / `complex-dag` / `dynamic`) so the analyzer honors explicit classification when present and falls back to auto-detection when absent. New `WorkflowConfig.topology?` field in `src/workflows/workflow-config.ts`. `src/workflows/discover-workflows.ts:parseWorkflowFile` parses the field; invalid values are silently dropped (fall-through to auto).
+
+### Tests
+
+- **`test/unit/topology-analyzer.test.ts`** — 13 cases: each topology + `parallelGroupsFromSteps`, `fanOutDegreeFromSteps`, `dagDepthFromSteps` helpers + edge cases (empty deps, unknown deps, defensive cycle handling).
+- **`test/unit/preflight-validator.test.ts`** — 11 cases: each topology × level combo, force-bypass acknowledgement, all-3-severities-reachable check, "validator never throws" contract.
+- `test/unit/direct-agent-run.test.ts` + `test/unit/team-runner-merge.test.ts` — re-verified to ensure defense-in-depth guard does not break synthetic-1-step direct-agent runs (skip condition: `workflow.filePath === "<generated>"`).
+
+### Verification
+
+- `tsc --noEmit` → EXIT 0 (no type errors)
+- `test:unit` → 5800+ tests, 0 fail attributable to this change (1 pre-existing env-related fail on `resolveNpmGlobalRoot` is unrelated and pre-dates this release)
+- Live smoke test (`/tmp/preflight-smoke.ts`): all 6 topology cases emit the expected advisory level — `single` → WARN, `sequential 2/3/4` → WARN with measured-cost evidence, `concurrent` → NOTE, `force:true` → INFO
+- Live integration test (`team_20260629152312_ca139c8540e938a1`): ran a 3-step sequential `fast-fix` workflow; advisory note appeared in console, workflow completed normally (no block), agent independently verified the rule via source + smoke test + unit tests
+
+### Honesty discipline
+
+- **No BLOCK** — the original v0.9.15 design had `level: "block"` that hard-rejected single-task runs; user feedback refined this to advisory-only after observing that the orchestrator doesn't know the agent's full context (audit needs, team coordination reasons, etc.). The agent is in charge.
+- **`force:true`** parameter still works (acknowledged as `info` level) but is no longer required — runs always proceed.
+
+### Files touched
+
+| File | Change |
+|---|---|
+| `src/workflows/topology-analyzer.ts` | NEW (182 LOC) |
+| `src/workflows/preflight-validator.ts` | NEW (177 LOC) |
+| `src/workflows/workflow-config.ts` | +8 LOC (topology? field) |
+| `src/workflows/discover-workflows.ts` | +12 LOC (parse frontmatter.topology + parseTopology helper) |
+| `src/extension/team-tool/run.ts` | +18 LOC (extension-layer advisory log) |
+| `src/runtime/team-runner.ts` | +18 LOC (defense-in-depth advisory log) |
+| `src/extension/registration/team-tool.ts` | ~30 LOC (tool description + prompt snippet re-toned) |
+| `src/config/types.ts` | +5 LOC (CrewReliabilityConfig.forcePreflight? field — reserved, currently unused) |
+| `workflows/*.workflow.md` (8 files) | +1 line each (topology: frontmatter) |
+| `test/unit/topology-analyzer.test.ts` | NEW (181 LOC, 13 cases) |
+| `test/unit/preflight-validator.test.ts` | NEW (163 LOC, 11 cases) |
+| `README.md` | +75 LOC ("Workflow topology advisory" section) |
+| `CHANGELOG.md` | this entry |
+
 ## [v0.9.14] — reliability & UX fixes from the v0.9.13 performance/quality assessment (2026-06-29)
 
 A parallel-research assessment of v0.9.13 measured three operational gaps and produced ten prioritized recommendations (effort × impact). This release ships **8 of 10 fixes + 2 UX bug fixes from bug reports**, with the remaining 2 honestly deferred (need product input). The unifying theme: **stop the silent lies** — retry that was built but never enabled, a "completed" status that hid zero work, and UI that read failed runs as still-running.
