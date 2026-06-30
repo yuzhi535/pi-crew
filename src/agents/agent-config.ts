@@ -156,9 +156,22 @@ export function resolveToolPolicy(agent: AgentConfig, role?: string): ResolvedTo
 	const roleConfig = role ? getToolConfig(role) : {};
 	// allowlist: source-aware precedence (see doc above).
 	const explicitTools = agent.source === "builtin" ? (roleConfig.tools ?? agent.tools) : (agent.tools ?? roleConfig.tools);
+	// L5: when the agent opts into `loadMode: "lean"` AND provides a
+	// non-empty `defaultTools` list, merge that list into the resolved
+	// allowlist. The merge is additive (union, dedup, order-preserving) so
+	// the existing source-aware precedence is preserved and a lean agent
+	// gets a focused-but-non-empty tool set. Signal flow:
+	//   agent YAML frontmatter (loadMode, defaultTools)
+	//     → parsed into AgentConfig
+	//     → resolveToolPolicy(agent, role) here
+	//     → policy.tools returned to buildPiWorkerArgs
+	//     → `args.push("--tools", policy.tools.join(","))` in pi-args.ts
+	//     → child pi process sees the merged allowlist
+	const tools =
+		agent.loadMode === "lean" && agent.defaultTools?.length ? uniqueToolMerge(explicitTools, agent.defaultTools) : explicitTools;
 	// denylist: additive merge of role excludeTools + agent disallowedTools.
 	const excludeTools = uniqueToolMerge(roleConfig.excludeTools, agent.disallowedTools);
-	return { tools: explicitTools, excludeTools };
+	return { tools, excludeTools };
 }
 
 /**
