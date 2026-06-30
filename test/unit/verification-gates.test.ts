@@ -8,6 +8,7 @@ import {
 	CARGO_RUST_GATES,
 } from "../../src/runtime/verification-gates.ts";
 import type { VerificationCommandResult } from "../../src/state/types.ts";
+import { pickCmd, OK_CMD, FAIL_CMD, ECHO_CMD } from "../fixtures/cross-platform-cmd.ts";
 
 test("verification-gates: NPM_TYPESCRIPT_GATES has expected phases", () => {
 	assert.equal(NPM_TYPESCRIPT_GATES.length, 4);
@@ -20,10 +21,11 @@ test("verification-gates: CARGO_RUST_GATES has expected phases", () => {
 });
 
 test("verification-gates: runPhaseGates executes commands sequentially", async () => {
-	// Simple test: echo command that always succeeds
+	// Simple test: echo command that always succeeds.
+	// Use cross-platform helper: `echo 'X'` on POSIX, `node -e "process.stdout.write('X\n')"` on win32.
 	const gates = [
-		{ name: "echo", command: "echo 'hello'", critical: true },
-		{ name: "echo2", command: "echo 'world'", critical: true },
+		{ name: "echo", command: pickCmd(ECHO_CMD("hello")), critical: true },
+		{ name: "echo2", command: pickCmd(ECHO_CMD("world")), critical: true },
 	];
 	const result = await runPhaseGates(gates, process.cwd());
 	assert.equal(result.results.length, 2);
@@ -34,9 +36,9 @@ test("verification-gates: runPhaseGates executes commands sequentially", async (
 
 test("verification-gates: runPhaseGates stops on critical failure", async () => {
 	const gates = [
-		{ name: "success", command: "echo 'ok'", critical: true },
-		{ name: "fails", command: "exit 1", critical: true },
-		{ name: "would-run", command: "echo 'should not run'", critical: true },
+		{ name: "success", command: pickCmd(OK_CMD), critical: true },
+		{ name: "fails", command: pickCmd(FAIL_CMD), critical: true },
+		{ name: "would-run", command: pickCmd(ECHO_CMD("should not run")), critical: true },
 	];
 	const result = await runPhaseGates(gates, process.cwd());
 	// Results contain only executed gates (not skipped)
@@ -49,9 +51,9 @@ test("verification-gates: runPhaseGates stops on critical failure", async () => 
 
 test("verification-gates: runPhaseGates continues on non-critical failure", async () => {
 	const gates = [
-		{ name: "success", command: "echo 'ok'", critical: true },
-		{ name: "fails", command: "exit 1", critical: false },
-		{ name: "continues", command: "echo 'still going'", critical: true },
+		{ name: "success", command: pickCmd(OK_CMD), critical: true },
+		{ name: "fails", command: pickCmd(FAIL_CMD), critical: false },
+		{ name: "continues", command: pickCmd(ECHO_CMD("still going")), critical: true },
 	];
 	const result = await runPhaseGates(gates, process.cwd());
 	assert.equal(result.results.length, 3);

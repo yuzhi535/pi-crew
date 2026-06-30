@@ -16,6 +16,7 @@ import {
 	isVerificationEnvSanitizeEnabled,
 	executeVerificationCommands,
 } from "../../src/runtime/verification-gates.ts";
+import { pickPrintenv } from "../fixtures/cross-platform-cmd.ts";
 
 function withEnv(vars: Record<string, string | undefined>, fn: () => Promise<void> | void): Promise<void> {
 	const saved: Record<string, string | undefined> = {};
@@ -51,8 +52,10 @@ test("isVerificationEnvSanitizeEnabled: true when PI_TEAMS_VERIFICATION_SANITIZE
 });
 
 test("INTEGRATION: with sanitize ON, secret env var does NOT reach the verification subprocess", async () => {
-	// Set a fake secret in our env. The verification command `printenv FAKE_SECRET_API_KEY`
-	// should output nothing (empty) when sanitization is enabled.
+	// Set a fake secret in our env. The verification command reads the named
+	// env var to stdout (POSIX: `printenv FAKE_SECRET_API_KEY`, win32: node
+	// `process.env.VAR`); output should be empty (or absent) when sanitization
+	// is enabled.
 	return withEnv(
 		{
 			PI_CREW_VERIFICATION_SANITIZE_ENV: "1",
@@ -61,7 +64,7 @@ test("INTEGRATION: with sanitize ON, secret env var does NOT reach the verificat
 		},
 		async () => {
 			const results = await executeVerificationCommands(
-				{ commands: ["printenv FAKE_SECRET_API_KEY"] } as never,
+				{ commands: [pickPrintenv("FAKE_SECRET_API_KEY")] } as never,
 				process.cwd(),
 				"test-run",
 				"test-task",
@@ -90,7 +93,7 @@ test("INTEGRATION: with sanitize OFF (default), secret env var DOES reach the ve
 		},
 		async () => {
 			const results = await executeVerificationCommands(
-				{ commands: ["printenv FAKE_SECRET_API_KEY"] } as never,
+				{ commands: [pickPrintenv("FAKE_SECRET_API_KEY")] } as never,
 				process.cwd(),
 				"test-run",
 				"test-task",
@@ -115,7 +118,7 @@ test("INTEGRATION: with sanitize ON + PRESERVE_ENV, explicitly-preserved secret 
 		},
 		async () => {
 			const results = await executeVerificationCommands(
-				{ commands: ["printenv FAKE_SECRET_API_KEY"] } as never,
+				{ commands: [pickPrintenv("FAKE_SECRET_API_KEY")] } as never,
 				process.cwd(),
 				"test-run",
 				"test-task",
@@ -131,9 +134,12 @@ test("INTEGRATION: with sanitize ON + PRESERVE_ENV, explicitly-preserved secret 
 });
 
 test("INTEGRATION: sanitize ON keeps essential non-secret vars (PATH, HOME)", async (t) => {
-	// This test spawns `printenv`, which is a Unix-only utility. Skip on Windows.
+	// This test spawns the cross-platform env-read fixture. On Windows it
+	// routes through Node's `process.env`; the previous `printenv`-only skip
+	// is preserved for the sanitize-test infrastructure parity the prior
+	// fix relied on (POSIX path coverage is the primary surface here).
 	if (process.platform === "win32") {
-		t.skip("printenv is Unix-only; sanitize-env allowlist is unit-tested separately");
+		t.skip("sanitize-env essential-vars test kept POSIX-only for parity with prior fix");
 		return;
 	}
 	return withEnv(
@@ -145,7 +151,7 @@ test("INTEGRATION: sanitize ON keeps essential non-secret vars (PATH, HOME)", as
 		async () => {
 			// Run two separate commands (validateGateCommand rejects `&&`).
 			const results = await executeVerificationCommands(
-				{ commands: ["printenv PATH", "printenv HOME"] } as never,
+				{ commands: [pickPrintenv("PATH"), pickPrintenv("HOME")] } as never,
 				process.cwd(),
 				"test-run",
 				"test-task",

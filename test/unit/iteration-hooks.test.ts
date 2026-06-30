@@ -79,7 +79,14 @@ describe("runIterationHook", () => {
 		assert.equal(result.fired, false);
 	});
 
-	it("fires and captures stdout when script succeeds with output", async () => {
+	it("fires and captures stdout when script succeeds with output", async (t) => {
+		// These test cases write POSIX `.sh` files to disk and execute them via
+		// the iteration-hook shim. On Windows the shim routes `.sh` through
+		// bash, but the test file extension is fixed by the runtime's
+		// resolveShellForScript policy — so we skip on win32 rather than
+		// rewriting the test to cover a .bat equivalent (out of scope; the
+		// shim's own .ps1/.bat routing is unit-tested elsewhere).
+		if (process.platform === "win32") { t.skip("POSIX .sh fixture; Windows iteration-hook path uses .ps1/.bat"); return; }
 		const scriptPath = path.join(hooksDir, "success.sh");
 		fs.writeFileSync(scriptPath, "#!/bin/bash\nread input\necho \"hook-output: $input\"\nexit 0\n");
 		fs.chmodSync(scriptPath, 0o755);
@@ -90,7 +97,8 @@ describe("runIterationHook", () => {
 		assert.ok(result.stdout.includes("hook-output:"));
 	});
 
-	it("fires and captures stderr when script exits non-zero", async () => {
+	it("fires and captures stderr when script exits non-zero", async (t) => {
+		if (process.platform === "win32") { t.skip("POSIX .sh fixture; Windows iteration-hook path uses .ps1/.bat"); return; }
 		const scriptPath = path.join(hooksDir, "fail.sh");
 		fs.writeFileSync(scriptPath, "#!/bin/bash\necho \"error message\" >&2\nexit 1\n");
 		fs.chmodSync(scriptPath, 0o755);
@@ -101,7 +109,8 @@ describe("runIterationHook", () => {
 		assert.ok(result.stderr.includes("error message"));
 	});
 
-	it("reports timeout when script runs longer than timeout", async () => {
+	it("reports timeout when script runs longer than timeout", async (t) => {
+		if (process.platform === "win32") { t.skip("POSIX .sh fixture with sleep builtin; Windows iteration-hook path uses .ps1/.bat"); return; }
 		const scriptPath = path.join(hooksDir, "slow.sh");
 		fs.writeFileSync(scriptPath, "#!/bin/bash\nsleep 5\necho done\nexit 0\n");
 		fs.chmodSync(scriptPath, 0o755);
@@ -111,7 +120,8 @@ describe("runIterationHook", () => {
 		assert.ok(result.durationMs >= 1_500);
 	});
 
-	it("truncates stdout at 8KB boundary on newline", async () => {
+	it("truncates stdout at 8KB boundary on newline", async (t) => {
+		if (process.platform === "win32") { t.skip("POSIX .sh fixture with for/seq; Windows iteration-hook path uses .ps1/.bat"); return; }
 		const scriptPath = path.join(hooksDir, "verbose.sh");
 		fs.writeFileSync(scriptPath, "#!/bin/bash\nfor i in $(seq 1 1000); do echo \"Line $i: padding\"; done\nexit 0\n");
 		fs.chmodSync(scriptPath, 0o755);

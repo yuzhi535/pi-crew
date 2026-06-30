@@ -17,7 +17,12 @@ describe("runPostCheck", () => {
 		assert.equal(result.durationMs, 0);
 	});
 
-	it("passes for a script that exits 0", async () => {
+	it("passes for a script that exits 0", async (t) => {
+		// These tests use POSIX `.sh` scripts with the `bash` shebang. On
+		// Windows, `runPostCheck` invokes the runtime's resolveShellForScript
+		// which routes `.sh` through bash — not portable when Git Bash is
+		// absent. Skip on win32 (path coverage parity with previous fix).
+		if (process.platform === "win32") { t.skip("POSIX .sh fixture; Windows uses .ps1/.bat routed by resolveShellForScript"); return; }
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-test-"));
 		try {
 			const scriptPath = path.join(dir, "check.sh");
@@ -36,7 +41,8 @@ describe("runPostCheck", () => {
 		}
 	});
 
-	it("fails for a script that exits non-zero", async () => {
+	it("fails for a script that exits non-zero", async (t) => {
+		if (process.platform === "win32") { t.skip("POSIX .sh fixture; Windows uses .ps1/.bat routed by resolveShellForScript"); return; }
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-test-"));
 		try {
 			const scriptPath = path.join(dir, "fail.sh");
@@ -54,7 +60,8 @@ describe("runPostCheck", () => {
 		}
 	});
 
-	it("reports timeout when script runs too long", async () => {
+	it("reports timeout when script runs too long", async (t) => {
+		if (process.platform === "win32") { t.skip("POSIX .sh fixture with sleep builtin; Windows uses .ps1/.bat"); return; }
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-test-"));
 		try {
 			const scriptPath = path.join(dir, "slow.sh");
@@ -71,7 +78,8 @@ describe("runPostCheck", () => {
 		}
 	});
 
-	it("uses env var PI_CREW_POST_CHECK_SCRIPT as fallback", async () => {
+	it("uses env var PI_CREW_POST_CHECK_SCRIPT as fallback", async (t) => {
+		if (process.platform === "win32") { t.skip("POSIX .sh fixture; Windows uses .ps1/.bat routed by resolveShellForScript"); return; }
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-crew-test-"));
 		const originalEnv = process.env.PI_CREW_POST_CHECK_SCRIPT;
 		try {
