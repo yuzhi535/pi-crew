@@ -23,6 +23,21 @@ export interface DependencyContextEntry {
 	structuredResults?: Record<string, unknown>;
 	artifactsProduced?: string[];
 	usage?: { inputTokens: number; outputTokens: number; durationMs: number };
+	/** L4 total-budget: byte length of `resultSummary` (UTF-16 code units).
+	 *  Populated by `collectDependencyOutputContext` so the trim step can sum
+	 *  per-dep sizes without re-computing. Set to 0 when the dep is
+	 *  downgraded to path-only. Optional for backward-compat with existing
+	 *  test fixtures that build entry objects directly. */
+	inlineBytes?: number;
+	/** L4 priority sort key: derived from the upstream task's `finishedAt`
+	 *  (ms epoch). More recent = higher priority in the trim. Undefined
+	 *  when the dep task never finished (treated as 0). */
+	recency?: number;
+	/** L4 priority sort key: heuristic relevance in [0, 1]. Higher = more
+	 *  relevant. Derived from the upstream task's `dependsOn` position in
+	 *  the workflow (earlier deps = higher relevance because they were
+	 *  explicitly listed first). Defaults to 0.5 (neutral) when unknown. */
+	relevance?: number;
 }
 
 export interface DependencyOutputContext {
@@ -60,6 +75,19 @@ function containedExists(filePath: string, baseDir?: string): boolean {
  * which code path read it.
  */
 export const MAX_RESULT_INLINE_BYTES = 32_000;
+
+/**
+ * L4 total-budget: cap on the SUM of inline bytes across ALL dependencies
+ * for a single downstream worker. 96KB is 3× the per-dep cap (3 × 32KB).
+ * Sized so a worker with 3 large dep outputs (e.g. 3 × 32KB truncated)
+ * stays below budget and the typical 1–2 dep case never hits the trim.
+ * When the sum exceeds this, the trim step in
+ * {@link collectDependencyOutputContext} downgrades the lowest-priority
+ * deps to path-only (resultPath + fullOutputPath, no inline text) so the
+ * downstream worker can `read` the full content on demand. The tee
+ * write happens BEFORE the trim, so fullOutputPath is always available.
+ */
+export const MAX_TOTAL_DEP_INLINE_BYTES = 96_000;
 
 /**
  * Tee-recovery multiplier (R2). A shared artifact is teed to disk — so the
@@ -244,6 +272,66 @@ function aggregateUsage(task: TeamTaskState): DependencyContextEntry["usage"] {
 }
 
 /**
+ * L4 total-budget trim. When the SUM of `inlineBytes` across all deps
+ * exceeds {@link MAX_TOTAL_DEP_INLINE_BYTES}, downgrade the lowest-priority
+ * deps to path-only (clear inline text, keep resultPath + fullOutputPath)
+ * so the downstream worker can `read` the full content on demand.
+ *
+ * Priority order (highest kept first):
+ *   1. status in {failed, needs-attention} (worker MUST see the failure)
+ *   2. recency descending (newer outputs more relevant)
+ *   3. relevance descending (workflow author-declared order)
+ *   4. tie-breaker: original array index (stable sort)
+ *
+ * Algorithm: sort by priority (descending), then walk top-down, keeping
+ * each dep until the running total would exceed the budget. The remaining
+ * deps are returned with `resultSummary=""` and `inlineBytes=0`; the
+ * `resultPath` and `fullOutputPath` fields are preserved so the worker
+ * can `read` them. Stable: the original input order is preserved for
+ * entries at the same priority level.
+ *
+ * Pure function — no I/O. Exported for unit testing.
+ */
+export function enforceDependencyInlineBudget(dependencies: DependencyContextEntry[]): DependencyContextEntry[] {
+	if (dependencies.length === 0) return dependencies;
+	const totalInlineBytes = dependencies.reduce((sum, dep) => sum + (dep.inlineBytes ?? 0), 0);
+	if (totalInlineBytes <= MAX_TOTAL_DEP_INLINE_BYTES) return dependencies;
+	// Build an index-keyed array so we can sort AND preserve the original
+	// position (for stable output order). Each entry gets a numeric
+	// priority score (higher = more important) and a stable tie-breaker.
+	const indexed = dependencies.map((dep, originalIndex) => {
+		const highPriority = dep.status === "failed" || dep.status === "needs-attention";
+		// Score: (highPriority?1000:0) + (recency/1e10) + (relevance*10) - (index*0.001)
+		// The 1000 base ensures high-priority wins even with no recency/relevance.
+		// recency/1e10 keeps it in [0, 1] for ms timestamps up to 1e13 (~year 2286).
+		// relevance*10 puts it in [0, 10].
+		// index*0.001 keeps stable order within the same bucket.
+		const score = (highPriority ? 1000 : 0) + (dep.recency ?? 0) / 1e10 + (dep.relevance ?? 0) * 10 - originalIndex * 0.001;
+		return { dep, originalIndex, score };
+	});
+	const sorted = [...indexed].sort((a, b) => b.score - a.score);
+	let used = 0;
+	const keepSet = new Set<number>(); // originalIndex values to KEEP inline
+	for (const item of sorted) {
+		const next = used + (item.dep.inlineBytes ?? 0);
+		if (next <= MAX_TOTAL_DEP_INLINE_BYTES) {
+			used = next;
+			keepSet.add(item.originalIndex);
+		}
+	}
+	// Return entries in original order; downgrade ones NOT in keepSet.
+	return dependencies.map((dep, originalIndex) => {
+		if (keepSet.has(originalIndex)) return dep;
+		return {
+			...dep,
+			resultSummary: "",
+			structuredResults: undefined,
+			inlineBytes: 0,
+		};
+	});
+}
+
+/**
  * Apply staleness-aware pruning to shared reads before they are injected
  * into a downstream worker's prompt. Converts shared reads to generic
  * {@link ToolResultEntry}s (toolName="read") and file edits from dependency
@@ -307,6 +395,19 @@ export function collectDependencyOutputContext(
 ): DependencyOutputContext {
 	const byStep = new Map(tasks.map((item) => [item.stepId, item]).filter((entry): entry is [string, TeamTaskState] => Boolean(entry[0])));
 	const byId = new Map(tasks.map((item) => [item.id, item]));
+	// L4 priority keys: build (a) the position of each dep in the workflow's
+	// `dependsOn:` list (earlier = more relevant because the workflow author
+	// declared it first), and (b) the finishedAt timestamp of each dep task
+	// (used for recency sort in the trim step). Both are looked up against
+	// `task.dependsOn` (the declared order) and `tasks` (finished timestamps).
+	const declaredOrder = new Map<string, number>();
+	task.dependsOn.forEach((depId, index) => declaredOrder.set(depId, index));
+	const recencyByTaskId = new Map<string, number>();
+	for (const item of tasks) {
+		if (!item.finishedAt) continue;
+		const ms = new Date(item.finishedAt).getTime();
+		if (Number.isFinite(ms)) recencyByTaskId.set(item.id, ms);
+	}
 	const dependencies = task.dependsOn
 		.map((dep) => byStep.get(dep) ?? byId.get(dep))
 		.filter((item): item is TeamTaskState => Boolean(item))
@@ -319,6 +420,12 @@ export function collectDependencyOutputContext(
 					})
 				: undefined;
 			const resultText = teeResult?.content;
+			const inlineBytes = resultText?.length ?? 0;
+			// L4 priority keys: recency from the dep's finishedAt, relevance
+			// from the dep's declared position in `task.dependsOn` (inverted
+			// to [0,1]: position 0 → 1.0, position N → max(0, 1 - N*0.1)).
+			const position = declaredOrder.get(item.id) ?? declaredOrder.get(item.stepId ?? "") ?? 0;
+			const relevance = Math.max(0, 1 - position * 0.1);
 			return {
 				taskId: item.id,
 				role: item.role,
@@ -329,8 +436,22 @@ export function collectDependencyOutputContext(
 				structuredResults: resultText ? tryParseJson(resultText) : undefined,
 				artifactsProduced: listTaskArtifacts(manifest, item.id),
 				usage: aggregateUsage(item),
+				inlineBytes,
+				recency: recencyByTaskId.get(item.id),
+				relevance,
 			};
 		});
+	// L4 total-budget trim: when the SUM of inline bytes across all deps
+	// exceeds MAX_TOTAL_DEP_INLINE_BYTES, downgrade the lowest-priority
+	// deps to path-only (clear inline text, keep resultPath +
+	// fullOutputPath). The downstream worker can `read` the full content
+	// on demand. Priority order (highest kept first):
+	//   1. status in {failed, needs-attention} (worker MUST see the failure)
+	//   2. recency descending (newer outputs more relevant)
+	//   3. relevance descending (workflow author-declared order)
+	// Tie-breakers within the same priority bucket are stable: the
+	// declaration order in `task.dependsOn` (earlier = more relevant).
+	const trimmedDependencies = enforceDependencyInlineBudget(dependencies);
 	const rawSharedReads = (step.reads === false ? [] : (step.reads ?? []))
 		.map((name) => {
 			const filePath = sharedPath(manifest, name);
@@ -366,8 +487,8 @@ export function collectDependencyOutputContext(
 	// (same file re-read with different selectors) and replaces stale large
 	// outputs with compact digest notices before injecting into the worker
 	// prompt. OPT-IN: default config protects recent results.
-	const sharedReads = pruneSharedReads(rawSharedReads, dependencies, manifest.artifactsRoot);
-	return { dependencies, sharedReads };
+	const sharedReads = pruneSharedReads(rawSharedReads, trimmedDependencies, manifest.artifactsRoot);
+	return { dependencies: trimmedDependencies, sharedReads };
 }
 
 export function renderDependencyOutputContext(context: DependencyOutputContext): string {
