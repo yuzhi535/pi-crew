@@ -94,7 +94,7 @@ export function ECHO_CMD(msg: string): PlatformCmd {
 export function PRINTENV_CMD(varname: string): PlatformCmd {
 	return {
 		posix: `printenv ${varname}`,
-		win32: `node -e "process.stdout.write(process.env.${varname} || '')"`,
+		win32: `node -e "process.stdout.write(process.env.${varname} ?? '')"`,
 	};
 }
 
