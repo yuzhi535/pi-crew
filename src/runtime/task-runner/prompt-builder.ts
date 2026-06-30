@@ -6,6 +6,7 @@ import { buildMemoryBlock } from "../agent-memory.ts";
 import { permissionForRole } from "../role-permission.ts";
 import { HANDOFF_TEMPLATE, renderTaskPacket } from "../task-packet.ts";
 import { buildWorkspaceTree } from "../workspace-tree.ts";
+import { renderSuggestedFilesSection, runRetrievalCycle } from "./retrieval-orchestrator.ts";
 
 /**
  * When loadMode is "lean", emit a tool guidance block that tells the worker
@@ -98,6 +99,15 @@ export async function renderTaskPrompt(
 	const tree = await buildWorkspaceTree(task.cwd);
 	const treeBlock = tree.rendered ? `# Workspace Structure\n${tree.rendered}` : "";
 
+	// M3: run iterative file-retrieval AFTER the workspace tree is
+	// assembled and BEFORE the dynamic suffix is built, so the suggested
+	// files section lands in the stable prefix (next to the tree) and
+	// is visible to the worker before they start on the task. Never
+	// throws — the orchestrator falls back to in-memory heuristic when
+	// ripgrep is not installed.
+	const retrieval = await runRetrievalCycle(step.task, manifest.goal, task.cwd);
+	const suggestedFilesBlock = renderSuggestedFilesSection(retrieval);
+
 	// Stable prefix: role instructions, coordination, workspace tree — rarely changes
 	const stablePrefix = [
 		"# pi-crew Worker Runtime Context",
@@ -122,6 +132,8 @@ export async function renderTaskPrompt(
 		coordinationBridgeInstructions(task),
 		"",
 		treeBlock,
+		"",
+		suggestedFilesBlock,
 		"",
 		toolGuidanceBlock(agent),
 		"",
