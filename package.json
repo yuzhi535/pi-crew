@@ -99,7 +99,7 @@
     "@earendil-works/pi-ai": "^0.77.0",
     "@earendil-works/pi-coding-agent": "^0.77.0",
     "@earendil-works/pi-tui": "^0.77.0",
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "tsx": "^4.22.3",
     "typescript": "^5.9.3"
   },
