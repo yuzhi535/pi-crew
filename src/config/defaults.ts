@@ -73,6 +73,23 @@ export const DEFAULT_ARTIFACT_CLEANUP = {
 	maxAgeDays: 7,
 };
 
+/** Round 25 (L6): thresholds for task-output-context inline-bytes budget.
+ *  Single source of truth for the per-dep cap, total dep cap, and tee
+ *  recovery multiplier. Previously hardcoded in
+ *  src/runtime/task-output-context.ts; moved here so that operators can
+ *  override them via config (Phase 5 ship) without touching runtime code. */
+export const DEFAULT_OUTPUT_CONTEXT = {
+	/** Per-dep inline-bytes cap (chars). Set by plan §5 L4 (96 KB total). */
+	maxResultInlineBytes: 32_000,
+	/** Total inline-bytes budget across all deps for one downstream worker. */
+	maxTotalDepInlineBytes: 96_000,
+	/** Tee recovery threshold: only when file > TEE_THRESHOLD_MULTIPLIER *
+	 *  maxResultInlineBytes, the truncated inline is also written to a
+	 *  tee file (R2: 1.25x = 40 KB). */
+	teeThresholdMultiplier: 1.25,
+} as const;
+
+
 export const DEFAULT_PATHS = {
 	state: {
 		runsSubdir: "state/runs",

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { DEFAULT_OUTPUT_CONTEXT } from "../config/defaults.ts";
 import { writeArtifact } from "../state/artifact-store.ts";
 import type { ArtifactDescriptor, TeamRunManifest, TeamTaskState } from "../state/types.ts";
 import { resolveRealContainedPath } from "../utils/safe-paths.ts";
@@ -73,8 +74,11 @@ function containedExists(filePath: string, baseDir?: string): boolean {
  * bounding memory. Larger than the old inconsistent per-call-site values
  * (24K/40K/80K) which truncated the same artifact differently depending on
  * which code path read it.
+ *
+ * Single source of truth: DEFAULT_OUTPUT_CONTEXT.maxResultInlineBytes
+ * (Round 25 / L6 — moved from hardcoded constant to config/defaults.ts).
  */
-export const MAX_RESULT_INLINE_BYTES = 32_000;
+export const MAX_RESULT_INLINE_BYTES = DEFAULT_OUTPUT_CONTEXT.maxResultInlineBytes;
 
 /**
  * L4 total-budget: cap on the SUM of inline bytes across ALL dependencies
@@ -86,8 +90,10 @@ export const MAX_RESULT_INLINE_BYTES = 32_000;
  * deps to path-only (resultPath + fullOutputPath, no inline text) so the
  * downstream worker can `read` the full content on demand. The tee
  * write happens BEFORE the trim, so fullOutputPath is always available.
+ *
+ * Single source of truth: DEFAULT_OUTPUT_CONTEXT.maxTotalDepInlineBytes.
  */
-export const MAX_TOTAL_DEP_INLINE_BYTES = 96_000;
+export const MAX_TOTAL_DEP_INLINE_BYTES = DEFAULT_OUTPUT_CONTEXT.maxTotalDepInlineBytes;
 
 /**
  * Tee-recovery multiplier (R2). A shared artifact is teed to disk — so the
@@ -96,8 +102,10 @@ export const MAX_TOTAL_DEP_INLINE_BYTES = 96_000;
  * (64 KB) to 1.25 (40 KB) so the 32–64 KB band, where the head+tail split
  * is already materially lossy for structured content, also gets a recovery
  * path instead of losing the middle forever.
+ *
+ * Single source of truth: DEFAULT_OUTPUT_CONTEXT.teeThresholdMultiplier.
  */
-export const TEE_THRESHOLD_MULTIPLIER = 1.25;
+export const TEE_THRESHOLD_MULTIPLIER = DEFAULT_OUTPUT_CONTEXT.teeThresholdMultiplier;
 
 /**
  * Read a file and return its content, truncating to a head+tail slice if it
