@@ -177,20 +177,27 @@ function isRetryableLinkError(error: unknown): boolean {
 }
 
 /**
- * Issue 1 fix: rename via link+unlink instead of rename.
- * Unlike rename, link() does NOT follow symlinks at the destination path.
- * It atomically creates a hard link to the source. We then unlink the source.
- * This prevents TOCTOU attacks where an attacker plants a symlink at the
- * destination between the check and the rename operation.
+ * Issue 1 fix: rename via renameSync on non-Windows (atomic per POSIX),
+ * with the pre-rename isSymlinkSafePath check as the symlink guard.
+ *
+ * Previously this used a three-step unlinkSync→linkSync→unlinkSync sequence
+ * to avoid symlink-following during rename, but that sequence is NOT atomic —
+ * a crash between unlink and link permanently loses the destination file.
+ * POSIX renameSync is genuinely atomic on the same filesystem; the symlink
+ * safety check (isSymlinkSafePath, called immediately before this function)
+ * prevents symlink-based TOCTOU attacks without sacrificing atomicity.
+ *
+ * On Windows, retain the link+unlink approach because renameSync does not
+ * offer the same atomicity guarantee there.
  */
 function renameWithLinkSync(tempPath: string, filePath: string, retries = 8): void {
 	let lastError: unknown;
 	for (let attempt = 0; attempt <= retries; attempt++) {
 		try {
-			// Windows: hard links fail with ENOENT when short-name and long-name
-			// path aliases are mixed (e.g. RUNNER~1 vs runneradmin). Use
-			// renameSync which handles this correctly via MoveFileEx.
 			if (process.platform === "win32") {
+				// Windows: use link+unlink because renameSync does not offer
+				// the same atomicity guarantee. The retry loop with jitter
+				// mitigates the non-atomic window risk.
 				try {
 					fs.unlinkSync(filePath);
 				} catch {
@@ -204,21 +211,15 @@ function renameWithLinkSync(tempPath: string, filePath: string, retries = 8): vo
 					if (!isRetryableLinkError(renameError) || attempt === retries) break;
 				}
 			} else {
-				// First try to unlink any existing file at destination (hard links don't follow symlinks)
-				try {
-					fs.unlinkSync(filePath);
-				} catch {
-					/* destination may not exist */
-				}
-				// Create hard link - does NOT follow symlinks at filePath
-				fs.linkSync(tempPath, filePath);
-				// Successfully linked - now unlink the temp file
-				fs.unlinkSync(tempPath);
+				// POSIX: renameSync is atomic on the same filesystem.
+				// The caller (atomicWriteFile) already ran isSymlinkSafePath
+				// immediately before calling us, so the symlink guard is in place.
+				fs.renameSync(tempPath, filePath);
 				return;
 			}
 		} catch (error) {
 			lastError = error;
-			if (!isRetryableLinkError(error) || attempt === retries) break;
+			if (!isRetryableRenameError(error) || attempt === retries) break;
 		}
 		const base = Math.min(500, 10 * 2 ** attempt);
 		const jitter = base * 0.2 * (Math.random() * 2 - 1);
@@ -245,18 +246,13 @@ async function renameWithLinkAsync(tempPath: string, filePath: string, retries =
 					if (!isRetryableLinkError(renameError) || attempt === retries) break;
 				}
 			} else {
-				try {
-					await fs.promises.unlink(filePath);
-				} catch {
-					/* destination may not exist */
-				}
-				await fs.promises.link(tempPath, filePath);
-				await fs.promises.unlink(tempPath);
+				// POSIX: rename is atomic on the same filesystem.
+				await fs.promises.rename(tempPath, filePath);
 				return;
 			}
 		} catch (error) {
 			lastError = error;
-			if (!isRetryableLinkError(error) || attempt === retries) break;
+			if (!isRetryableRenameError(error) || attempt === retries) break;
 		}
 		const base = Math.min(500, 10 * 2 ** attempt);
 		const jitter = base * 0.2 * (Math.random() * 2 - 1);

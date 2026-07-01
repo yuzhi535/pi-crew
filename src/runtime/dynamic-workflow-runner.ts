@@ -74,23 +74,27 @@ function assertStructuredCloneable(value: unknown, name: string): void {
 /**
  * Resolve + validate the script path against the allowlist of workflow dirs (§0c C5).
  * Returns the real contained path or throws.
+ *
+ * Distinguishes containment errors from other errors (I/O, permission, symlink loops)
+ * so the real root cause is surfaced instead of a misleading "outside allowed dirs" message.
  */
 function resolveScriptPath(workflow: DynamicWorkflowConfig, cwd: string): string {
-	const crewRoot = projectCrewRoot(cwd);
 	// Allowlist: the script must resolve inside one of the workflow discovery dirs.
 	// (discover-workflows.ts only reads from packageRoot/workflows, userPiRoot/workflows,
 	//  and projectCrewRoot/workflows — so the script already came from an allowed dir,
 	//  but we still validate containment to defeat symlink traversal.)
-	// Fix round-5 P1: the round-4 P2-5 fix over-corrected to a SINGLE base (crewRoot/workflows).
-	// But discoverWorkflows() reads from THREE dirs (builtin, user, project). Use the same bases
-	// so user/builtin dynamic workflows aren't rejected.
 	const allowedBases = [join(projectCrewRoot(cwd), "workflows"), join(userPiRoot(), "workflows"), join(packageRoot(), "workflows")];
 	for (const base of allowedBases) {
 		try {
 			const real = resolveRealContainedPath(base, workflow.filePath);
+			// resolveRealContainedPath returns a string or throws — if it returns, it's valid.
 			if (real) return real;
-		} catch {
-			// not contained in this base — try next
+		} catch (error) {
+			// Containment errors: swallow and try next base.
+			// I/O, permission, symlink errors: re-throw so the real root cause is surfaced.
+			const msg = error instanceof Error ? error.message : String(error);
+			if (msg.startsWith("Path is outside") || msg.startsWith("Security:")) continue;
+			throw error;
 		}
 	}
 	// Not contained in any allowed base — refuse (do NOT fall back to the raw path).
@@ -106,14 +110,17 @@ function resolveScriptPath(workflow: DynamicWorkflowConfig, cwd: string): string
  * Round-13 P0-2: after reading the script source, run `assertDeterministicScript`
  * to reject non-deterministic calls (Date.now()/Math.random()/new Date()) BEFORE
  * jiti executes the module. The check is opt-out via PI_CREW_DWF_SKIP_DETERMINISM_CHECK=1.
+ * For .ts scripts, passes isTypeScript=true so the checker transpiles before parsing
+ * (acorn cannot parse TypeScript syntax directly).
  */
 async function loadWorkflowModule(scriptPath: string): Promise<DynamicWorkflowScript> {
 	// Round-13 P0-2: read source first so we can AST-scan before execution.
 	// jiti does not surface the transpiled source back to us, so we read the
 	// raw .dwf.ts file. This is the same source jiti will execute.
 	const scriptSource = readFileSync(scriptPath, "utf-8");
+	const isTypeScript = scriptPath.endsWith(".ts");
 	if (isDeterminismCheckEnabled()) {
-		assertDeterministicScript(scriptSource);
+		assertDeterministicScript(scriptSource, isTypeScript);
 	}
 	// jiti is the same loader async-runner.ts uses (resolveTypeScriptLoader). We require it
 	// lazily so this module stays importable in environments without jiti (type-only consumers).
@@ -133,9 +140,40 @@ async function loadWorkflowModule(scriptPath: string): Promise<DynamicWorkflowSc
 	return fn as DynamicWorkflowScript;
 }
 
+/** Build MakeWorkflowCtx options from the run input. */
+function buildCtxOptions(
+	input: RunDynamicWorkflowInput,
+	workflow: DynamicWorkflowConfig,
+	signal: AbortSignal,
+	resumedState: ReturnType<DwfStore["load"]>,
+	dwfStore: DwfStore,
+): import("./dynamic-workflow-context.ts").MakeWorkflowCtxOptions {
+	return {
+		concurrency: input.concurrency ?? workflow.maxConcurrency ?? 4,
+		signal,
+		team: input.team,
+		modelOverride: input.modelOverride,
+		tokenBudget: input.tokenBudget ?? workflow.maxTokenBudget,
+		args: input.manifest.args,
+		resumedState,
+		onCheckpoint: (state) => {
+			try {
+				dwfStore.save(state);
+			} catch (error) {
+				logInternalError("dynamic-workflow-runner.checkpoint-save", error, `runId=${input.manifest.runId}`);
+			}
+		},
+	};
+}
+
 /**
  * Run the dynamic workflow script. Loads it, builds the ctx, executes, and returns
  * {manifest, tasks} with the manifest updated to a terminal status + result artifact.
+ *
+ * Timeout safety: uses AbortController so the script's ctx.signal fires on timeout,
+ * preventing zombie scripts from continuing to write checkpoints and spawn children
+ * after the runner declares failure. Checkpoint is cleaned up in a `finally` block
+ * on BOTH success and failure paths.
  */
 export async function runDynamicWorkflow(input: RunDynamicWorkflowInput): Promise<RunDynamicWorkflowResult> {
 	const { manifest, workflow, signal } = input;
@@ -166,40 +204,26 @@ export async function runDynamicWorkflow(input: RunDynamicWorkflowInput): Promis
 		});
 	}
 
-	const ctx = makeWorkflowCtx(manifest, {
-		concurrency: input.concurrency ?? workflow.maxConcurrency ?? 4,
-		signal,
-		team: input.team,
-		modelOverride: input.modelOverride,
-		tokenBudget: input.tokenBudget ?? workflow.maxTokenBudget,
-		args: manifest.args,
-		resumedState,
-		// round-18 P2-3: checkpoint after each ctx.agent() call so a crash between calls
-		// leaves durable state. onCheckpoint captures the closure values at call time.
-		onCheckpoint: (state) => {
-			try {
-				dwfStore.save(state);
-			} catch (error) {
-				logInternalError("dynamic-workflow-runner.checkpoint-save", error, `runId=${manifest.runId}`);
-			}
-		},
-	});
-
-	// Freeze the ctx so the script cannot add/override capability methods (§0c C4).
-	const frozenCtx = Object.freeze(ctx);
-
 	try {
 		const script = await loadWorkflowModule(scriptPath);
-		// Round-11 test fix (runtime): hard timeout on script execution.
-		// Without this, scripts that spawn long-running child processes (e.g., `spawn("pi", ...)`)
-		// hang forever. The ctx.signal.timeout is cooperative only — it fires AbortSignal,
-		// it does NOT kill the script. Promise.race with a hard timeout at least returns an
-		// error so the runner doesn't hang. The spawned child process is leaked, but the
-		// dynamic-workflow returns failure promptly. (v1.5: use Worker threads to actually kill.)
-		const SCRIPT_TIMEOUT_MS = Number.parseInt(process.env.PI_CREW_DWF_SCRIPT_TIMEOUT_MS ?? "", 10) || 600_000; // 10 min default
+
+		// Timeout handling: use AbortController so the script's ctx.signal fires on timeout.
+		// This fixes the zombie-script problem where Promise.race would abandon the script
+		// promise without stopping it — the script would continue calling ctx.agent() and
+		// writing checkpoints after the runner declared failure.
+		const parsedTimeout = Number.parseInt(process.env.PI_CREW_DWF_SCRIPT_TIMEOUT_MS ?? "", 10);
+		const SCRIPT_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 600_000; // 10 min default
 		let timeoutHandle: NodeJS.Timeout | undefined;
+		const scriptController = new AbortController();
+		// Combine the external signal (e.g. cancellation) with the timeout signal.
+		const combinedSignal = AbortSignal.any([signal, scriptController.signal]);
+
+		const timedCtx = makeWorkflowCtx(manifest, buildCtxOptions(input, workflow, combinedSignal, resumedState, dwfStore));
+		const frozenTimedCtx = Object.freeze(timedCtx);
+
 		const timeoutPromise = new Promise<never>((_, reject) => {
 			timeoutHandle = setTimeout(() => {
+				scriptController.abort(); // Signal the script to stop
 				reject(
 					new Error(
 						`Dynamic workflow script timed out after ${SCRIPT_TIMEOUT_MS}ms. The script may have spawned a child process that did not exit. Check for spawn/exec calls without proper stdio handling.`,
@@ -209,10 +233,53 @@ export async function runDynamicWorkflow(input: RunDynamicWorkflowInput): Promis
 			timeoutHandle.unref?.();
 		});
 		try {
-			await Promise.race([script(frozenCtx), timeoutPromise]);
+			await Promise.race([script(frozenTimedCtx), timeoutPromise]);
 		} finally {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
 		}
+
+		const final = getWorkflowFinalResult(timedCtx);
+		const finalText = final
+			? readFinalArtifact(final.artifactPath)
+			: `(dynamic workflow '${workflow.name}' completed without calling ctx.setResult())`;
+
+		assertStructuredCloneable(finalText, "final artifact content (set via ctx.setResult)");
+
+		const summary = writeArtifact(manifest.artifactsRoot, {
+			kind: "result",
+			relativePath: "summary.md",
+			content: finalText,
+			producer: "dynamic-workflow",
+		});
+
+		// Safety net: close the last open phase before completing.
+		const phaseState = getWorkflowPhaseState(timedCtx);
+		if (phaseState?.currentPhase !== undefined) {
+			appendEvent(eventsPath, {
+				type: "dwf.phase_completed",
+				runId: manifest.runId,
+				data: { phase: phaseState.currentPhase },
+			});
+			phaseState.currentPhase = undefined;
+		}
+
+		appendEvent(eventsPath, {
+			type: "dwf.completed",
+			runId: manifest.runId,
+			data: { workflow: workflow.name, summaryArtifact: summary.path },
+		});
+
+		const summaryText = finalText.slice(0, 2000);
+		assertStructuredCloneable(summaryText, "manifest.summary (derived from final result)");
+
+		const updatedManifest: TeamRunManifest = {
+			...manifest,
+			status: "completed",
+			summary: summaryText,
+			updatedAt: new Date().toISOString(),
+			artifacts: [...manifest.artifacts, summary],
+		};
+		return { manifest: updatedManifest, tasks: [] };
 	} catch (error) {
 		logInternalError("dynamic-workflow-runner.run", error, `runId=${manifest.runId}, workflow=${workflow.name}`);
 		appendEvent(eventsPath, {
@@ -222,66 +289,14 @@ export async function runDynamicWorkflow(input: RunDynamicWorkflowInput): Promis
 				error: error instanceof Error ? error.message : String(error),
 			},
 		});
-		// Re-throw so background-runner's error handling marks the run failed.
 		throw error;
+	} finally {
+		// Clean up the checkpoint on BOTH success and failure paths.
+		// On success: cleared so a fresh re-run starts from scratch.
+		// On failure: cleared so a retry doesn't load a partial/corrupt checkpoint
+		// written by a crashing or timed-out zombie script.
+		dwfStore.delete();
 	}
-
-	const final = getWorkflowFinalResult(ctx);
-	const finalText = final
-		? readFinalArtifact(final.artifactPath)
-		: `(dynamic workflow '${workflow.name}' completed without calling ctx.setResult())`;
-
-	// round-12 P0-4: fail fast on unawaited Promise returns BEFORE we try to
-	// write a 2 KB blob that contains a Promise reference. structuredClone on
-	// a string always succeeds; if it doesn't, the script returned something
-	// uncloneable (most often an unawaited Promise) and we want a clear error.
-	assertStructuredCloneable(finalText, "final artifact content (set via ctx.setResult)");
-
-	// Write a summary artifact mirroring the static-workflow summary.md contract (run.ts reads this).
-	const summary = writeArtifact(manifest.artifactsRoot, {
-		kind: "result",
-		relativePath: "summary.md",
-		content: finalText,
-		producer: "dynamic-workflow",
-	});
-
-	// round-12 P0-1: safety net — if a script never explicitly closes its
-	// final phase before returning, the runner emits a closing event so the
-	// last open phase is always terminated before dwf.completed.
-	const phaseState = getWorkflowPhaseState(ctx);
-	if (phaseState?.currentPhase !== undefined) {
-		appendEvent(eventsPath, {
-			type: "dwf.phase_completed",
-			runId: manifest.runId,
-			data: { phase: phaseState.currentPhase },
-		});
-		phaseState.currentPhase = undefined;
-	}
-
-	appendEvent(eventsPath, {
-		type: "dwf.completed",
-		runId: manifest.runId,
-		data: { workflow: workflow.name, summaryArtifact: summary.path },
-	});
-
-	// round-18 P2-3: the run completed cleanly — delete the checkpoint so a fresh re-run
-	// (same runId) starts from scratch rather than resuming stale state.
-	dwfStore.delete();
-
-	// round-12 P0-4: also guard the manifest.summary slice (the value is
-	// written into JSON-serialized manifest state — a Promise here would also
-	// crash later in the run-event-bus emitter).
-	const summaryText = finalText.slice(0, 2000);
-	assertStructuredCloneable(summaryText, "manifest.summary (derived from final result)");
-
-	const updatedManifest: TeamRunManifest = {
-		...manifest,
-		status: "completed",
-		summary: summaryText,
-		updatedAt: new Date().toISOString(),
-		artifacts: [...manifest.artifacts, summary],
-	};
-	return { manifest: updatedManifest, tasks: [] };
 }
 
 function readFinalArtifact(artifactPath: string): string {

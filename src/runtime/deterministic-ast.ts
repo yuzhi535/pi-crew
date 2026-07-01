@@ -6,18 +6,21 @@
  *   - Prompts mentioning "Date.now()" as string literals are accepted.
  *   - Comments containing "Date.now()" are accepted.
  *   - `Date.parse()`, `Date.UTC()`, `Math.floor()`, etc. are accepted (only `now` and `random` are blocked).
+ *   - `new Date(0)` with deterministic arguments is accepted (only `new Date()` without args is blocked).
  *
  * Adapted from pi-dynamic-workflows/src/workflow.ts (MIT) — see NOTICE.md.
  *
  * The walker uses acorn's parse() with permissive flags (allowAwaitOutsideFunction,
- * allowReturnOutsideFunction) so we don't reject perfectly valid workflow scripts
- * that contain top-level `await` or `return`.
+ * allowReturnOutsideFunction). For .dwf.ts TypeScript sources, type annotations are
+ * stripped via TypeScript's transpileModule before feeding to acorn, so the
+ * determinism check actually works on real-world TypeScript workflows (acorn alone
+ * cannot parse TS syntax).
  *
- * On parse error, this function returns silently: jiti will surface a clearer
- * parse error downstream. We don't double-report parse errors.
- */
+ * On parse error (JS) or transpile error (TS), this function returns silently: jiti
+ * will surface a clearer parse/build error downstream. We don't double-report. */
 
 import { parse } from "acorn";
+import ts from "typescript";
 
 const NONDETERMINISM_ERROR =
 	"Workflow scripts must be deterministic: Date.now()/Math.random()/new Date() are unavailable. These introduce non-reproducible behavior across runs. Use ctx.vars for cached state, or pass a fixed seed via ctx.setArgs(). To bypass this check (escape hatch), set PI_CREW_DWF_SKIP_DETERMINISM_CHECK=1.";
@@ -31,13 +34,33 @@ export class DeterminismError extends Error {
 
 /**
  * Parse `script` and walk the AST looking for non-deterministic calls.
- * Throws DeterminismError on the first hit. Silently returns on parse error
- * (jiti will produce a clearer message downstream).
+ * Throws DeterminismError on the first hit. Silently returns on parse
+ * or transpile error (jiti will produce a clearer message downstream).
+ *
+ * For .ts scripts: TypeScript types are stripped via `ts.transpileModule`
+ * before feeding to acorn, so real-world TS workflows (with type annotations,
+ * interfaces, generics, etc.) are properly checked instead of silently skipped.
  */
-export function assertDeterministicScript(script: string): void {
+export function assertDeterministicScript(script: string, isTypeScript = false): void {
+	let jsSource = script;
+	if (isTypeScript) {
+		try {
+			const result = ts.transpileModule(script, {
+				compilerOptions: {
+					target: ts.ScriptTarget.ESNext,
+					module: ts.ModuleKind.ESNext,
+					// Strip all type-only constructs: interfaces, type aliases, annotations, etc.
+				},
+			});
+			jsSource = result.outputText;
+		} catch {
+			// Transpile errors are handled by jiti downstream — don't double-report.
+			return;
+		}
+	}
 	let ast: AstNode;
 	try {
-		ast = parse(script, {
+		ast = parse(jsSource, {
 			ecmaVersion: "latest",
 			sourceType: "module",
 			allowAwaitOutsideFunction: true,
@@ -109,21 +132,36 @@ function isMathRandomCall(node: AstNode): boolean {
 
 function isNewDateExpression(node: AstNode): boolean {
 	if (node.type !== "NewExpression") return false;
-	const callee = asAstNode(node.callee);
-	return callee?.type === "Identifier" && callee.name === "Date";
+	const callee = unwrapSequence(asAstNode(node.callee));
+	if (callee?.type !== "Identifier" || callee.name !== "Date") return false;
+	// Only flag `new Date()` without arguments (non-deterministic current time).
+	// `new Date(0)`, `new Date(2024, 0, 1)`, etc. are fully deterministic.
+	const args = node.arguments as unknown[] | undefined;
+	return !Array.isArray(args) || args.length === 0;
 }
 
 /**
  * Test whether `node[childKey]` is a MemberExpression of shape `objectName.propertyName`,
  * where the property is either a static Identifier or a resolvable static string.
  * `childKey` is the property name on `node` (usually "callee" for CallExpression).
+ *
+ * Unwraps SequenceExpression (comma operator) so that `(0, Date).now()` is detected.
  */
 function isMemberExpression(node: AstNode, childKey: string, objectName: string, propertyName: string): boolean {
 	const child = asAstNode(node[childKey]);
 	if (!child || child.type !== "MemberExpression") return false;
-	const object = asAstNode(child.object);
+	const object = unwrapSequence(asAstNode(child.object));
 	if (!object || object.type !== "Identifier" || object.name !== objectName) return false;
 	return propertyNameOf(child) === propertyName;
+}
+
+/** Unwrap SequenceExpression (comma operator) to get the terminal expression. */
+function unwrapSequence(node: AstNode | undefined): AstNode | undefined {
+	if (!node) return undefined;
+	if (node.type !== "SequenceExpression") return node;
+	const exprs = node.expressions as unknown[] | undefined;
+	if (!Array.isArray(exprs) || exprs.length === 0) return node;
+	return asAstNode(exprs[exprs.length - 1]);
 }
 
 function propertyNameOf(node: AstNode): string | undefined {

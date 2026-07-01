@@ -298,7 +298,7 @@ export function makeWorkflowCtx(manifest: TeamRunManifest, opts: MakeWorkflowCtx
 						ok: false,
 						text: "",
 						error: "workflow token budget exhausted",
-						durationMs: 0,
+						durationMs: Date.now() - started,
 					};
 				}
 				const agentConfig = resolveAgentForRole(call.role, {
@@ -366,18 +366,21 @@ export function makeWorkflowCtx(manifest: TeamRunManifest, opts: MakeWorkflowCtx
 					runId: manifest.runId,
 					role: call.role ?? call.agent,
 				});
+				// round-14 P1-2: accumulate this run's token usage into the workflow budget.
+				// MUST happen BEFORE any early return (including non-zero exit codes) so
+				// failed calls still count against the budget. A failing loop shouldn't
+				// be able to bypass the spending cap.
+				const parsed = parsePiJsonOutput(childResult.stdout);
+				wfState.spent += (parsed.usage?.input ?? 0) + (parsed.usage?.output ?? 0);
 				if (childResult.exitCode !== 0 || childResult.error) {
 					return {
 						ok: false,
 						text: "",
+						usage: parsed.usage,
 						error: childResult.error ?? `exit ${childResult.exitCode}`,
 						durationMs: Date.now() - started,
 					};
 				}
-				const parsed = parsePiJsonOutput(childResult.stdout);
-				// round-14 P1-2: accumulate this run's token usage into the workflow budget.
-				// Covers both the success and schema-mismatch paths (both report parsed.usage).
-				wfState.spent += (parsed.usage?.input ?? 0) + (parsed.usage?.output ?? 0);
 				let text = parsed.finalText ?? "";
 				// Round-11 test fix: parsePiJsonOutput only extracts text from pi event stream
 				// ({type:"message_end", message:{role:"assistant", content:[...]}}). When the

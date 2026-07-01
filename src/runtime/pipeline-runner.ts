@@ -281,8 +281,10 @@ export class PipelineRunner {
 			}));
 
 			// Execute with concurrency limit - pass each item to callback
-			const results = await mapConcurrent(tasks, maxConcurrency, async (task) => {
-				// Call the user-provided callback with each item
+			// note: each executeStageInternal call wraps its result in [result],
+			// so fan-out produces [[r1],[r2],...]. Flat to [r1,r2,...] so
+			// downstream stages see a flat previousResults array.
+			const nestedResults = await mapConcurrent(tasks, maxConcurrency, async (task) => {
 				const result = await this.executeStageInternal(
 					stage,
 					task.item,
@@ -296,7 +298,7 @@ export class PipelineRunner {
 				return result;
 			});
 
-			return results;
+			return nestedResults.flat();
 		}
 
 		// Single execution - pass inputs directly to callback
@@ -314,13 +316,18 @@ export class PipelineRunner {
 	 *
 	 * C5: Validates template inputs to prevent injection.
 	 */
-	private resolveInputs(inputs: unknown, previousResults: unknown[], context: Record<string, unknown>): unknown {
+	private resolveInputs(inputs: unknown, previousResults: unknown[], context: Record<string, unknown>, depth: number = 0): unknown {
+		// H9: prevent stack overflow from deep recursion
+		if (depth > 50) {
+			throw errors.depthLimitExceeded(depth, "pipeline-inputs");
+		}
+
 		// If inputs is an array, resolve each element
 		if (Array.isArray(inputs)) {
 			// H4: Type safety - limit array size to prevent memory issues
 			const maxItems = 10000;
 			const limitedInputs = inputs.length > maxItems ? inputs.slice(0, maxItems) : inputs;
-			return limitedInputs.map((input) => this.resolveInputs(input, previousResults, context));
+			return limitedInputs.map((input) => this.resolveInputs(input, previousResults, context, depth + 1));
 		}
 
 		// If inputs is a string, check for template patterns
@@ -328,19 +335,26 @@ export class PipelineRunner {
 			return this.resolveTemplate(inputs, previousResults, context);
 		}
 
-		// If inputs is an object, resolve each value
-		if (typeof inputs === "object" && inputs !== null) {
+		// If inputs is a plain object, resolve each value. Guard against
+		// special objects (Date, RegExp, Map, Set) that would silently lose
+		// data when iterated with Object.entries().
+		if (typeof inputs === "object" && inputs !== null && Object.prototype.toString.call(inputs) === "[object Object]") {
 			const resolved: Record<string, unknown> = {};
 			for (const [key, value] of Object.entries(inputs)) {
 				// C5: Validate key to prevent prototype pollution
 				if (this.isValidObjectKey(key)) {
-					resolved[key] = this.resolveInputs(value as string | string[] | Record<string, unknown>, previousResults, context);
+					resolved[key] = this.resolveInputs(
+						value as string | string[] | Record<string, unknown>,
+						previousResults,
+						context,
+						depth + 1,
+					);
 				}
 			}
 			return resolved;
 		}
 
-		// Primitive value - return as-is
+		// Primitive value (or non-plain object) — return as-is
 		return inputs;
 	}
 
