@@ -4,6 +4,37 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export function packageRoot(): string {
+	// Phase 5 H2 follow-up: this function is called from both src/ paths
+	// (e.g. src/utils/paths.ts) AND from dist/index.mjs after bundling.
+	// The original 2-level walk only worked for src/ paths:
+	//   src/utils/paths.ts → src/utils/ → src/ → packageRoot
+	// For dist/index.mjs we need only 1 level:
+	//   dist/index.mjs → dist/ → packageRoot
+	// Heuristic: walk up from `import.meta.url`'s directory until we find
+	// a directory that contains `package.json` with our package name. This
+	// is robust to either entrypoint and to future relocation (e.g., a
+	// monorepo layout under `packages/pi-crew/dist/index.mjs` would walk
+	// 2 levels from dist).
+	let dir = path.dirname(fileURLToPath(import.meta.url));
+	for (let i = 0; i < 6; i++) {
+		const candidate = path.join(dir, "package.json");
+		if (fs.existsSync(candidate)) {
+			try {
+				const pkg = JSON.parse(fs.readFileSync(candidate, "utf-8")) as { name?: string };
+				if (pkg.name === "pi-crew") {
+					return dir;
+				}
+			} catch {
+				// Unreadable or invalid JSON — keep walking.
+			}
+		}
+		const parent = path.dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	// Fallback: 2-level walk (matches original src/ semantics). Bundles
+	// that don't ship a package.json (very unusual) will get a wrong path
+	// here, but that's a build-pipeline bug we want to surface, not hide.
 	return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 }
 
