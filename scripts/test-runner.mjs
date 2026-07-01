@@ -53,7 +53,13 @@ const result = spawnSync(
 	{
 		stdio: "inherit",
 		env: { ...process.env, NODE_ENV: "test", PI_CREW_SKIP_HOME_CHECK: "1" },
-		timeout: 600_000, // 10 minute overall timeout
+		// 2026-07-01: bumped from 600s → 900s after atomic-write.ts added
+		// fs.fsyncSync for the mailbox-replay flake fix. fsync adds ~5-10ms
+		// per atomic-write, which compounded across 5800 tests pushed
+		// Windows CI just over the 10-minute budget. 15 minutes gives
+		// comfortable headroom on Windows (slowest) without masking real
+		// test bugs.
+		timeout: 900_000,
 	},
 );
 
