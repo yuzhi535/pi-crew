@@ -1,0 +1,115 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # Daily at 9:00 UTC (17:00 CST)
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    # Manual trigger from GitHub UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/baphuongna/pi-crew.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Check for new commits
+        id: check
+        run: |
+          COUNT=$(git rev-list --count main..upstream/main)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "has_diff=true" >> "$GITHUB_OUTPUT"
+              echo "upstream_head=$(git rev-parse upstream/main)" \
+                >> "$GITHUB_OUTPUT"
+            echo "commit_list<<EOF" >> "$GITHUB_OUTPUT"
+              git log --oneline --no-merges main..upstream/main \
+                >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_diff=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: List upstream changes (summary)
+        if: steps.check.outputs.has_diff == 'true'
+        run: |
+          echo "### Upstream Commits" >> "$GITHUB_STEP_SUMMARY"
+          echo "(${{ steps.check.outputs.count }} new)" \
+            >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          git log --oneline --no-merges main..upstream/main \
+            >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Changed Files (stats)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          git diff --stat main..upstream/main >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create sync branch
+        if: steps.check.outputs.has_diff == 'true'
+        run: |
+          BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          git checkout -b "$BRANCH"
+          git merge upstream/main --no-edit
+          git push origin "$BRANCH"
+        id: branch
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_diff == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: existing } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${context.repo.owner}:${{ steps.branch.outputs.branch }}`,
+            });
+            if (existing.length === 0) {
+              const title = '⬆️ Sync upstream — '
+                + '${{ steps.check.outputs.count }} new commits';
+              const body = [
+                'Upstream (baphuongna/pi-crew) has '
+                  + '${{ steps.check.outputs.count }} new commits.',
+                '',
+                '## Review Checklist',
+                '- [ ] Review for conflicts with local changes',
+                '- [ ] Decide which features/fixes to keep',
+                '- [ ] Resolve merge conflicts if any',
+                '',
+                '## Upstream Commits',
+                '```',
+                '${{ steps.check.outputs.commit_list }}',
+                '```',
+                '',
+                '> Auto-created by sync-upstream workflow.',
+              ].join('\n');
+              await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                head: '${{ steps.branch.outputs.branch }}',
+                base: 'main',
+                body,
+              });
+            }
