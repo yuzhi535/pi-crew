@@ -45,7 +45,30 @@ For every task:
 
 ```bash
 npm test
+# Check for pending upstream sync PRs
+gh pr list --search "Sync upstream" --json number,title,headRefName,createdAt
 ```
+
+## Upstream Sync PR Review
+
+When pi starts in this directory, check for open "Sync upstream" PRs:
+
+```bash
+gh pr list --label "" --search "Sync upstream" --state open --json number,title,url,createdAt
+```
+
+If any are found:
+
+1. Fetch the PR diff: `gh pr diff <NUMBER>`
+2. Review the diff focusing on:
+   - Conflict files (files modified in BOTH fork and upstream)
+   - New features that overlap with existing fork fixes
+   - Bug fixes that may already be addressed in the fork
+3. Present a decision table:
+   - ✅ Safe to merge (no conflicts, complementary)
+   - ⚠️ Needs manual review (conflict files, overlapping logic)
+   - ❌ Skip (already fixed, or breaks fork changes)
+4. Ask the user which to merge/keep/skip
 
 ## Important paths
 

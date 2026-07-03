@@ -23,10 +23,12 @@ jobs:
       - name: Set git identity
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email \
+            "github-actions[bot]@users.noreply.github.com"
 
       - name: Add upstream remote
-        run: git remote add upstream https://github.com/baphuongna/pi-crew.git
+        run: git remote add upstream \
+          https://github.com/baphuongna/pi-crew.git
 
       - name: Fetch upstream
         run: git fetch upstream main
@@ -38,31 +40,46 @@ jobs:
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           if [ "$COUNT" -gt 0 ]; then
             echo "has_diff=true" >> "$GITHUB_OUTPUT"
-              echo "upstream_head=$(git rev-parse upstream/main)" \
-                >> "$GITHUB_OUTPUT"
             echo "commit_list<<EOF" >> "$GITHUB_OUTPUT"
-              git log --oneline --no-merges main..upstream/main \
-                >> "$GITHUB_OUTPUT"
+            git log --oneline --no-merges main..upstream/main \
+              >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            # Identify fork-only files (modified by us, not upstream)
+            UPSTREAM_FILES=$(git diff --name-only main...upstream/main)
+            FORK_ONLY_FILES=$(git diff --name-only upstream/main...main)
+            # Files changed in BOTH = potential conflicts
+            echo "$UPSTREAM_FILES" > /tmp/upstream_files.txt
+            echo "$FORK_ONLY_FILES" > /tmp/fork_files.txt
+            CONFLICT_FILES=$(comm -12 \
+              <(sort /tmp/upstream_files.txt) \
+              <(sort /tmp/fork_files.txt))
+            echo "conflict_file_list<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${CONFLICT_FILES:-none}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            # Per-file diff stats for conflict files
+            echo "conflict_diff_summary<<EOF" >> "$GITHUB_OUTPUT"
+            for f in $CONFLICT_FILES; do
+              echo "  $f" >> "$GITHUB_OUTPUT"
+            done
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            # Upstream-only file diff summary (non-conflicting)
+            NON_CONFLICT_FILES=$(comm -23 \
+              <(sort /tmp/upstream_files.txt) \
+              <(sort /tmp/fork_files.txt))
+            echo "upstream_only_file_list<<EOF" >> "$GITHUB_OUTPUT"
+            for f in $NON_CONFLICT_FILES; do
+              if [ -n "$f" ]; then
+                ADDED=$(git diff --numstat main...upstream/main -- \
+                  "$f" | awk '{print $1}')
+                DELETED=$(git diff --numstat main...upstream/main -- \
+                  "$f" | awk '{print $2}')
+                echo "$f (+$ADDED/-$DELETED)" >> "$GITHUB_OUTPUT"
+              fi
+            done
             echo "EOF" >> "$GITHUB_OUTPUT"
           else
             echo "has_diff=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: List upstream changes (summary)
-        if: steps.check.outputs.has_diff == 'true'
-        run: |
-          echo "### Upstream Commits" >> "$GITHUB_STEP_SUMMARY"
-          echo "(${{ steps.check.outputs.count }} new)" \
-            >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          git log --oneline --no-merges main..upstream/main \
-            >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Changed Files (stats)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          git diff --stat main..upstream/main >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create sync branch
         if: steps.check.outputs.has_diff == 'true'
@@ -70,7 +87,7 @@ jobs:
           BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           git checkout -b "$BRANCH"
-          git merge upstream/main --no-edit
+          git merge upstream/main --no-edit --strategy-option=theirs
           git push origin "$BRANCH"
         id: branch
 
@@ -83,33 +100,89 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
-              head: `${context.repo.owner}:${{ steps.branch.outputs.branch }}`,
+              head: `${
+                context.repo.owner
+              }:${{ steps.branch.outputs.branch }}`,
             });
-            if (existing.length === 0) {
-              const title = '⬆️ Sync upstream — '
-                + '${{ steps.check.outputs.count }} new commits';
-              const body = [
-                'Upstream (baphuongna/pi-crew) has '
-                  + '${{ steps.check.outputs.count }} new commits.',
-                '',
-                '## Review Checklist',
-                '- [ ] Review for conflicts with local changes',
-                '- [ ] Decide which features/fixes to keep',
-                '- [ ] Resolve merge conflicts if any',
-                '',
-                '## Upstream Commits',
-                '```',
-                '${{ steps.check.outputs.commit_list }}',
-                '```',
-                '',
-                '> Auto-created by sync-upstream workflow.',
-              ].join('\n');
-              await github.rest.pulls.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title,
-                head: '${{ steps.branch.outputs.branch }}',
-                base: 'main',
-                body,
-              });
+            if (existing.length > 0) {
+              console.log(
+                'PR already exists, skipping:',
+                existing[0].html_url,
+              );
+              return;
             }
+
+            const count = '${{ steps.check.outputs.count }}';
+            const commitList =
+              '${{ steps.check.outputs.commit_list }}';
+            const conflictFiles =
+              '${{ steps.check.outputs.conflict_file_list }}';
+            const hasConflicts = conflictFiles !== 'none';
+
+            const title = '⬆️ Sync upstream — '
+              + count + ' new commits'
+              + (hasConflicts ? ' ⚠️ CONFLICTS' : ' ✅');
+
+            const body = [
+              'Upstream (**baphuongna/pi-crew**) has '
+                + count + ' new commits.',
+              '',
+              hasConflicts
+                ? '## ⚠️ Conflict Files (modified in BOTH fork & upstream)'
+                : '',
+              hasConflicts
+                ? 'These files were changed in your fork **and** in '
+                  + 'the upstream. Manual review required:'
+                : '',
+              hasConflicts ? '' : '',
+              hasConflicts
+                ? '```\n'
+                  + '${{ steps.check.outputs.conflict_diff_summary }}'
+                  + '\n```'
+                : '',
+              hasConflicts ? '' : '',
+              hasConflicts
+                ? '### How to resolve'
+                : '',
+              hasConflicts
+                ? '1. Click "Files changed" tab'
+                : '',
+              hasConflicts
+                ? '2. Review each conflict file'
+                : '',
+              hasConflicts
+                ? '3. Decide which version wins for each change'
+                : '',
+              hasConflicts
+                ? '4. Or: ask Pi to review '
+                  + '("review this sync PR")'
+                : '',
+              '',
+              '## Upstream-only Changes (no conflict)',
+              '```',
+              '${{ steps.check.outputs.upstream_only_file_list }}',
+              '```',
+              '',
+              '## All Upstream Commits',
+              '```',
+              commitList,
+              '```',
+              '',
+              '## Review Checklist',
+              '- [ ] Check conflict files first',
+              '- [ ] Decide which to keep / merge / drop',
+              '- [ ] Merge when ready',
+              '',
+              '> Auto-created by sync-upstream workflow.',
+              '> Tip: ask Pi to review with: '
+                + '"/crew review this sync PR"',
+            ].join('\n');
+
+            await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              head: '${{ steps.branch.outputs.branch }}',
+              base: 'main',
+              body,
+            });
